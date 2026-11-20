@@ -24,8 +24,8 @@
   },
   {
    "file": "dll/src/Fern.cpp",
-   "old": "            struct ApplyFence {\n                ApplyFence()  { FrierenInit::BeginApply(); }\n                ~ApplyFence() { FrierenInit::EndApply(); }\n            } applyFence;\n",
-   "new": "            // STAGING: R7-C-05 fence removed\n"
+   "old": "                struct ApplyFence {\n                    ApplyFence()  { FrierenInit::BeginApply(); }\n                    ~ApplyFence() { FrierenInit::EndApply(); }\n                } applyFence;\n",
+   "new": "                // STAGING: R7-C-05 fence removed\n"
   }
  ]
 }

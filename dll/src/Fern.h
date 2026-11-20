@@ -251,13 +251,19 @@ private:
     ScanState m_scan;
     bool RunScan();   // the job's body: UE5_Init's own answer
 
-    // Extra Scan (user-triggered background rescan for missing pointers)
+    // Extra Scan (user-triggered background rescan for missing pointers, and for a GObjects that reads no objects)
     struct RescanResult {
         uintptr_t   gobjects       = 0;
         uintptr_t   gworld         = 0;
         const char* gobjectsMethod = "not_found";
         const char* gworldMethod   = "not_found";
         bool        cancelled      = false;   // Stop or shutdown cut the sweep short: "not found" would be a guess
+        // [RESCAN-DECOY-REINIT] Every GObjects hit in scan order (`gobjects` is the first); for a replace, the published
+        // GObjects the sweep avoided, and whether an apply_rescan has used these candidates.
+        std::vector<uintptr_t> gobjectsCandidates;
+        bool        replace        = false;
+        uintptr_t   gobjectsAvoid  = 0;
+        bool        consumed       = false;
     };
     struct RescanState {
         Routine::SingleFlightJob job{"RunRescan"};
@@ -269,9 +275,13 @@ private:
             std::lock_guard<std::mutex> lock(statusMutex);
             return result;
         }
+        void MarkConsumed() {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            result.consumed = true;
+        }
     };
     RescanState m_rescan;
-    void RunRescanBody(bool scanGObjects, bool scanGWorld);
+    void RunRescanBody(bool scanGObjects, bool scanGWorld, bool replace, uintptr_t avoid, size_t maxCandidates);
 
     void AcceptLoop();
     void HandleConnection(std::shared_ptr<Connection> conn);

@@ -389,8 +389,7 @@ std::vector<Job>::iterator FindJobLocked(const std::string& cls, const std::stri
 // ---- re-assert worker (identical discipline to Hemmung) ----
 
 void WorkerLoop() {
-    // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop. Only the tick is ours.
+    // The loop's discipline lives in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("Solide", Grimoire::SOLIDE_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);

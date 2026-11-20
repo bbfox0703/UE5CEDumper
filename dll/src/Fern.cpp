@@ -88,10 +88,16 @@ extern "C" int       UE5_GetProcessEventOffset();
 
 // [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
 // [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which a version settled here climbs as init's does.
+// [RESCAN-DECOY-REINIT] ...the init lock a rescan's decision and a version override take, and the replacement of a
+// GObjects that reads no objects, with init's GWorld check after it.
 namespace FrierenInit {
 void BeginApply();
 void EndApply();
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who);
+bool TryHoldInit();
+void ReleaseInitHold();
+Genau::ReplaceResult ReplaceDecoyGObjects(uintptr_t published, const std::vector<uintptr_t>& candidates);
+bool CheckAndRecoverGWorld(const char* who);
 }
 // [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
 namespace FrierenInvoke {
@@ -2703,6 +2709,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
             }
 
+            // [RESCAN-DECOY-REINIT] Not while an init or an apply_rescan settles the version: a replacement's climb would
+            // overwrite the override, from a pre-ladder version this command also writes.
+            extern uint32_t g_cachedPreLadderUEVersion;
+            extern bool     g_cachedPreLadderLowConfidence;
+            struct InitHoldScope {
+                bool held = FrierenInit::TryHoldInit();
+                ~InitHoldScope() { if (held) FrierenInit::ReleaseInitHold(); }
+            } initHold;
+            if (!initHold.held) {
+                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+            }
+
             // [UE-OVERRIDE-411] A version from the other side of 4.18 puts the UFunction tail 2 off this game's
             // (NumParms / ParmsSize / ReturnValueOffset), so one the sampled UFunctions contradict is refused here,
             // before anything is persisted or changed. A refusal, not advice, although the readers follow the
@@ -2788,6 +2806,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     g_cachedPublisherThumbprint != nullptr);
                 autoRestore = plan.outcome;
                 if (plan.outcome == Flamme::AutoRestore::Restored) {
+                    g_cachedPreLadderUEVersion = plan.version;
+                    g_cachedPreLadderLowConfidence = plan.lowConfidence;
                     const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
                         plan.version, /*userOverride=*/false, "set_ue_version_override");
                     g_cachedUEVersion       = DynOff::RefineVersionFromLazyMarkers(
@@ -2812,6 +2832,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
             } else {
                 g_cachedUEVersion       = static_cast<uint32_t>(newVersion);
+                g_cachedPreLadderUEVersion = static_cast<uint32_t>(newVersion);
+                g_cachedPreLadderLowConfidence = false;
                 g_cachedVersionDetected = true;
                 g_cachedIsUserOverride  = true;
                 g_cachedIsLowConfidence = false;
@@ -7175,15 +7197,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // What to look for is decided from the published pointers, which a scan still running has not finished
             // publishing. [PIPE-PER-PROCESS-2026-11-06]
+            // [RESCAN-DECOY-REINIT] ...and from Aura's count, which an apply_rescan moves candidate by candidate: decided
+            // and started under the init lock the apply's fence holds, so a decision never reads a candidate's count.
             extern std::atomic<bool> g_initInProgress;
-            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {
+            struct InitHoldScope {
+                bool held = FrierenInit::TryHoldInit();
+                ~InitHoldScope() { if (held) FrierenInit::ReleaseInitHold(); }
+            } initHold;
+            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire) || !initHold.held) {
                 return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
             }
 
-            bool needGObj = (g_cachedGObjects == 0);
-            bool needGWld = (g_cachedGWorld == 0) && (g_cachedGObjects != 0) && (g_cachedGNames != 0);
+            const Genau::RescanPlan plan = Genau::PlanRescan(g_cachedGObjects, g_cachedGNames, g_cachedGWorld, Aura::GetCount());
 
-            if (!needGObj && !needGWld) {
+            if (!plan.seekGObjects && !plan.seekGWorld) {
                 json data;
                 data["scanning_gobjects"] = false;
                 data["scanning_gworld"]   = false;
@@ -7199,10 +7226,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     m_rescan.statusText = "Starting...";
                     m_rescan.phase.store(0);
                 },
-                [this, needGObj, needGWld] {
+                [this, plan] {
                     // Phase 3 on every way out, a throw included, so rescan_status reports the run as over.
                     struct Done { std::atomic<int>& phase; ~Done() { phase.store(3); } } done{m_rescan.phase};
-                    RunRescanBody(needGObj, needGWld);
+                    RunRescanBody(plan.seekGObjects, plan.seekGWorld, plan.replace, plan.avoid, plan.maxCandidates);
                     return true;
                 });
             if (started == Start::Stopping) return Renge::MakeError(id, "the pipe server is stopping").dump();
@@ -7214,8 +7241,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // refuses, and so does this command during an init). Flags the starter stored would be read before its
             // reset wrote them.
             if (started == Start::AlreadyRunning) data["in_progress"] = true;
-            data["scanning_gobjects"] = needGObj;
-            data["scanning_gworld"]   = needGWld;
+            data["scanning_gobjects"] = plan.seekGObjects;
+            data["scanning_gworld"]   = plan.seekGWorld;
+            data["replacing"]         = plan.replace;   // additive: the GObjects sought replaces one that reads no objects
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -7244,6 +7272,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["gobjects_method"]  = found.gobjectsMethod;
                 data["gworld_method"]    = found.gworldMethod;
                 data["cancelled"]        = found.cancelled;   // additive: cut short by Stop, so "not found" is unknown
+                // [RESCAN-DECOY-REINIT] additive: how many GObjects candidates apply_rescan will choose among (one for a
+                // fill); `gobjects_addr` is the first, which a replace need not keep.
+                data["gobjects_candidates"] = found.gobjectsCandidates.size();
+                data["replacing"]        = found.replace;
             }
             return Renge::MakeResponse(id, data).dump();
         }
@@ -7260,6 +7292,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             extern const char* g_cachedGObjectsMethod;
             extern const char* g_cachedGWorldMethod;
             extern bool        g_cachedVersionTooOld;
+            extern char        g_cachedPeHash[17];
 
             // Belt-and-braces twin of the CMD_RESCAN refusal. This matters independently: apply
             // re-enters Aura::Init and Genau::ValidateAndFixOffsets(g_cachedUEVersion) OUTSIDE
@@ -7271,103 +7304,155 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                             "skipped by design").dump();
             }
 
-            // [R7-C-05] The init fence for the whole apply: GObjects is published below and Aura::Init /
-            // ValidateAndFixOffsets follow, and until they finish the mailbox must not take its fast path.
-            struct ApplyFence {
-                ApplyFence()  { FrierenInit::BeginApply(); }
-                ~ApplyFence() { FrierenInit::EndApply(); }
-            } applyFence;
+            // [RESCAN-DECOY-REINIT] Begun, the apply finishes: a client that drops mid-apply must not leave a published
+            // pointer over offsets its walks cut short. Shutdown still aborts.
+            const Tot::CancelContextScope immune{Tot::CancelContext{nullptr, true}};
 
             bool applied = false;
+            Genau::RescanApply kind = Genau::RescanApply::NotSought;
+            Genau::ReplaceResult replaced;
+            {
+                // [R7-C-05] The init fence for the whole apply: GObjects is published below and Aura::Init /
+                // ValidateAndFixOffsets follow, and until they finish the mailbox must not take its fast path.
+                struct ApplyFence {
+                    ApplyFence()  { FrierenInit::BeginApply(); }
+                    ~ApplyFence() { FrierenInit::EndApply(); }
+                } applyFence;
 
-            // One copy, read under the lock the job writes them under. A new run's reset clears the job's fields, so
-            // reading each one twice from there could see a pointer and then publish 0 -- and call Aura::Init(0).
-            // [PIPE-PER-PROCESS-2026-11-06]
-            const RescanResult found = m_rescan.Results();
-
-            if (found.gobjects && g_cachedGObjects == 0) {
-                g_cachedGObjects = found.gobjects;
-                g_cachedGObjectsMethod = found.gobjectsMethod;
-                Aura::Init(g_cachedGObjects);
-                Sein::Info("PIPE:cmd", "apply_rescan: Applied GObjects=0x%llX (%s)",
-                         (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod);
-                applied = true;
-            }
-
-            if (found.gworld && g_cachedGWorld == 0) {
-                g_cachedGWorld = found.gworld;
-                g_cachedGWorldMethod = found.gworldMethod;
-                Sein::Info("PIPE:cmd", "apply_rescan: Applied GWorld=0x%llX (%s)",
-                         (unsigned long long)g_cachedGWorld, g_cachedGWorldMethod);
-                applied = true;
-            }
-
-            // Run full offset detection — but ONLY if it never ran.
-            //
-            // ValidateAndFixOffsets writes unmeasured version defaults into the LIVE DynOff
-            // globals before probing and corrects them at the end, with no staging and no
-            // reader fence. On this path that window is open while the UI is connected and
-            // the bulk lane is serving, so a re-run republishes defaults over already-probed
-            // values — a short window, but free to avoid.
-            //
-            // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
-            // every reachable path here — CMD_RESCAN only scans pointers that are already 0
-            // and the UI only sends apply_rescan when something was found — so gating on it
-            // would be a never-firing predicate (docs/working-lessons.md §4.3f). `!bOffsetsProbeRan` says
-            // exactly "init never probed", because UE5_Init skips detection when GObjects was
-            // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
-            // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
-            // ⚠ If a future edit adds an exit without that store, this gate silently inverts.
-            if (g_cachedGObjects && g_cachedGNames
-                && !DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) {
-                if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
-                    Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
+                // One copy, read under the lock the job writes them under. A new run's reset clears the job's fields, so
+                // reading each one twice from there could see a pointer and then publish 0 -- and call Aura::Init(0).
+                // [PIPE-PER-PROCESS-2026-11-06]
+                const RescanResult found = m_rescan.Results();
+                // [RESCAN-DECOY-REINIT] Again under the fence: a rescan started on another connection before it would be
+                // collecting while this apply reads its result.
+                if (m_rescan.job.Running()) {
+                    return Renge::MakeError(id, "Rescan still running").dump();
                 }
-                // [VER-MARKERS-PAST-504] Init climbs its version ladder right after this probe and skipped both, so the
-                // first probe climbs it here -- else a stripped UE5 title revived by a rescan keeps its raw label (a
-                // 4.27 publisher fallback, say) for the session. Applied as UE5_Init applies it.
-                extern bool g_cachedIsUserOverride;
-                extern bool g_cachedIsLowConfidence;
-                const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
-                    g_cachedUEVersion, g_cachedIsUserOverride, "apply_rescan");
-                g_cachedUEVersion = climbed.version;
-                if (climbed.loweredToUE4)
-                    g_cachedIsLowConfidence = true;
-            }
+                kind = Genau::PlanRescanApply(g_cachedGObjects, Aura::GetCount(), g_cachedGNames, found.replace,
+                                              found.gobjectsAvoid, found.gobjectsCandidates.size(), found.cancelled,
+                                              found.consumed);
 
-            // GEngine's second pass is HOISTED out of the block above: it must still run
-            // when the offsets were already probed at init, which is exactly the GWorld-only
-            // recovery case the gate skips. Nested, it would leave GEngine reporting "AOB not
-            // found" forever on that path (see the comment below).
-            if (g_cachedGObjects && g_cachedGNames) {
-                // Same second pass UE5_Init does: &GEngine can only be VALIDATED once the
-                // offsets exist, so a recovery rescan that revives GObjects/GNames has to
-                // retry it too — otherwise this path keeps reporting "AOB not found" for
-                // GEngine forever even though the offsets it was waiting on just arrived.
-                extern uintptr_t   g_cachedGEngine;
-                extern const char* g_cachedGEngineMethod;
-                extern const char* g_cachedGEnginePatternId;
-                extern uintptr_t   g_cachedGEngineScanAddr;
-                extern const char* g_cachedGEngineAob;
-                extern int         g_cachedGEngineAobPos;
-                extern int         g_cachedGEngineAobLen;
-                extern const char* g_cachedGEngineExport;
-                if (g_cachedGEngine == 0) {
-                    Genau::EnginePointers eng;   // scratch — carries the AOB metadata triple
-                    if (Genau::ResolveGEngineDeferred(eng)) {
-                        g_cachedGEngine          = eng.GEngine;
-                        g_cachedGEngineMethod    = eng.gengineMethod;
-                        g_cachedGEnginePatternId = eng.genginePatternId;
-                        g_cachedGEngineScanAddr  = eng.gengineScanAddr;
-                        g_cachedGEngineAob       = eng.gengineAob;
-                        g_cachedGEngineAobPos    = eng.gengineAobPos;
-                        g_cachedGEngineAobLen    = eng.gengineAobLen;
-                        g_cachedGEngineExport    = eng.gengineExport;
-                        Sein::Info("PIPE:cmd", "apply_rescan: Applied GEngine=0x%llX (%s)",
-                                   (unsigned long long)g_cachedGEngine, g_cachedGEngineMethod);
+                if (kind == Genau::RescanApply::Fill) {
+                    g_cachedGObjects = found.gobjects;
+                    g_cachedGObjectsMethod = found.gobjectsMethod;
+                    Aura::Init(g_cachedGObjects);
+                    // [RESCAN-DECOY-REINIT] With GObjects 0 the session read an empty pool, so a Path-2 use latched
+                    // UFunction::Func "not found" for the process; the new pool is sampled on next use.
+                    Aura::ResetUFunctionFuncDetection();
+                    Sein::Info("PIPE:cmd", "apply_rescan: Applied GObjects=0x%llX (%s)",
+                             (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod);
+                    applied = true;
+                }
+
+                // [RESCAN-DECOY-REINIT] The published GObjects reads no objects: choose among the job's candidates and
+                // re-run what its session derived from the empty pool -- the offsets probe, the GEngine second pass and
+                // the ladder, in UE5_Init's order (Genau::ReplaceGObjectsAndReprobe). Consumed whatever the outcome: the
+                // same candidates would give a second apply the same answer.
+                if (kind == Genau::RescanApply::Replace) {
+                    m_rescan.MarkConsumed();
+                    replaced = FrierenInit::ReplaceDecoyGObjects(g_cachedGObjects, found.gobjectsCandidates);
+                    if (replaced.outcome == Genau::ReplaceOutcome::Replaced
+                        || replaced.outcome == Genau::ReplaceOutcome::ReinitInPlace) {
+                        Sein::Info("PIPE:cmd", "apply_rescan: %s GObjects=0x%llX (%s), Objects=%d",
+                                   replaced.outcome == Genau::ReplaceOutcome::Replaced ? "Replaced" : "Re-initialised",
+                                   (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod, Aura::GetCount());
                         applied = true;
+                    } else {
+                        Sein::Warn("PIPE:cmd", "apply_rescan: GObjects=0x%llX stays -- %s", (unsigned long long)g_cachedGObjects,
+                                   Genau::ReplaceOutcomeName(replaced.outcome));
                     }
                 }
+
+                if (found.gworld && g_cachedGWorld == 0) {
+                    g_cachedGWorld = found.gworld;
+                    g_cachedGWorldMethod = found.gworldMethod;
+                    Sein::Info("PIPE:cmd", "apply_rescan: Applied GWorld=0x%llX (%s)",
+                             (unsigned long long)g_cachedGWorld, g_cachedGWorldMethod);
+                    applied = true;
+                }
+
+                // Run full offset detection — but ONLY if it never ran.
+                //
+                // ValidateAndFixOffsets writes unmeasured version defaults into the LIVE DynOff
+                // globals before probing and corrects them at the end, with no staging and no
+                // reader fence. On this path that window is open while the UI is connected and
+                // the bulk lane is serving, so a re-run republishes defaults over already-probed
+                // values — a short window, but free to avoid.
+                //
+                // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
+                // every reachable path here — CMD_RESCAN only scans pointers that are already 0
+                // and the UI only sends apply_rescan when something was found — so gating on it
+                // would be a never-firing predicate (docs/working-lessons.md §4.3f). `!bOffsetsProbeRan` says
+                // exactly "init never probed", because UE5_Init skips detection when GObjects was
+                // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
+                // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
+                // ⚠ If a future edit adds an exit without that store, this gate silently inverts.
+                // [RESCAN-DECOY-REINIT] A replace re-ran the probe, the ladder and the GEngine pass in its own order.
+                if (kind != Genau::RescanApply::Replace && g_cachedGObjects && g_cachedGNames
+                    && !DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) {
+                    if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
+                        Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
+                    }
+                    // [RESCAN-DECOY-REINIT] An enum read over the empty pool latched UEnum names FAILED; the probe has
+                    // just measured the FName width the search reads, and the ladder below asks it.
+                    Genau::ResetUEnumNamesDetection();
+                    // [VER-MARKERS-PAST-504] Init climbs its version ladder right after this probe and skipped both, so the
+                    // first probe climbs it here -- else a stripped UE5 title revived by a rescan keeps its raw label (a
+                    // 4.27 publisher fallback, say) for the session. Applied as UE5_Init applies it.
+                    extern bool g_cachedIsUserOverride;
+                    extern bool g_cachedIsLowConfidence;
+                    const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
+                        g_cachedUEVersion, g_cachedIsUserOverride, "apply_rescan");
+                    g_cachedUEVersion = climbed.version;
+                    if (climbed.loweredToUE4)
+                        g_cachedIsLowConfidence = true;
+                }
+
+                // GEngine's second pass is HOISTED out of the block above: it must still run
+                // when the offsets were already probed at init, which is exactly the GWorld-only
+                // recovery case the gate skips. Nested, it would leave GEngine reporting "AOB not
+                // found" forever on that path (see the comment below).
+                if (kind != Genau::RescanApply::Replace && g_cachedGObjects && g_cachedGNames) {
+                    // Same second pass UE5_Init does: &GEngine can only be VALIDATED once the
+                    // offsets exist, so a recovery rescan that revives GObjects/GNames has to
+                    // retry it too — otherwise this path keeps reporting "AOB not found" for
+                    // GEngine forever even though the offsets it was waiting on just arrived.
+                    extern uintptr_t   g_cachedGEngine;
+                    extern const char* g_cachedGEngineMethod;
+                    extern const char* g_cachedGEnginePatternId;
+                    extern uintptr_t   g_cachedGEngineScanAddr;
+                    extern const char* g_cachedGEngineAob;
+                    extern int         g_cachedGEngineAobPos;
+                    extern int         g_cachedGEngineAobLen;
+                    extern const char* g_cachedGEngineExport;
+                    if (g_cachedGEngine == 0) {
+                        Genau::EnginePointers eng;   // scratch — carries the AOB metadata triple
+                        if (Genau::ResolveGEngineDeferred(eng)) {
+                            g_cachedGEngine          = eng.GEngine;
+                            g_cachedGEngineMethod    = eng.gengineMethod;
+                            g_cachedGEnginePatternId = eng.genginePatternId;
+                            g_cachedGEngineScanAddr  = eng.gengineScanAddr;
+                            g_cachedGEngineAob       = eng.gengineAob;
+                            g_cachedGEngineAobPos    = eng.gengineAobPos;
+                            g_cachedGEngineAobLen    = eng.gengineAobLen;
+                            g_cachedGEngineExport    = eng.gengineExport;
+                            Sein::Info("PIPE:cmd", "apply_rescan: Applied GEngine=0x%llX (%s)",
+                                       (unsigned long long)g_cachedGEngine, g_cachedGEngineMethod);
+                            applied = true;
+                        }
+                    }
+                }
+            }   // the init fence ends here
+
+            // [RESCAN-DECOY-REINIT] After a replace, the GWorld check UE5_Init skipped over the empty pool (it walks the
+            // whole pool, so off the fence the CE mailbox waits on), and the hint cache stops handing the next launch the
+            // decoy's AOB.
+            bool gworldRecovered = false;
+            if (kind == Genau::RescanApply::Replace && (replaced.outcome == Genau::ReplaceOutcome::Replaced
+                                                         || replaced.outcome == Genau::ReplaceOutcome::ReinitInPlace)) {
+                gworldRecovered = FrierenInit::CheckAndRecoverGWorld("apply_rescan");
+                if (replaced.outcome == Genau::ReplaceOutcome::Replaced)
+                    Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_heuristic");
             }
 
             json data;
@@ -7376,6 +7461,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["gnames"]       = Renge::AddrToStr(g_cachedGNames);
             data["gworld"]       = Renge::AddrToStr(g_cachedGWorld);
             data["object_count"] = Aura::GetCount();
+            // [RESCAN-DECOY-REINIT] additive: what happened to GObjects, by Genau::RescanApplyName / ReplaceOutcomeName.
+            data["gobjects_outcome"] = kind == Genau::RescanApply::Replace ? Genau::ReplaceOutcomeName(replaced.outcome)
+                                                                           : Genau::RescanApplyName(kind);
+            data["gobjects_method"]  = g_cachedGObjectsMethod ? g_cachedGObjectsMethod : "";
+            data["gworld_method"]    = g_cachedGWorldMethod ? g_cachedGWorldMethod : "";
+            if (kind == Genau::RescanApply::Replace)
+                data["gobjects_candidates_scored"] = replaced.scored;
+            data["gworld_recovered"] = gworldRecovered;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -8773,9 +8866,14 @@ bool Fern::RunScan() {
 // RunRescanBody — the Extra Scan job's work: aggressive pointer recovery
 // ============================================================
 // Runs guarded (Genau's Extra Scan allocates against a live process) and bound to the job's own cancel token.
-void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
-    Sein::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)",
-                 scanGObjects, scanGWorld);
+void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld, bool replace, uintptr_t avoid, size_t maxCandidates) {
+    Sein::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)%s",
+                 scanGObjects, scanGWorld, replace ? " -- replacing a GObjects that reads no objects" : "");
+    {
+        std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+        m_rescan.result.replace       = replace;
+        m_rescan.result.gobjectsAvoid = avoid;
+    }
 
     if (scanGObjects) {
         m_rescan.phase.store(1);
@@ -8784,15 +8882,25 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
             m_rescan.statusText = "Scanning GObjects (.data heuristic)...";
         }
 
-        uintptr_t result = Genau::ExtraScanGObjects();
-        if (result) {
+        // A fill keeps the first hit; [RESCAN-DECOY-REINIT] a replace collects past it, never offering the published
+        // GObjects, for apply_rescan to choose among.
+        std::vector<uintptr_t> candidates;
+        if (replace) {
+            Genau::ExtraScanGObjectsCandidates(avoid, maxCandidates, candidates);
+        } else {
+            const uintptr_t result = Genau::ExtraScanGObjects();
+            if (result) candidates.push_back(result);
+        }
+        if (!candidates.empty()) {
             {
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
-                m_rescan.result.gobjects       = result;
+                m_rescan.result.gobjects       = candidates.front();
                 m_rescan.result.gobjectsMethod = "data_heuristic";
+                m_rescan.result.gobjectsCandidates = candidates;
             }
-            Sein::Info("PIPE:rescan", "RunRescan: GObjects found at 0x%llX",
-                         static_cast<unsigned long long>(result));
+            Sein::Info("PIPE:rescan", "RunRescan: GObjects found at 0x%llX%s",
+                         static_cast<unsigned long long>(candidates.front()),
+                         replace ? (" (" + std::to_string(candidates.size()) + " candidate(s))").c_str() : "");
         } else {
             Sein::Info("PIPE:rescan", "RunRescan: GObjects not found");
         }

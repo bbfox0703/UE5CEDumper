@@ -557,6 +557,17 @@ enum class ReplaceStep { Chosen, VerdictReset, AuraOnWinner, Published, LatchesR
                          Climbed, WalkLatchesReset };
 enum class ReplaceOutcome { Replaced, ReinitInPlace, NoneQualified, Aborted };
 
+// The pipe word for each outcome.
+constexpr const char* ReplaceOutcomeName(ReplaceOutcome o) {
+    switch (o) {
+        case ReplaceOutcome::Replaced:      return "replaced";
+        case ReplaceOutcome::ReinitInPlace: return "reinit_in_place";
+        case ReplaceOutcome::NoneQualified: return "none_qualified";
+        case ReplaceOutcome::Aborted:       return "aborted";
+    }
+    return "none_qualified";
+}
+
 // What only Frieren owns: the published globals, the GEngine second pass and the version ladder.
 struct ReplaceHooks {
     std::function<void(uintptr_t winner, bool inPlace)> publish;   // GObjects and its method; the pre-ladder version

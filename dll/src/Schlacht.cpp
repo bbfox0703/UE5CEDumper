@@ -614,6 +614,9 @@ void WorkerLoop() {
     while (!s_workerStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(Grimoire::SCHLACHT_TICK_MS));
         if (s_workerStop.load()) break;
+        // [RESCAN-DECOY-REINIT] As Routine::ReassertLoop: no tick while an init or an apply_rescan settles the object
+        // array and the offsets.
+        if (g_initInProgress.load(std::memory_order_acquire)) continue;
         bool active;
         { std::lock_guard<std::mutex> lk(s_mutex); active = s_state.active; }
         if (!active) continue;

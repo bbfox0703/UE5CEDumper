@@ -74,7 +74,10 @@ struct BoolTarget {
     std::string name;
 };
 std::vector<BoolTarget> s_targets;
-uintptr_t               s_targetsClass = 0;
+// [RESCAN-DECOY-REINIT] The pawn class the targets were read from, under the property family's epoch
+// (DynOff::FamilyCacheKey): an offsets probe retires the epoch, so targets read under the offsets it replaced are read
+// again -- after a GObjects replacement, say, whose decoy session read them under defaults.
+uintptr_t               s_targetsKey = 0;
 
 // ---- low-level reads (copied from Wirbel; public APIs only) ----
 
@@ -209,7 +212,6 @@ std::string ToLower(const std::string& s) {
 // (so the user sees exactly what generic analysis found on their game).
 void BuildTargets(uintptr_t pawnClass, bool verbose) {
     s_targets.clear();
-    s_targetsClass = pawnClass;
     if (!pawnClass) return;
     const ClassInfo& ci = Ubel::WalkClassEx(pawnClass);
     for (const auto& f : ci.Fields) {
@@ -254,9 +256,13 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
     int32_t rc = ResolvePawnRef(p);
     if (rc != PR_OK) return rc;
 
-    // Rebuild the protection-target set when the pawn class changes.
-    if (p.pawnClass != s_targetsClass)
+    // Rebuild the protection-target set when the pawn class changes, or the offsets it was read under do. The key is
+    // taken before the walk: a family move during it leaves the old epoch on the set, so the next call reads it again.
+    const uintptr_t targetsKey = DynOff::FamilyCacheKey(p.pawnClass);
+    if (targetsKey != s_targetsKey) {
         BuildTargets(p.pawnClass, verbose);
+        s_targetsKey = targetsKey;
+    }
     if (s_targets.empty())
         return PR_ERR_REFLECT;   // not even bCanBeDamaged resolved
 
@@ -294,8 +300,7 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
 // ---- re-assert worker ----
 
 void WorkerLoop() {
-    // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop. Only the tick is ours.
+    // The loop's discipline lives in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("GodMode", Grimoire::PROTECT_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);

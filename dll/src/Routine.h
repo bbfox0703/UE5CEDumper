@@ -31,6 +31,10 @@
 #include <mutex>
 #include <thread>
 
+// Frieren.cpp: true while an init or an apply_rescan is settling the object array and the offsets. ReassertLoop reads
+// it; a translation unit that never instantiates ReassertLoop needs no definition.
+extern std::atomic<bool> g_initInProgress;
+
 namespace Routine {
 
 // ============================================================
@@ -153,8 +157,12 @@ inline void ReassertLoop(const char* tag, int periodMs,
     Tot::MarkBackgroundWorker();   // ignore per-command cancel; abort only on shutdown
     LOG_INFO("%s: re-assert worker started (%d ms)", tag, periodMs);
     bool warnedThrow = false;
-    while (SleepSliced(periodMs, stop))
+    while (SleepSliced(periodMs, stop)) {
+        // [RESCAN-DECOY-REINIT] An init or an apply_rescan moves Aura from array to array and republishes the offsets
+        // a tick walks with; a tick then would resolve or write through either. The next tick re-asserts.
+        if (::g_initInProgress.load(std::memory_order_acquire)) continue;
         RunTickGuarded(tag, warnedThrow, tick);
+    }
     LOG_INFO("%s: re-assert worker stopped", tag);
 }
 

@@ -1785,6 +1785,12 @@ static void Test_Genau_PlanRescanApply() {
            && std::string(Genau::RescanApplyName(A::Changed)) == "changed"
            && std::string(Genau::RescanApplyName(A::Cancelled)) == "cancelled"
            && std::string(Genau::RescanApplyName(A::NotSought)) == "not_sought");
+    using O = Genau::ReplaceOutcome;
+    EXPECT("RESCANAPPLY: ...and for a replace's outcome",
+           std::string(Genau::ReplaceOutcomeName(O::Replaced)) == "replaced"
+           && std::string(Genau::ReplaceOutcomeName(O::ReinitInPlace)) == "reinit_in_place"
+           && std::string(Genau::ReplaceOutcomeName(O::NoneQualified)) == "none_qualified"
+           && std::string(Genau::ReplaceOutcomeName(O::Aborted)) == "aborted");
 }
 
 // [RESCAN-DECOY-REINIT] apply_rescan samples names in NameSampleOrder and stops at the first candidate that qualifies;

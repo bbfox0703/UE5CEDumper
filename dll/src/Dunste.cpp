@@ -511,6 +511,9 @@ void WorkerLoop() {
     while (!s_workerStop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(Grimoire::FLY_TICK_MS));
         if (s_workerStop.load()) break;
+        // [RESCAN-DECOY-REINIT] As Routine::ReassertLoop: no tick while an init or an apply_rescan settles the object
+        // array and the offsets.
+        if (g_initInProgress.load(std::memory_order_acquire)) continue;
         // Safety net (see Schlacht): a tick reads live game state + dispatches a
         // game-thread invoke; during the game's own shutdown that churns/frees, so a
         // read or allocation can throw. An exception escaping the thread entry is
