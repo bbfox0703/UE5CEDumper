@@ -487,14 +487,17 @@ bool UE5_Init() {
     // this guard exists to prevent.
     std::unique_lock<std::mutex> initLock(s_initMutex, std::try_to_lock);
     if (!initLock.owns_lock()) {
-        LOG_WARN("UE5_Init: init already in progress on another thread — tid=%lu is waiting "
-                 "(guard working, not an error)", GetCurrentThreadId());
+        // [RESCAN-DECOY-REINIT] The lock's holder need not be an init: an apply_rescan holds it, and so, briefly, do the
+        // pipe commands that read or write what init settles (a rescan's decision, a version override).
+        LOG_WARN("UE5_Init: the init lock is held (init already in progress on another thread, "
+                 "or an apply_rescan or a pipe command) — tid=%lu is waiting (guard working, not an error)",
+                 GetCurrentThreadId());
         initLock.lock();
-        LOG_INFO("UE5_Init: tid=%lu resumed after waiting (first caller %s)",
+        LOG_INFO("UE5_Init: tid=%lu resumed after waiting (%s)",
                  GetCurrentThreadId(),
                  s_initialized.load(std::memory_order_acquire)
-                     ? "succeeded — returning its result, no second scan"
-                     : "did NOT complete — this thread will scan");
+                     ? "the engine is initialised — returning that result, no second scan"
+                     : "the engine is not initialised — this thread will scan");
     }
     if (s_initialized.load(std::memory_order_acquire)) {
         LOG_WARN("UE5_Init: Already initialized");

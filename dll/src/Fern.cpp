@@ -2718,7 +2718,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 ~InitHoldScope() { if (held) FrierenInit::ReleaseInitHold(); }
             } initHold;
             if (!initHold.held) {
-                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+                return Renge::MakeError(id, g_initInProgress.load(std::memory_order_acquire)
+                                                ? "A scan is still running -- wait for it to finish"
+                                                : "The engine state is being settled by another command -- try again").dump();
             }
 
             // [UE-OVERRIDE-411] A version from the other side of 4.18 puts the UFunction tail 2 off this game's
@@ -7200,12 +7202,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [RESCAN-DECOY-REINIT] ...and from Aura's count, which an apply_rescan moves candidate by candidate: decided
             // and started under the init lock the apply's fence holds, so a decision never reads a candidate's count.
             extern std::atomic<bool> g_initInProgress;
+            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {
+                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+            }
             struct InitHoldScope {
                 bool held = FrierenInit::TryHoldInit();
                 ~InitHoldScope() { if (held) FrierenInit::ReleaseInitHold(); }
             } initHold;
-            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire) || !initHold.held) {
-                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+            if (!initHold.held) {
+                return Renge::MakeError(id, "The engine state is being settled by another command -- try again").dump();
             }
 
             const Genau::RescanPlan plan = Genau::PlanRescan(g_cachedGObjects, g_cachedGNames, g_cachedGWorld, Aura::GetCount());
@@ -7319,15 +7324,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     ~ApplyFence() { FrierenInit::EndApply(); }
                 } applyFence;
 
+                // [RESCAN-DECOY-REINIT] Again under the fence, and before the result is read: a rescan started on another
+                // connection before the fence would still be writing it. None can start while the fence holds the init
+                // lock, so a job that is not running now has written its last field.
+                if (m_rescan.job.Running()) {
+                    return Renge::MakeError(id, "Rescan still running").dump();
+                }
                 // One copy, read under the lock the job writes them under. A new run's reset clears the job's fields, so
                 // reading each one twice from there could see a pointer and then publish 0 -- and call Aura::Init(0).
                 // [PIPE-PER-PROCESS-2026-11-06]
                 const RescanResult found = m_rescan.Results();
-                // [RESCAN-DECOY-REINIT] Again under the fence: a rescan started on another connection before it would be
-                // collecting while this apply reads its result.
-                if (m_rescan.job.Running()) {
-                    return Renge::MakeError(id, "Rescan still running").dump();
-                }
                 kind = Genau::PlanRescanApply(g_cachedGObjects, Aura::GetCount(), g_cachedGNames, found.replace,
                                               found.gobjectsAvoid, found.gobjectsCandidates.size(), found.cancelled,
                                               found.consumed);
@@ -7379,10 +7385,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // the bulk lane is serving, so a re-run republishes defaults over already-probed
                 // values — a short window, but free to avoid.
                 //
-                // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
-                // every reachable path here — CMD_RESCAN only scans pointers that are already 0
-                // and the UI only sends apply_rescan when something was found — so gating on it
-                // would be a never-firing predicate (docs/working-lessons.md §4.3f). `!bOffsetsProbeRan` says
+                // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` says something was
+                // published, not that init never probed: a GWorld-only fill sets it over offsets init
+                // already probed, and a pointer that was filled once is not probed twice
+                // (docs/working-lessons.md §4.3f). `!bOffsetsProbeRan` says
                 // exactly "init never probed", because UE5_Init skips detection when GObjects was
                 // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
                 // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
@@ -7444,16 +7450,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
             }   // the init fence ends here
 
-            // [RESCAN-DECOY-REINIT] After a replace, the GWorld check UE5_Init skipped over the empty pool (it walks the
-            // whole pool, so off the fence the CE mailbox waits on), and the hint cache stops handing the next launch the
-            // decoy's AOB.
+            // [RESCAN-DECOY-REINIT] The GWorld check UE5_Init skipped over a pool that read no objects -- a replaced one,
+            // or a GObjects of 0 a fill has just made readable -- off the fence the CE mailbox waits on, since it walks
+            // the whole pool; and after a replacement the hint cache stops handing the next launch the decoy's AOB.
             bool gworldRecovered = false;
-            if (kind == Genau::RescanApply::Replace && (replaced.outcome == Genau::ReplaceOutcome::Replaced
-                                                         || replaced.outcome == Genau::ReplaceOutcome::ReinitInPlace)) {
+            const bool sessionReplaced = kind == Genau::RescanApply::Replace
+                && (replaced.outcome == Genau::ReplaceOutcome::Replaced
+                    || replaced.outcome == Genau::ReplaceOutcome::ReinitInPlace);
+            if (sessionReplaced || (kind == Genau::RescanApply::Fill && Aura::GetCount() > 0))
                 gworldRecovered = FrierenInit::CheckAndRecoverGWorld("apply_rescan");
-                if (replaced.outcome == Genau::ReplaceOutcome::Replaced)
-                    Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_heuristic");
-            }
+            if (kind == Genau::RescanApply::Replace && replaced.outcome == Genau::ReplaceOutcome::Replaced)
+                Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_heuristic");
 
             json data;
             data["applied"]      = applied;
