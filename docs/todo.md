@@ -503,6 +503,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[LW-DISCONNECT-STALE-STATUS]` (2026-11-20, the game killed and relaunched under a connected UI).
 - audit L11 V10, Extra Scan's result survives its own refresh (2026-11-20, the staged decoy; verification-register.md).
 - B18, Extra Scan cancelled by `UE5_Shutdown` mid-sweep (2026-11-20, the staged decoy, a 4 ms join; verification-register.md).
+- `[L3-AD10-2026-08-20]` step 1 (2026-11-20, headless: `GWLD_TQ_4`'s one win checked exact against the PDB; step 3 re-swept, 0 hits).
 
 **Measured not producible here** (the row says what would close it):
 

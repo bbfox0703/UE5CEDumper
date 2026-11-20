@@ -4492,6 +4492,18 @@ documented at that call site: the search highlight is painted from `LoadingRow` 
 
 ### 🟡 L3 steps 2 + 3 — step 3's CONDITION HAS NEVER FIRED; step 2 is CE-only `[L3-AD10-2026-08-20]` 2026-08-20
 
+✅ **Step 1 CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`, headless, and step 3 re-swept. A sweep of every `scan-*` /
+`init-*` log on the machine (**1,529** files, 30 process folders) found ONE win among the four patterns:
+`GWLD_TQ_4 … -> 0x7FF66F6E6208 [WINNER]` on `ThirdPerson53-Win64-Shipping` (UE 5.3, DLL build 3732, 2026-11-17;
+`GOBJ_PS1` hit there too, *not validated*; `GWLD_TQ_3` and `GOBJ_PS6` 0 hits). No earlier run of that title exists to
+compare with, so the address was checked against the binary's own PDB instead (`tools/pe/pdb_globals.py`):
+`?GWorld@@3VUWorldProxy@@A` is at **RVA 0x69C6208**; the run's image base, from its logged entry point
+`0x7FF66DB5D870` minus the PE's `AddressOfEntryPoint` 0x4E3D870, is 0x7FF668D20000, so the winner's RVA is
+**0x69C6208** -- the exact `&GWorld` (GNames agrees the same way, RVA 0x67B2F80 both sides). That run read 0 objects
+because the reference copy carries no paks (`reference-builds.md`), which does not affect a static address. **Step 3:**
+the AD10 WARN (`replaying its published AOB triple does not reproduce it`, or any "withhold") has **0** hits in the
+same 1,529 files; it stays a line to watch for.
+
 **Step 3 — answerable headlessly, and the answer is "never".** Sweeping **437** `scan-*.log` +
 `init-*.log` files across every process on the machine for the new WARN
 (`replaying its published AOB triple does not reproduce it`, or any "withhold"): **0 hits**. So no
