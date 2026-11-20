@@ -5247,6 +5247,8 @@ void ResetUEnumNamesDetection() {
     DynOff::UENUM_VALUE_SIZE = 8;
     DynOff::UENUM_PAIR_STRIDE = 0;
     DynOff::bEnumNamesNewContainer = false;
+    // After the layout, so a reader that sees the new generation also sees the defaults it replaced.
+    DynOff::UENUM_DETECT_GEN.fetch_add(1, std::memory_order_acq_rel);
 }
 
 // ============================================================

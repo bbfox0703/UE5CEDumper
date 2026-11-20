@@ -209,6 +209,8 @@ static bool ParseEnumTable(uintptr_t enumAddr, std::vector<std::pair<int64_t, st
 // ============================================================
 static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     if (!enumAddr) return "";
+    // [RESCAN-DECOY-REINIT] Taken before the layout is read: a reset during the parse moves it (see the publish below).
+    const uint32_t gen = DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire);
 
     // Lazy init: trigger DetectUEnumNames on first call.
     // bUEnumNamesFailed prevents a retry storm.
@@ -256,7 +258,9 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         // integers — in the Live Walker, the Property Grid and every CE export, for
         // the rest of the process, with no retry. Leaving it uncached costs a re-read
         // per lookup and lets the next one recover.
-        if (!tableComplete) {
+        // [RESCAN-DECOY-REINIT] So is a table parsed across Genau::ResetUEnumNamesDetection, which may have read the
+        // reset's default layout halfway through.
+        if (!tableComplete || DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire) != gen) {
             for (const auto& [v, n] : entries)
                 if (v == value) return n;
             return "";
