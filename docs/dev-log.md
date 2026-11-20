@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — Three staging recipes stage again `[STAGING-STALE-RECIPES]`
+
+- **What changes:** `l41-step2-prefix-stall`, `l45-giveup-mutant` and `l55-denken-before` (the red arms of the closed
+  L41 / L45 / L55 live rows) match today's code again; each was staged and built. l41's commit reversal no longer
+  applied, so it is now a direct edit with the same effect (a cancelled enum search latches FAILED).
+- **Found doing it:** 20 of the 22 recipes that reverse a fix commit no longer reverse at today's code -- red arms of
+  their day, for closed rows. They stay as they are; `stage_dll.py`'s refusal now says to re-express one as direct
+  edits if its row reopens. The list is in todo.md.
+
 ## 2026-11-20 (build 3775) — Extra Scan replaces a GObjects that reads no objects `[RESCAN-DECOY-REINIT]`
 
 - **What changes:**
