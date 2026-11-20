@@ -276,6 +276,18 @@ after.
 | STVoyager | 2643390 | `STVoyager.exe` | `STVoyagerSteam-Win64-Shipping.exe` |
 | Satisfactory | 526870 | `FactoryGameSteam.exe` | `FactoryGameSteam-Win64-Shipping.exe` |
 
+**Getting into gameplay** -- only when the maintainer has cleared loading a save for that run (an autosave can land
+on the next area change). What the 2026-11-20 runs needed:
+
+- **DRAGON QUEST XI S:** the opening movie does not skip on a key (about two minutes), then Enter, 開始冒險, and the
+  autosave (從自動保存處繼續): that is the test slot; 冒險之書 1 and 2 are the maintainer's, so never 記錄 at a
+  church or statue and never open 刪除冒險之書. Keys: Enter confirms, **Backspace** cancels (Esc does nothing), **X**
+  opens the map (Backspace or X closes it), Enter on the map opens its menu. After a dialogue, keys can stop landing
+  until a click inside the window.
+- **Elliot:** Enter on the title, Load Game, the autosave -- the only save, and it is the maintainer's progress. An
+  autosave notice comes first (閉じる).
+- **Xbox Game Bar** can take the foreground mid-run; `front_window.py` cannot take it back. One Esc closes it.
+
 Steam libraries here: `C:\Program Files (x86)\Steam\steamapps` **and** `D:\SteamLibrary\steamapps`.
 
 ### ⚠ The trap that costs a whole session: a process that exists is not a game that BOOTED
