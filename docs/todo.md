@@ -514,11 +514,14 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[A4-508MARKER-2026-09-06]`'s UI badge leg on a raised run (2026-11-20, DumperTest58 Shipping; verification-register.md).
 - `[STARK-DRAIN-OFF-GAME-THREAD]` (1), the main-thread fallback (2026-11-20, UE423_Flying Shipping).
 - `[SOLIDEHOLD-2026-08-22]` arm (a) re-scoped, a close while moving with See-through on (2026-11-20, DumperTest Development; verification-register.md).
+- `[PEHOOK-2026-08-17]`'s 4.15 ProcessEvent-slot witness (2026-11-20, Extinction through its proxy; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
 - `[INT8-PREVIEW]`: no live struct on DumperTest Shipping holds an Int8 member (needs a fixture member and a repackage).
 - `[STARK-DRAIN-OFF-GAME-THREAD]` (2): no worker-thread skip in 1,000 Debug Camera pairs on DumperTest58 Development.
+- `[AOB-SKIP-OWN-DLL]`: IS Defense (4.10) skips the scan since `[UE410-2026-10-08]`, so its Pass 2 no longer runs;
+  Extinction's proxy scan (4.15) resolved in Pass 1. Needs a proxy title whose scan falls to Pass 2.
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
@@ -1755,7 +1758,11 @@ source and editor are installed for when they are needed.
   name without the magic is still scanned. Three /NOENTRY fixture DLLs (`dll/tests/res/owncopy_fixture.cpp`). Known
   limit: the version.dll proxy builds of 2026-03-02 to 03-04 export neither name. Live check owed: a title whose scan
   reaches Pass 2's multi-module fallback through our proxy logs "not scanning '<proxy>' ... the dumper's own image"
-  and no "N matches in '<our proxy>'" (IS Defense's 2026-10-08 log had 2 matches in VERSION.dll).
+  and no "N matches in '<our proxy>'" (IS Defense's 2026-10-08 log had 2 matches in VERSION.dll). ⏸ **That host is
+  gone** (measured 2026-11-20 `[LIVEPASS-2026-11-20]`): IS Defense with its version.dll proxy refreshed to 3776 logs
+  `UE 410 is older than the minimum supported 411 — SKIPPING the scan` since `[UE410-2026-10-08]`, so no pass runs at
+  all; Extinction's proxy scan (4.15) the same day resolved all three in Pass 1 (no `AOBScanAllModules` line). A host
+  needs a proxy-loaded scan that falls through to Pass 2.
 - ✅ `[DUMPER-SECOND-COPY-AUTOSTART]` **BUILT 2026-11-17 (builds 3728-3730), see its row** (LOW, a lead from the `[AOB-SKIP-OWN-DLL]` builder, not reproduced):
   `Voll::DecideStart` treats a pipe held by our own PID as AlreadyOurs, so a second copy in the same process (an
   injected UE5Dumper.dll beside a proxy) still runs UE5_AutoStartBlocking -- a full scan and Mimic::StartThread; whether

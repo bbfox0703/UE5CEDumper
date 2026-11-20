@@ -6166,6 +6166,10 @@ its own table covers 500-508). 5.5 has Lushfoil's witness (above). Still without
 ✅ **5.0 added 2026-11-18 on 3733**: Light Maze (Steam, UE 5.0.3, injected, 14,958 objects) `0x258`, Add_IntInt = 7,
 `validation OK — hook fired 1800 times in 1500ms`, no fallback, no VALIDATION FAILED (`out/register/pehook500.log`).
 Still without one: 5.2 (no 5.2 host is installed) and the 4.x rows other than 4.23 and 4.27.
+✅ **4.15 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: Extinction (Steam, UE 4.15, its version.dll proxy
+refreshed to 3776, `trigger_scan`, 200,569 objects) `DetectProcessEvent (pattern): match at vtable+0x1D0` -- the
+table's `case 415: return 0x1D0` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 2160 times in 1500ms`, 0
+fallback and 0 VALIDATION FAILED lines (the rig's one FAIL is again only its 500-508 table).
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
