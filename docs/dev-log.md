@@ -29,6 +29,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — The big docs slimmed, and the archive tools kept in the repo
+
+- **What this is:** the maintainer asked whether `todo.md` and `verification-register.md` needed archiving, then
+  for the dev-log to be split too and for the scripts to live in `tools/`.
+- **`tools/docs_archive/`** (new): the unit index, the approval join, the bounds check, the byte-identical move,
+  the independent re-check from git, and `split_devlog.py`. They had lived in a gitignored scratch folder (the
+  dev-log split's script did not survive at all); `tools/README.md` says how a pass runs.
+- **`todo.md` 1.63 MB → 1.48 MB:** 61 closed units (41 sections, 20 table rows) moved to
+  `archive/todo-closed-2026-11-20-build-3776.md`. **The register 1.08 MB → 1.05 MB:** 7 closed sections moved to
+  `archive/verification-register-closed-2026-11-20-build-3776.md`. Proposers and adversarial verifiers per region;
+  three units were sent back for a note found nowhere else. The census (192 KB of `todo.md`) did not move: its
+  charter keeps fixed rows in place, so archiving them is the maintainer's call.
+- **The dev-log 554 KB → 206 KB:** builds 3263-3670 (153 entries, 2026-08-19 … 2026-10-29) moved to
+  `archive/dev-log-2026-10-pre-build-3671.md`, cut on the 2026-11-01 date boundary.
+- Every move was asserted before writing and re-checked against git afterwards: nothing was edited, only moved.
+  `todo.md:NNNN`, `verification-register.md:NNNN` and `dev-log.md:NNNN` citations are stale from today; grep the
+  tag or the build number.
+
+-----
+
 ## 2026-11-20 (no build change) — Live checks on build 3776, in gameplay: L46 Phase J and Locate's drill to HP `[LIVEPASS-2026-11-20]`
 
 - **What this is:** the rows the maintainer cleared for a loaded save (DRAGON QUEST XI S and The Adventures of
