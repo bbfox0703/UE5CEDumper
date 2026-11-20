@@ -489,6 +489,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[LW-SEARCH-TIP]` (2026-11-20, AOT 3776, DumperTest Shipping).
 - `[FABRICATE-DEFAULT-UNSEEDED]` (MED; 2026-11-20, AOT 3776, DumperTest Shipping).
 - `[A1-ENVELOPE-2026-09-05]`'s CE-XML leg (2026-11-20, DumperTest Shipping `Arr_SoftMesh`; verification-register.md).
+- `[CAPREFRESH-2026-08-24]` (LOW; 2026-11-20: measured fixed by `[WALK-REFRESH-SCALAR-SHRINK]`'s Refresh; verification-register.md).
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 

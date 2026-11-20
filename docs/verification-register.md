@@ -8571,9 +8571,23 @@ spill time, which is the thing `Set_Big` was built to catch.
 straight past it. The substance of that clause (the shown count follows the cap) was measured in the
 **other** direction instead, 128 → 64, which is the same claim and is reachable.
 
-#### ⚠ NEW FINDING `[CAPREFRESH-2026-08-24]` (LOW) — **Refresh** updates only ONE of the three truncation disclosures
+#### ✅ CLOSED 2026-11-20 `[CAPREFRESH-2026-08-24]` (LOW) — **Refresh** now updates all three truncation disclosures (it updated only ONE)
 
-Found while running step 3, by pressing **Refresh** instead of re-opening. Both directions measured
+✅ **Measured fixed 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504,
+`DumperTestActor_0.Set_Big`, 199 entries). The fix came with `dbb989b2` `[WALK-REFRESH-SCALAR-SHRINK]` ("a Refresh
+inside a container view shows and says what the drill would"), extended by `[LW-EMPTIED-CONTAINER-REFRESH]`: Refresh
+now rewrites the current crumb's label and the status line from the same reading as the header. Both sequences of the
+table below, re-run:
+
+| sequence | breadcrumb | header | status line |
+|---|---|---|---|
+| drilled at 64, Array Limit raised to 256, **Refresh** | no badge | no badge | absent; rows run to `[199]` (value 9199) |
+| at 256, lowered to 64, **Refresh** | `⚠ showing 64 of 199` | `⚠ showing 64 of 199` | `Showing the first 64 of 199 entries — raise the "Array Limit" slider …` |
+
+The three agreed already when the slider moved, before Refresh, and Refresh kept them agreeing. The slider was left at
+64, its value before the check.
+
+*Was:* found while running step 3, by pressing **Refresh** instead of re-opening. Both directions measured
 on the same container:
 
 | sequence | breadcrumb | header | status line |
