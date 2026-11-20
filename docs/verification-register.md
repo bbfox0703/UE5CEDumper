@@ -1517,7 +1517,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -2500,7 +2500,7 @@ artefact leaves this program entirely and is pasted into another tool.
 
 -----
 
-### ⬜ SHIPPED 2026-09-10, NEEDS A LIVE CHECK — the audit-#4 fix pass's three unreachable arms: FP1 attached-pose · FP2 landing re-read · FP3 See-through untick race
+### 🟡 SHIPPED 2026-09-10 — FP1 and FP3 CLOSED, FP2 still owed: the audit-#4 fix pass's three unreachable arms: FP1 attached-pose · FP2 landing re-read · FP3 See-through untick race
 
 The `[A4-ASSESS-2026-09-09]` fix pass closed **eight** defect rows. Five are done: `[B30-REOPEN]`,
 `[SOLIDE-REFUSAL]` and `[BADGEPRIME]` were verified on DumperTest **Shipping** with a real
@@ -2523,6 +2523,19 @@ something the DLL never sent.
 | **FP1** | `[POSEATTACH-2026-09-10]` (`242d48c4`) — on an **attached** pawn whose `K2_GetActorLocation` invoke fails, the pose degrades to a parent-relative `RelativeLocation` read. `teleport-spec.md:218-220` requires a warning flag with it; the fallback shipped in 2026-07 and the flag did not, so a degraded read was byte-identical to a healthy one and those numbers were saved into markers and later driven back as a WORLD destination. Only the *absence* on a healthy pawn is measured. | **DLL side:** `teleport_get_pose` must carry `parent_relative: true` **and** the WALK log must show `Teleport: attached pawn but K2_GetActorLocation failed — falling back to RelativeLocation (parent-relative!)` (`Wirbel.cpp:443`) in the same second. **UI side:** the Teleport tab's status must read `⚠ PARENT-RELATIVE, not world coordinates` and name the marker consequence — not merely `Pose read (raw).` ⭐ **The pairing is the test**: `source` must still be `"raw"` while `parent_relative` is `true`, because that combination is exactly what used to be indistinguishable from a healthy read. **Staging:** possess a pawn attached to a vehicle / mount / moving platform, then make the invoke fail — the game thread idle (alt-tab on a title that pauses unfocused) or a title that cooks `K2_GetActorLocation` out of reflection, the shape Octopath is already recorded for. ⚠ **The CE mailbox carries it in its own byte**, pose flags `[178]` bit0 (contract 4, `[W2-MARKER-PARENTREL]`), never by widening `[176] source (0=raw, 1=invoke)`, which would change the MEANING of a contract field that `Mimic.h` says the surface hash cannot see. A CE-side row is separate work, not part of closing this one. |
 | **FP2** | `[TPREL-ZEROPOSE-2026-09-10]` (`5058e971`) — when the post-move pose re-read fails, `TeleportRelative` used to publish a landing of exactly `(0,0,0,0,0,0)`, indistinguishable from arriving at the world origin, and the panel overwrote its live X/Y/Z with zeros the user could copy or save. It now emits `landing_unknown` and publishes no coordinates. Only the healthy path is measured. | **DLL side:** `teleport_relative` must return `code: 0` **with `landing_unknown: true` and NO `x`/`y`/`z` keys at all** — the absence of the coordinate keys is the assertion, not a zero in them. **UI side:** the status must say the move happened but the coordinates are unchanged, and the panel's live X/Y/Z must still hold their PREVIOUS values — capture them before the move and compare, because "not zero" is a weaker claim than "unchanged". ⛔ **The negative control is mandatory**: an ordinary relative teleport in the same session must publish real coordinates and NO `landing_unknown`, or the row proves only that the field can be set. **Staging:** the re-read fails when `ResolveChain` or the `RelativeLocation` read fails *inside the same locked call* as the move — a large jump that puts the pawn into the void and gets it destroyed/unpossessed is the realistic trigger, which is exactly what this feature invites. |
 | **FP3** | ✅ **CLOSED 2026-09-10 `[FP3-SEETHRU-UNTICK-2026-09-10]`** — `[R3-SEETHRU-2026-09-10]` (`0fac36e9`) — See-through's `[DISABLE]` block wrote the mailbox with **no** bounded wait-for-IDLE, because the `AppendIdleWaitOrBail` call sat inside `if (enable)` while the `cmd` store below is emitted for both blocks. Unticking while another command was in flight could clobber it. The emitted script and the source shape are now pinned by a Theory over all 11 generators and by gate 17c; **the RACE itself has never been observed either way.** | **CE side:** with `UE5_DEBUG = 1`, untick the See-through record while a long command is in flight (a full `walk_world` or a snapshot started from the UI) and the Lua Engine must show the idle wait actually spinning — `_idleCmd` non-zero at least once before the operand write — rather than falling straight through. **DLL side:** the in-flight command must complete with its OWN result in the pipe log; the failure this guards is Mimic's `cmd` being overwritten mid-flight, which surfaces as the first command reporting a status that belongs to the second, or timing out with "the DLL never saw this command". ⚠ **A quiet pass proves nothing here** — if the mailbox was idle at the moment of the untick the wait exits immediately and the run is VACUOUS. The rig must show the wait was entered, or report the attempt as undecided. **Staging:** `UE5_DEBUG=1`, start a long command from the UI, untick the CE record inside its window. |
+
+✅ **FP1 CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` on DumperTest Shipping (UE 504, DLL and AOT UI 3776), staged as
+L78 did (`tools/verify/l78_parentrel_arm.py`), since the fixture has no vehicle: `attach` ran `K2_AttachToActor` on
+the live `BP_ThirdPersonCharacter_C` (`0x1858D8E3990`) onto a StaticMeshActor, KeepWorld x3, ReturnValue 01.
+**Control:** `teleport_get_pose` → `source: "invoke"`, world (900, 1110, 92.01), no `parent_relative`. `degrade`
+(invoke timeout 200 ms, not persisted; the game thread, tid 3708, suspended; `get_diagnostics` game_thread
+*stalled*): **`source: "raw"` with `parent_relative: true`**, (30.0, 31.71, 284.03) -- and walk-0.log gained its first
+`Teleport: attached pawn but K2_GetActorLocation failed — falling back to RelativeLocation (parent-relative!)` at
+15:08:21.648, the same second. **UI:** Current Pose → Refresh showed the `raw` tag and a **⚠ parent-relative** badge,
+and the tab's status line *"Pose read (raw) -- ⚠ PARENT-RELATIVE, not world coordinates: this pawn is attached
+(vehicle / platform) and the world-space read failed. Do not save these as a marker."* Then `heal`, `detach`,
+`restore`: the pose read the world (900, 1110, 92.01) again with no flag, and the hint cache holds no invoke timeout
+for this game. Not covered: the CE mailbox's pose-flags byte (a separate row, as above).
 
 ⭐ **FP3 is the one to attempt first**, and not because it is the most severe — it is the only one of
 the three whose staging needs no special game: a long command and a well-timed untick on the same

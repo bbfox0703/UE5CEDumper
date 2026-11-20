@@ -85,7 +85,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **15 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **14 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -498,6 +498,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[WIKI-TIPS-B3]` (2026-11-20, AOT 3776: the Teleport tooltips hovered, every item witnessed in the binary).
 - `[A7-EMPTYBASE-2026-09-05]`'s negative control 2, narrowness (2026-11-20, a fresh SDK export; verification-register.md).
 - `[WALK-REFRESH-SCALAR-SHRINK]`'s Array Limit case (2026-11-20, `Arr_Churn` at 5,004).
+- FP1 `[POSEATTACH-2026-09-10]` (2026-11-20, an attachment staged with L78's rig; pipe flag, log line and UI status; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
