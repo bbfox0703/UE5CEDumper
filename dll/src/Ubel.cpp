@@ -2205,6 +2205,10 @@ int FunctionFlagsOffset() {
     return DynOff::UFUNCTION_FLAGS;
 }
 
+void ResetFunctionFlagsVote() {}
+
+void ResetValidatedLayoutProbes() {}
+
 // Where FunctionFlags sits when `ver` is judged: a decided offset stays latched across an override; undecided, it starts
 // from `ver`'s own primary (ReadFuncFlagsAndParams). One rule for the override's refusal and for the published
 // contradiction, so they cannot judge the same version differently.

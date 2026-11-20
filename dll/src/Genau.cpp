@@ -4976,22 +4976,20 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, s
 //   1. Inline:  the FUObjectArray struct lives at &addr itself
 //   2. Pointer: addr holds a pointer to the FUObjectArray struct on the heap
 //
-// Thread-safe: reads game memory only, no global state mutation.
+// Reads game memory only; the one shared state it touches is the validators' log throttle (g_validationDbgCount).
 // ============================================================
-uintptr_t ExtraScanGObjects() {
-    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan...");
 
+// The module's writable, non-executable sections (.data, .bss, ...): what the sweep searches. Empty when the module
+// headers do not read.
+static std::vector<ScanRange> WritableDataSections() {
+    std::vector<ScanRange> dataSections;
     uintptr_t base = Macht::GetModuleBase(nullptr);
-    if (!base) return 0;
+    if (!base) return dataSections;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return dataSections;
     auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<DWORD>(dos->e_lfanew));
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
-
-    // Collect ALL writable, non-exec sections (.data, .bss, etc.)
-    struct SectionRange { uintptr_t start; uintptr_t end; };
-    std::vector<SectionRange> dataSections;
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return dataSections;
 
     const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
@@ -5003,16 +5001,18 @@ uintptr_t ExtraScanGObjects() {
                                      base + section->VirtualAddress + section->Misc.VirtualSize });
         }
     }
+    return dataSections;
+}
 
-    if (dataSections.empty()) {
-        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
-        return 0;
-    }
-
+size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_t avoid, size_t max,
+                                  std::vector<uintptr_t>& out, bool* outCancelled) {
+    if (outCancelled) *outCancelled = false;
+    (void)avoid; (void)max;
+    const size_t before = out.size();
     int candidatesTested = 0;
     g_validationDbgCount = 0;  // Reset throttle for validators
 
-    for (auto& sec : dataSections) {
+    for (const ScanRange& sec : ranges) {
         Sein::Debug("SCAN:GObj", "ExtraScanGObjects: Scanning [0x%llX-0x%llX] (%zu bytes)",
                   (unsigned long long)sec.start, (unsigned long long)sec.end,
                   (size_t)(sec.end - sec.start));
@@ -5021,13 +5021,15 @@ uintptr_t ExtraScanGObjects() {
             if ((addr & 0xFFF) == 0 && Tot::Requested()) {
                 Sein::Warn("SCAN:GObj", "ExtraScanGObjects: cancelled (%d candidates tested)",
                            candidatesTested);
-                return 0;
+                if (outCancelled) *outCancelled = true;
+                return out.size() - before;
             }
             // Mode 1: Inline — the FUObjectArray struct starts at addr
             if (ValidateGObjects(addr)) {
                 Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found inline FUObjectArray at 0x%llX (%d candidates tested)",
                          (unsigned long long)addr, candidatesTested);
-                return addr;
+                out.push_back(addr);
+                return out.size() - before;
             }
 
             // Mode 2: Pointer — addr holds a pointer to FUObjectArray
@@ -5036,7 +5038,8 @@ uintptr_t ExtraScanGObjects() {
                 if (ValidateGObjects(ptrVal)) {
                     Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found pointed FUObjectArray at 0x%llX (ptr@0x%llX, %d candidates tested)",
                              (unsigned long long)ptrVal, (unsigned long long)addr, candidatesTested);
-                    return ptrVal;
+                    out.push_back(ptrVal);
+                    return out.size() - before;
                 }
             }
 
@@ -5048,8 +5051,77 @@ uintptr_t ExtraScanGObjects() {
     }
 
     Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
-    return 0;
+    return out.size() - before;
 }
+
+size_t ExtraScanGObjectsCandidates(uintptr_t avoid, size_t max, std::vector<uintptr_t>& out, bool* outCancelled) {
+    if (outCancelled) *outCancelled = false;
+    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan (collecting up to %zu, avoiding 0x%llX)...",
+               max, (unsigned long long)avoid);
+    const std::vector<ScanRange> dataSections = WritableDataSections();
+    if (dataSections.empty()) {
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
+        return 0;
+    }
+    return CollectExtraScanCandidates(dataSections, avoid, max, out, outCancelled);
+}
+
+uintptr_t ExtraScanGObjects() {
+    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan...");
+
+    const std::vector<ScanRange> dataSections = WritableDataSections();
+    if (dataSections.empty()) {
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
+        return 0;
+    }
+    std::vector<uintptr_t> found;
+    CollectExtraScanCandidates(dataSections, 0, 1, found);
+    return found.empty() ? 0 : found.front();
+}
+
+// ============================================================
+// [RESCAN-DECOY-REINIT] Choosing among Extra Scan's candidates, and the re-init a replacement needs
+// ============================================================
+
+GObjectsCandidateScore ScoreGObjectsCandidate(uintptr_t addr, int maxSlots) {
+    GObjectsCandidateScore s;
+    s.addr = addr;
+    Aura::Init(addr);
+    s.count = Aura::GetCount();
+    if (s.count <= 0) return s;
+    // The head: a real array's permanent core objects (CoreUObject classes and packages), densely named. A sample spread
+    // over the whole array would miss them on a huge, sparse master and let a small dense list win.
+    const int limit = s.count < maxSlots ? s.count : maxSlots;
+    for (int i = 0; i < limit && s.resolved < 8; ++i) {
+        const uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        ++s.scanned;
+        uint32_t nameIdx = 0;
+        if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) {
+            const std::string nm = Serie::GetString(nameIdx);
+            if (!nm.empty() && nm != "None") ++s.resolved;
+        }
+    }
+    return s;
+}
+
+GObjectsCandidateScore ChooseGObjectsCandidate(uintptr_t published, const std::vector<uintptr_t>& candidates,
+                                               int nameSampleSlots, size_t* outSampled, bool* outAborted) {
+    (void)candidates; (void)nameSampleSlots;
+    if (outSampled) *outSampled = 0;
+    if (outAborted) *outAborted = false;
+    Aura::Init(published);
+    return {};
+}
+
+ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHooks& hooks) {
+    (void)hooks;
+    ReplaceResult r;
+    Aura::Init(in.published);
+    return r;
+}
+
+void ResetUEnumNamesDetection() {}
 
 // ============================================================
 // ExtraScanGWorld — Dumper-7-style instance scan

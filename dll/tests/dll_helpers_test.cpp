@@ -1714,6 +1714,115 @@ static void Test_Stark_PickProcessEventSlot() {
     EXPECT("PESLOT control: the wide pass is not consulted when a first pass answers", slot == 0x220 && !wideAsked);
 }
 
+// [RESCAN-DECOY-REINIT] What Extra Scan looks for: a GObjects of 0 as before (the first hit); a published one that reads
+// no objects is replaced when GNames is up; GWorld only over a pool that reads objects.
+static void Test_Genau_PlanRescan() {
+    constexpr uintptr_t G = 0x7FF600001000, N = 0x7FF600002000, W = 0x7FF600003000;
+    Genau::RescanPlan p = Genau::PlanRescan(G, N, W, 0);
+    EXPECT("RESCANPLAN ⭐: a published GObjects that reads no objects is sought, to be replaced",
+           p.seekGObjects && p.replace);
+    EXPECT("RESCANPLAN ⭐: ...the sweep never offers it back", p.avoid == G);
+    EXPECT("RESCANPLAN ⭐: ...and collects candidates instead of stopping at the first",
+           p.maxCandidates == Genau::kRescanMaxCandidates);
+    EXPECT("RESCANPLAN ⭐: a negative count is no objects either", Genau::PlanRescan(G, N, W, -1).replace);
+    p = Genau::PlanRescan(G, N, 0, 0);
+    EXPECT("RESCANPLAN ⭐: GWorld is not sought over a pool that reads no objects (ExtraScanGWorld finds nothing there)",
+           p.seekGObjects && p.replace && !p.seekGWorld);
+    p = Genau::PlanRescan(G, 0, W, 0);
+    EXPECT("RESCANPLAN: without GNames no candidate can be judged by its names -- nothing is sought",
+           !p.seekGObjects && !p.replace && p.avoid == 0 && !p.seekGWorld);
+
+    // Stock: a pool that reads objects is never replaced, and the rest is as before.
+    p = Genau::PlanRescan(G, N, W, 153466);
+    EXPECT("RESCANPLAN control: a published GObjects that reads objects is not sought",
+           !p.seekGObjects && !p.replace && p.avoid == 0 && p.maxCandidates == 0 && !p.seekGWorld);
+    p = Genau::PlanRescan(G, N, 0, 153466);
+    EXPECT("RESCANPLAN control: ...and a missing GWorld over it is sought, as before",
+           !p.seekGObjects && p.seekGWorld);
+    p = Genau::PlanRescan(0, N, 0, 0);
+    EXPECT("RESCANPLAN control: a GObjects of 0 is sought by the first hit, avoiding nothing, as before",
+           p.seekGObjects && !p.replace && p.avoid == 0 && p.maxCandidates == 1 && !p.seekGWorld);
+    p = Genau::PlanRescan(0, 0, 0, 0);
+    EXPECT("RESCANPLAN control: ...without GNames too", p.seekGObjects && p.maxCandidates == 1 && !p.seekGWorld);
+    p = Genau::PlanRescan(G, 0, 0, 153466);
+    EXPECT("RESCANPLAN control: GWorld needs GNames, as before", !p.seekGObjects && !p.seekGWorld);
+}
+
+// [RESCAN-DECOY-REINIT] What apply_rescan does with a finished job.
+static void Test_Genau_PlanRescanApply() {
+    using A = Genau::RescanApply;
+    constexpr uintptr_t D = 0x7FF600001000, N = 0x7FF600002000, Other = 0x7FF600009000;
+    EXPECT("RESCANAPPLY ⭐: the decoy the job avoided, still reading no objects, is replaced",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, false, false) == A::Replace);
+    EXPECT("RESCANAPPLY ⭐: ...not twice: a second apply of the same job finds it consumed",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, false, true) == A::AlreadyApplied);
+    EXPECT("RESCANAPPLY ⭐: ...nor from a list Stop cut short",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, true, false) == A::Cancelled);
+    EXPECT("RESCANAPPLY ⭐: a GObjects that moved since the job looked is left alone",
+           Genau::PlanRescanApply(Other, 0, N, true, D, 3, false, false) == A::Changed);
+    EXPECT("RESCANAPPLY ⭐: ...and so is one that reads objects now",
+           Genau::PlanRescanApply(D, 5000, N, true, D, 3, false, false) == A::Changed);
+    EXPECT("RESCANAPPLY: no candidates -> nothing to apply",
+           Genau::PlanRescanApply(D, 0, N, true, D, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: a job that looked only for GWorld replaces nothing",
+           Genau::PlanRescanApply(D, 0, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: without GNames nothing is replaced",
+           Genau::PlanRescanApply(D, 0, 0, true, D, 3, false, false) == A::Changed);
+
+    // Stock: a GObjects of 0 is filled from the first hit, as before -- even from a cut-short list, whose first hit is
+    // still a hit -- and a pool that reads objects is never touched.
+    EXPECT("RESCANAPPLY control: a GObjects of 0 is filled from the job's first hit, as before",
+           Genau::PlanRescanApply(0, 0, N, false, 0, 1, false, false) == A::Fill);
+    EXPECT("RESCANAPPLY control: ...a cancelled sweep's hit included",
+           Genau::PlanRescanApply(0, 0, 0, false, 0, 1, true, false) == A::Fill);
+    EXPECT("RESCANAPPLY control: ...and nothing found is nothing applied",
+           Genau::PlanRescanApply(0, 0, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY control: a published GObjects that reads objects is never replaced",
+           Genau::PlanRescanApply(D, 153466, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: the outcome words the pipe sends",
+           std::string(Genau::RescanApplyName(A::Fill)) == "filled"
+           && std::string(Genau::RescanApplyName(A::AlreadyApplied)) == "already_applied"
+           && std::string(Genau::RescanApplyName(A::Changed)) == "changed"
+           && std::string(Genau::RescanApplyName(A::Cancelled)) == "cancelled"
+           && std::string(Genau::RescanApplyName(A::NotSought)) == "not_sought");
+}
+
+// [RESCAN-DECOY-REINIT] apply_rescan samples names in NameSampleOrder and stops at the first candidate that qualifies;
+// that must be the candidate UE5_Init's heap-fallback rule (PickLargestNamedCandidate) keeps, on every input.
+static void Test_Genau_NameSampleOrder() {
+    using S = Genau::GObjectsCandidateScore;
+    auto firstQualifying = [](const std::vector<S>& s) {
+        std::vector<int32_t> counts;
+        for (const S& c : s) counts.push_back(c.count);
+        for (size_t i : Genau::NameSampleOrder(counts.data(), counts.size()))
+            if (s[i].resolved >= Genau::kMinResolvedNames) return static_cast<int>(i);
+        return -1;
+    };
+    const std::vector<std::vector<S>> cases = {
+        { { 1, 0, 0 }, { 2, 0x1000, 8 }, { 3, 0x14000, 8 } },          // the master after a partial list
+        { { 1, 0x14000, 1 }, { 2, 0x1000, 8 } },                        // the larger reads no names: the partial
+        { { 1, 0x5000, 8 }, { 2, 0x5000, 8 }, { 3, 0x5000, 0 } },       // equal counts: the first in scan order
+        { { 1, 0x5000, 0 }, { 2, 0x5000, 8 } },                         // equal counts, the first unnamed
+        { { 1, -1, 8 }, { 2, 0, 8 } },                                  // nothing reads objects
+        {},
+        { { 1, 0x40, 2 } },                                             // exactly kMinResolvedNames
+    };
+    for (size_t k = 0; k < cases.size(); ++k) {
+        const std::vector<S>& c = cases[k];
+        const int pick = Genau::PickLargestNamedCandidate(c.data(), c.size());
+        EXPECT(("NAMEORDER ⭐: sampling largest-first keeps the heap fallback's pick, case " + std::to_string(k)).c_str(),
+               firstQualifying(c) == pick);
+    }
+    EXPECT("NAMEORDER: the master wins over a partial list", Genau::PickLargestNamedCandidate(cases[0].data(), 3) == 2);
+    EXPECT("NAMEORDER: equal counts keep the first", Genau::PickLargestNamedCandidate(cases[2].data(), 3) == 0);
+    EXPECT("NAMEORDER: one name is not an array",
+           Genau::PickLargestNamedCandidate(cases[1].data(), 1) == -1);
+    const int32_t counts[] = { 5, 0, 9, -3, 9, 1 };
+    const std::vector<size_t> order = Genau::NameSampleOrder(counts, 6);
+    EXPECT("NAMEORDER: only arrays that read objects, largest first, equal counts in scan order",
+           order == std::vector<size_t>({ 2, 4, 0, 5 }));
+}
+
 // [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
 // first decides, and the other learns it lost.
 static void Test_Stark_ClaimRequest() {
@@ -13293,6 +13402,9 @@ int main() {
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_WideFlagTests);
     RUN(Test_Stark_PickProcessEventSlot);
+    RUN(Test_Genau_PlanRescan);
+    RUN(Test_Genau_PlanRescanApply);
+    RUN(Test_Genau_NameSampleOrder);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);

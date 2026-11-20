@@ -15458,6 +15458,363 @@ int main() {
         Genau::s_mainLinker = saved;
     }
 
+    // -- RESCAN-DECOY-REINIT -- Extra Scan replaces a GObjects that reads no objects, and re-runs what its session derived --
+    //
+    // ⛔ POOL-FAKING and DYNOFF: own name table, a fixed fixture region, and a real offsets probe over it. LAST in main:
+    // the probe rewrites DynOff globals no later block may meet.
+    // [RESCAN-DECOY-REINIT] A published GObjects that Aura reads no objects from, which every Count == 0 recovery missed.
+    // Extra Scan collects candidates past it instead of stopping at the first, apply_rescan keeps the one UE5_Init's heap
+    // fallback would (the largest array whose head resolves names), and the re-init re-runs the offsets probe and resets
+    // every latch the empty pool fed, in UE5_Init's order. Stock shapes and a GObjects of 0 behave as before (§7.3 #5).
+    {
+        blk("RESCAN-DECOY-REINIT - a 0-object GObjects is replaced by the largest named candidate; its session is re-run");
+        static uint8_t rdEntry[2][0x40] = {};
+        memcpy(rdEntry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t rdChunk[3] = { 0, reinterpret_cast<uintptr_t>(rdEntry[1]), 0 };
+        static uintptr_t rdChunks[2] = { reinterpret_cast<uintptr_t>(rdChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(rdChunks), 0x10);
+
+        // The tables, chunks and objects sit at a fixed address whose halves no count slot can take (see UE58-ADJ10), in a
+        // region large enough that a walk over every slot of the largest count below stays inside committed zeros.
+        uint8_t* region = nullptr;
+        for (uint32_t hi : { 0x00F2u, 0x00E2u, 0x00D2u, 0x00C2u }) {
+            region = static_cast<uint8_t*>(VirtualAlloc(
+                reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x20000000u), 0x80000,
+                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (region) break;
+        }
+        check("RESCAN setup: a fixture region at 0x000000X2_20000000", region != nullptr);
+        if (region) {
+            // 64 named objects whose ClassPrivate is a UClass that is its own class; a chunk of 24-byte items for each item
+            // shape (UObject* at +0x00, and at +0x08 behind UE 5.7+'s FlagsAndRefCount), the 64 objects at their head.
+            uint8_t* objs = region;
+            uint8_t* cls = region + 0x1000;
+            const uintptr_t clsAddr = reinterpret_cast<uintptr_t>(cls);
+            memcpy(cls + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+            uint8_t* chunkAt[2] = { region + 0x10000, region + 0x48000 };
+            for (int i = 0; i < 64; ++i) {
+                uint8_t* o = objs + i * 0x40;
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+                const int32_t nameIdx = 1;
+                memcpy(o + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+                const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+                memcpy(chunkAt[0] + i * 24, &oa, 8);
+                memcpy(chunkAt[1] + i * 24 + 8, &oa, 8);
+            }
+            auto* table = reinterpret_cast<uintptr_t*>(region + 0x2000);   // every chunk slot: chunk 0
+            for (int i = 0; i < 0x300; ++i) table[i] = reinterpret_cast<uintptr_t>(chunkAt[0]);
+            const uintptr_t tableAddr = reinterpret_cast<uintptr_t>(table);
+
+            // A stock UE 4.20-5.7 FUObjectArray at `at` (its base): the GC prefix, then ObjObjects at +0x10.
+            auto putStock = [](uint8_t* at, uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num) {
+                memset(at, 0, 0x80);
+                auto p32 = [&](int o, int32_t v) { memcpy(at + o, &v, 4); };
+                p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+                memcpy(at + 0x10, &tbl, 8);
+                p32(0x20, maxChunks * Grimoire::OBJECTS_PER_CHUNK); p32(0x24, num);
+                p32(0x28, maxChunks); p32(0x2C, numChunks);
+            };
+            // The decoy: Phantom Blade Zero's ObjObjects from its Objects field on (VND10-A1-01 pins that Genau takes that
+            // anchor through relaxed F and Aura reads 0 there), alone, with nothing before it that reads as an array.
+            auto putDecoy = [](uint8_t* at, uintptr_t tbl, int32_t num, int32_t maxE) {
+                memset(at, 0, 0x60);
+                memcpy(at + 0x00, &tbl, 8);
+                memcpy(at + 0x08, &num, 4);
+                memcpy(at + 0x0C, &maxE, 4);
+                const uint64_t all = ~0ull;
+                memcpy(at + 0x18, &all, 8);
+                const int32_t m1 = -1, spin = 4000;
+                memcpy(at + 0x20, &m1, 4);
+                memcpy(at + 0x38, &spin, 4);
+            };
+
+            // One range the sweep searches: the decoy inline, a partial list, the master, and a slot pointing at a second
+            // decoy in the region (pointer mode).
+            alignas(16) static uint8_t rd[0x400] = {};
+            memset(rd, 0, sizeof rd);
+            const uintptr_t D = reinterpret_cast<uintptr_t>(rd) + 0x40;
+            const uintptr_t P = reinterpret_cast<uintptr_t>(rd) + 0x140;
+            const uintptr_t M = reinterpret_cast<uintptr_t>(rd) + 0x240;
+            uint8_t* d2 = region + 0x3000;
+            const uintptr_t D2 = reinterpret_cast<uintptr_t>(d2);
+            constexpr int32_t kPartial = 0x1200, kMaster = 0x4000;
+            putDecoy(rd + 0x40, tableAddr, 0x4000, 4259840);
+            putStock(rd + 0x140, tableAddr, 6, 1, kPartial);
+            putStock(rd + 0x240, tableAddr, 6, 1, kMaster);
+            putDecoy(d2, tableAddr, 0x4000, 4259840);
+            memcpy(rd + 0x340, &D2, 8);
+            const std::vector<Genau::ScanRange> range = { { reinterpret_cast<uintptr_t>(rd), reinterpret_cast<uintptr_t>(rd) + sizeof rd } };
+
+            check("RESCAN setup: the decoy validates in Genau", Genau::ValidateGObjects(D) && Genau::ValidateGObjects(D2));
+            Aura::Init(D);
+            check("RESCAN setup: ...and Aura reads no objects from it", Aura::GetCount() <= 0,
+                  std::to_string(Aura::GetCount()).c_str());
+            check("RESCAN setup: the partial list and the master validate at their bases",
+                  Genau::ValidateGObjects(P) && Genau::ValidateGObjects(M));
+            Aura::Init(M);
+            check("RESCAN setup: ...and Aura reads the master whole", Aura::GetCount() == kMaster);
+
+            // Today's sweep, kept here as the oracle: the first address, inline then pointed to, that validates.
+            auto oldFirstHit = [](const std::vector<Genau::ScanRange>& rs) -> uintptr_t {
+                for (const Genau::ScanRange& sec : rs) {
+                    for (uintptr_t addr = sec.start; addr + 0x20 < sec.end; addr += 4) {
+                        if (Genau::ValidateGObjects(addr)) return addr;
+                        uintptr_t ptrVal = 0;
+                        if (Macht::ReadSafe(addr, ptrVal) && ptrVal && Genau::LooksLikeDataPtr(ptrVal)
+                            && Genau::ValidateGObjects(ptrVal))
+                            return ptrVal;
+                    }
+                }
+                return 0;
+            };
+            auto has = [](const std::vector<uintptr_t>& v, uintptr_t a) {
+                return std::find(v.begin(), v.end(), a) != v.end();
+            };
+            auto listText = [&](const std::vector<uintptr_t>& v) {
+                std::string s;
+                for (uintptr_t a : v) {
+                    char b[40];
+                    const char* name = a == D ? "D" : a == D2 ? "D2" : a == P ? "P" : a == M ? "M" : nullptr;
+                    if (name) snprintf(b, sizeof b, "%s%s", s.empty() ? "" : " ", name);
+                    else snprintf(b, sizeof b, "%s0x%llX", s.empty() ? "" : " ", (unsigned long long)a);
+                    s += b;
+                }
+                return s;
+            };
+
+            // -- the sweep --
+            std::vector<uintptr_t> first, all, avoidD, avoidD2;
+            Genau::CollectExtraScanCandidates(range, 0, 1, first);
+            check("RESCAN control: a GObjects of 0 gets today's first hit, the same address", first.size() == 1
+                  && first[0] == oldFirstHit(range), listText(first).c_str());
+            Genau::CollectExtraScanCandidates(range, 0, Genau::kRescanMaxCandidates, all);
+            Genau::CollectExtraScanCandidates(range, D, Genau::kRescanMaxCandidates, avoidD);
+            Genau::CollectExtraScanCandidates(range, D2, Genau::kRescanMaxCandidates, avoidD2);
+            check("RESCAN ⭐: the replace sweep collects past the first hit -- the partial list and the master",
+                  has(avoidD, P) && has(avoidD, M), listText(avoidD).c_str());
+            check("RESCAN ⭐: ...in scan order", has(avoidD, P) && has(avoidD, M)
+                  && std::find(avoidD.begin(), avoidD.end(), P) < std::find(avoidD.begin(), avoidD.end(), M));
+            check("RESCAN ⭐: ...never offering the published decoy inline", !has(avoidD, D) && has(all, D),
+                  listText(all).c_str());
+            check("RESCAN ⭐: ...nor through a pointer to it", !has(avoidD2, D2) && has(avoidD2, D) && has(all, D2),
+                  listText(avoidD2).c_str());
+            {
+                std::vector<uintptr_t> sorted = all;
+                std::sort(sorted.begin(), sorted.end());
+                check("RESCAN: every address once", std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
+                std::vector<uintptr_t> capped;
+                Genau::CollectExtraScanCandidates(range, 0, 2, capped);
+                check("RESCAN: the cap stops the sweep, keeping the first ones",
+                      capped.size() == 2 && capped[0] == all[0] && capped[1] == all[1], listText(capped).c_str());
+            }
+
+            // -- the choice --
+            size_t sampled = 0;
+            bool aborted = true;
+            Genau::GObjectsCandidateScore won = Genau::ChooseGObjectsCandidate(D, avoidD, Genau::kRescanNameSampleSlots,
+                                                                              &sampled, &aborted);
+            check("RESCAN ⭐: the master is chosen over the partial list", won.addr == M && won.count == kMaster
+                  && won.resolved >= Genau::kMinResolvedNames && !aborted, listText({ won.addr }).c_str());
+            check("RESCAN ⭐: ...and Aura is left on it", Aura::GetCount() == kMaster);
+            check("RESCAN: ...sampling names only down to the winner", sampled == 1,
+                  ("sampled " + std::to_string(sampled)).c_str());
+            won = Genau::ChooseGObjectsCandidate(D, { D, D2 }, Genau::kRescanNameSampleSlots, &sampled);
+            check("RESCAN ⭐: no candidate that reads objects -> none, and Aura goes back to the published decoy",
+                  won.addr == 0 && Aura::GetCount() <= 0);
+            // A published pointer that reads objects now is its own winner (the engine was not up when init ran).
+            won = Genau::ChooseGObjectsCandidate(M, { P }, Genau::kRescanNameSampleSlots);
+            check("RESCAN: a published GObjects that reads objects now is kept", won.addr == M && Aura::GetCount() == kMaster);
+
+            // Every stock shape: among the anchors the sweep would offer around it, the choice reads the array whole.
+            // The shapes and the GC fields as UE58-ADJ10 builds them.
+            struct Shape { const char* name; int obj, maxE, num, maxC, numC, gc; };
+            const Shape shapes[] = {
+                { "UE 4.20-5.7", 0x10, 0x20, 0x24, 0x28, 0x2C, 0x00 }, { "UE 5.8", 0x00, 0x0C, 0x08, 0x14, 0x10, 0x20 },
+                { "UE4-Extended", 0x10, 0x18, 0x1C, 0x20, 0x24, 0x00 }, { "flat 4.11-4.19", 0x10, 0x18, 0x1C, -1, -1, 0x00 },
+                { "Back4Blood", 0x20, 0x10, 0x14, 0x18, 0x1C, 0x00 },  { "Multiversus", 0x28, 0x20, 0x10, 0x24, 0x30, 0x00 },
+                { "MindsEye", 0x28, 0x10, 0x24, 0x20, 0x14, 0x00 },    { "UE5.7-Mistfall", 0x10, 0x20, 0x24, 0x04, 0x08, -1 },
+                { "Phantom Blade Zero", 0x18, 0x24, 0x20, 0x10, 0x14, 0x00 },
+            };
+            alignas(16) static uint8_t sh[0x100] = {};
+            const uintptr_t SB = reinterpret_cast<uintptr_t>(sh) + 0x40;
+            for (const Shape& s : shapes) {
+                for (int item = 0; item < 2; ++item) {
+                    memset(sh, 0, sizeof sh);
+                    auto p32 = [&](int o, int32_t v) { memcpy(sh + 0x40 + o, &v, 4); };
+                    if (s.gc >= 0) { p32(s.gc, 0x8001); p32(s.gc + 4, 0x8000); }
+                    if (s.gc == 0) { p32(0x08, 0x8001); p32(0x0C, 0); }
+                    const uintptr_t chunk = reinterpret_cast<uintptr_t>(chunkAt[item]);
+                    const bool flat = s.maxC < 0;
+                    for (int i = 0; i < 6; ++i) table[i] = chunk;
+                    const uintptr_t objs0 = flat ? chunk : tableAddr;
+                    memcpy(sh + 0x40 + s.obj, &objs0, 8);
+                    p32(s.maxE, 6 * Grimoire::OBJECTS_PER_CHUNK);
+                    p32(s.num, kMaster);
+                    if (!flat) { p32(s.maxC, 6); p32(s.numC, 1); }
+                    std::vector<uintptr_t> anchors;
+                    for (int off = -0x20; off <= 0x40; off += 4)
+                        if (Genau::ValidateGObjects(SB + off)) anchors.push_back(SB + off);
+                    const std::string tag = std::string(" (") + s.name + (item ? ", UObject* at +0x08)" : ")");
+                    if (anchors.empty()) continue;   // a shape these numbers do not validate is not offered at all
+                    won = Genau::ChooseGObjectsCandidate(0, anchors, Genau::kRescanNameSampleSlots);
+                    check(("RESCAN control: the choice reads a stock array whole" + tag).c_str(),
+                          won.addr != 0 && won.count == kMaster && won.resolved >= Genau::kMinResolvedNames,
+                          ("count " + std::to_string(won.count) + ", " + std::to_string(anchors.size()) + " anchor(s)").c_str());
+                }
+            }
+            for (int i = 0; i < 0x300; ++i) table[i] = reinterpret_cast<uintptr_t>(chunkAt[0]);
+
+            // -- the re-init --
+            // The decoy's session: the offsets probe gave up over its empty pool, and the latches it fed are taken.
+            const auto svCpn   = DynOff::bCasePreservingName;
+            const auto svOuter = DynOff::UOBJECT_OUTER;
+            const auto svFProp = DynOff::bUseFProperty;
+            const uint32_t svVersion = g_cachedUEVersion;
+            g_cachedUEVersion = 501;
+            auto decoySession = [&] {
+                Aura::Init(D);
+                Genau::ValidateAndFixOffsets(501);
+                DynOff::bUFunctionFlagsDetected.store(true); DynOff::UFUNCTION_FLAGS = 0;
+                DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+                DynOff::bUFunctionFuncDetected.store(true); DynOff::UFUNCTION_FUNC = 0;
+                DynOff::bUEnumNamesFailed.store(true); DynOff::bUEnumNamesDetected.store(true);
+                DynOff::FNAME_SIZE_MEASURED.store(0); DynOff::bFNameSizeProbed.store(true);
+                DynOff::FNAME_ALIGN_MEASURED.store(0); DynOff::bFNameAlignProbed.store(true);
+                DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(-1); DynOff::bSoftPathProbed.store(true);
+                DynOff::UCLASS_INTERFACES.store(-1);
+                DynOff::bCompactSets.store(true);
+                DynOff::SOFTPTR_PATH = 0x10; DynOff::LAZYPTR_GUID = 0x10;
+                g_cachedUEVersion = 507;   // the decoy's ladder raised it from the decoy's item layout
+            };
+            decoySession();
+            check("RESCAN setup: the decoy's probe gave up over its empty pool, and still counts as run",
+                  DynOff::bOffsetsProbeRan.load() && !DynOff::bOffsetsValidated.load(), DynOff::g_offsetsFallbackReason);
+
+            using Step = Genau::ReplaceStep;
+            std::vector<Step> steps;
+            bool probeRanAtPublish = true, voteAtPublish = true, probedAtGEngine = false;
+            bool enumClearAtClimb = false, versionAtClimb = false;
+            uintptr_t published = 0;
+            bool inPlace = true;
+            Genau::ReplaceHooks hooks;
+            hooks.publish = [&](uintptr_t w, bool place) {
+                published = w; inPlace = place;
+                probeRanAtPublish = DynOff::bOffsetsProbeRan.load();
+                voteAtPublish = DynOff::bUFunctionFlagsDetected.load();
+            };
+            hooks.resolveGEngine = [&] { probedAtGEngine = DynOff::bOffsetsProbeRan.load(); };
+            hooks.climbVersion = [&] {
+                enumClearAtClimb = !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load();
+                versionAtClimb = g_cachedUEVersion == 501;
+                Ubel::FunctionFlagsOffset();   // the CMC rung votes through WalkFunctions, as UE5_Init's ladder does
+            };
+            hooks.onStep = [&](Step s) { steps.push_back(s); };
+            Genau::ReplaceInput in;
+            in.published = D;
+            in.candidates = avoidD;
+            in.preLadderVersion = 501;
+            const uint32_t retiresBefore = DynOff::g_offsetValidations.load();
+            Genau::ReplaceResult rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+
+            check("RESCAN ⭐: the decoy is replaced by the master", rr.outcome == Genau::ReplaceOutcome::Replaced
+                  && rr.winner.addr == M && published == M && !inPlace && Aura::GetCount() == kMaster);
+            const std::vector<Step> want = { Step::Chosen, Step::VerdictReset, Step::AuraOnWinner, Step::Published,
+                                             Step::LatchesReset, Step::Probed, Step::GEngine, Step::UEnumReset,
+                                             Step::Climbed, Step::WalkLatchesReset };
+            check("RESCAN ⭐: the re-init runs UE5_Init's order", steps == want,
+                  ("steps " + std::to_string(steps.size())).c_str());
+            check("RESCAN ⭐: the decoy's verdict and vote are gone before the winner is published",
+                  !probeRanAtPublish && !voteAtPublish);
+            check("RESCAN ⭐: the offsets probe runs again over the winner, before the GEngine second pass",
+                  probedAtGEngine && DynOff::bOffsetsProbeRan.load());
+            check("RESCAN ⭐: the UEnum names latch is clear when the ladder asks for it", enumClearAtClimb);
+            check("RESCAN ⭐: the ladder climbs from the pre-ladder version", versionAtClimb);
+            check("RESCAN ⭐: the vote the ladder's CMC rung takes is kept, as UE5_Init keeps it",
+                  DynOff::bUFunctionFlagsDetected.load());
+            check("RESCAN ⭐: UFunction::Func is detected again on next use", !DynOff::bUFunctionFuncDetected.load());
+            check("RESCAN ⭐: the validated-gated layout probes run again",
+                  !DynOff::bFNameSizeProbed.load() && !DynOff::bFNameAlignProbed.load() && !DynOff::bSoftPathProbed.load());
+            check("RESCAN ⭐: the walk-fed latches and the version-derived envelopes are dropped",
+                  !DynOff::bCompactSets.load() && DynOff::SOFTPTR_PATH == -1 && DynOff::LAZYPTR_GUID == -1
+                  && DynOff::UCLASS_INTERFACES.load() == 0);
+            check("RESCAN ⭐: the family epoch is retired after the ladder too (the probe's own retire, then one more)",
+                  DynOff::g_offsetValidations.load() == retiresBefore + 4,
+                  (std::to_string(retiresBefore) + " -> " + std::to_string(DynOff::g_offsetValidations.load())).c_str());
+
+            // None qualifies: nothing but Aura is touched, and it goes back to the decoy.
+            decoySession();
+            const char* svReason = DynOff::g_offsetsFallbackReason;
+            const uint32_t svRetires = DynOff::g_offsetValidations.load();
+            steps.clear();
+            bool hookRan = false;
+            Genau::ReplaceHooks quiet;
+            quiet.publish = [&](uintptr_t, bool) { hookRan = true; };
+            quiet.resolveGEngine = [&] { hookRan = true; };
+            quiet.climbVersion = [&] { hookRan = true; };
+            in.candidates = { D2 };
+            rr = Genau::ReplaceGObjectsAndReprobe(in, quiet);
+            check("RESCAN ⭐: no candidate qualifies -> none, Aura back on the decoy, no hook",
+                  rr.outcome == Genau::ReplaceOutcome::NoneQualified && Aura::GetCount() <= 0 && !hookRan);
+            check("RESCAN ⭐: ...and the decoy's DynOff state is untouched",
+                  DynOff::bOffsetsProbeRan.load() && !DynOff::bOffsetsValidated.load()
+                  && DynOff::g_offsetsFallbackReason == svReason && DynOff::g_offsetValidations.load() == svRetires
+                  && DynOff::bUFunctionFlagsDetected.load() && DynOff::bUEnumNamesFailed.load()
+                  && DynOff::bCompactSets.load());
+
+            // The published pointer reads objects now: re-initialised in place.
+            decoySession();
+            in.published = M;
+            in.candidates = { P };
+            rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+            check("RESCAN: a published GObjects that reads objects now is re-initialised in place",
+                  rr.outcome == Genau::ReplaceOutcome::ReinitInPlace && published == M && inPlace);
+
+            // The caller's connection dropping does not cut the re-init short: it ends measured, not half-done.
+            decoySession();
+            in.published = D;
+            in.candidates = avoidD;
+            Tot::g_perCommand.store(true);
+            steps.clear();
+            rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+            Tot::g_perCommand.store(false);
+            check("RESCAN ⭐: a per-command cancel does not cut the re-init short", rr.outcome == Genau::ReplaceOutcome::Replaced
+                  && steps.size() == want.size());
+            // Shutdown does: before the choice is published, Aura goes back to the decoy.
+            decoySession();
+            Tot::g_shutdown.store(true);
+            rr = Genau::ReplaceGObjectsAndReprobe(in, quiet);
+            Tot::g_shutdown.store(false);
+            check("RESCAN: shutdown aborts the choice, back on the decoy",
+                  rr.outcome == Genau::ReplaceOutcome::Aborted && Aura::GetCount() <= 0);
+
+            // The resets on their own.
+            DynOff::bUEnumNamesDetected.store(true); DynOff::bUEnumNamesFailed.store(true);
+            DynOff::UENUM_NAMES = 0x58; DynOff::UENUM_VALUE_SIZE = 1; DynOff::UENUM_PAIR_STRIDE = 0x10;
+            DynOff::bEnumNamesNewContainer = true;
+            Genau::ResetUEnumNamesDetection();
+            check("RESCAN: the UEnum names reset forgets the latch, the failure and the layout",
+                  !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load() && DynOff::UENUM_NAMES == 0x40
+                  && DynOff::UENUM_VALUE_SIZE == 8 && DynOff::UENUM_PAIR_STRIDE == 0 && !DynOff::bEnumNamesNewContainer);
+            DynOff::bUFunctionFlagsDetected.store(true); DynOff::UFUNCTION_FLAGS = 0xB0; DynOff::UFUNCTION_TAIL_EXTRA = 4;
+            DynOff::UFUNCTION_TAIL_MEASURED.store(0xB6);
+            Ubel::ResetFunctionFlagsVote();
+            check("RESCAN: the vote reset forgets the vote and the tail", !DynOff::bUFunctionFlagsDetected.load()
+                  && DynOff::UFUNCTION_FLAGS == 0 && DynOff::UFUNCTION_TAIL_EXTRA == 0
+                  && DynOff::UFUNCTION_TAIL_MEASURED.load() == -1);
+            DynOff::bUFunctionFuncDetected.store(true); DynOff::UFUNCTION_FUNC = 0xD8;
+            Aura::ResetUFunctionFuncDetection();
+            check("RESCAN: the UFunction::Func reset", !DynOff::bUFunctionFuncDetected.load() && DynOff::UFUNCTION_FUNC == 0);
+
+            DynOff::bCasePreservingName = svCpn;
+            DynOff::UOBJECT_OUTER = svOuter;
+            DynOff::bUseFProperty = svFProp;
+            g_cachedUEVersion = svVersion;
+            VirtualFree(region, 0, MEM_RELEASE);
+        }
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

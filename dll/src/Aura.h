@@ -1560,6 +1560,10 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
 // the slot isn't a code pointer. See Aura.cpp.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
 
+// [RESCAN-DECOY-REINIT] Forget the UFunction::Func detection under the lock it takes, so the next use samples the pool
+// Aura reads now. An empty pool latches "not found" for the process.
+void ResetUFunctionFuncDetection();
+
 // [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
 // interpreter. A zero is flags not found, which is no verdict either way. Pure.
 bool IsScriptFunctionFlags(uint32_t flags);

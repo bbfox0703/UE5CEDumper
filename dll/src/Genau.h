@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <vector>
 #include <string>
 
@@ -421,13 +422,168 @@ bool DetectUEnumNames(bool latchFailure = true);
 
 // === Extra Scan: user-triggered aggressive fallback techniques ===
 // These are computationally expensive (seconds, not milliseconds) and are designed
-// to be called from a background thread.  They are READ-ONLY — no global state is
-// modified.  The caller is responsible for applying results (Aura::Init, etc.)
-// on the pipe thread.
+// to be called from a background thread.  They read game memory only; the one shared
+// state they touch is the validators' log throttle. The caller is responsible for
+// applying results (Aura::Init, etc.) on the pipe thread.
 
 // Scan .data section for FUObjectArray by validating structure heuristics.
 // Complements FindGObjectsByDataScan (which follows code references instead).
+// The first address ValidateGObjects accepts, inline or pointed to; 0 when none does.
 uintptr_t ExtraScanGObjects();
+
+// [RESCAN-DECOY-REINIT] A published GObjects that Aura reads no objects from is a decoy every recovery missed. Extra
+// Scan then collects candidates instead of stopping at the first, and apply_rescan picks among them as UE5_Init's heap
+// fallback does (the largest array whose head resolves names) and re-runs what the decoy's session derived from an empty
+// pool. These are the pieces a test target compiles; Fern / Frieren hold the wiring.
+
+// Most distinct addresses one replace sweep collects. One array validates at several anchors and is pointed to from
+// several slots, so this counts anchors, not arrays.
+inline constexpr size_t kRescanMaxCandidates = 64;
+// Head slots apply_rescan's name sample reads per candidate. A real array's head is its permanent core objects, densely
+// named, so a few thousand slots find a real one; a junk candidate costs a read per slot, and the apply holds the init
+// fence the CE mailbox waits on.
+inline constexpr int kRescanNameSampleSlots = 4096;
+// A real object array resolves at least this many names among its head slots (UE5_Init's heap fallback's rule).
+inline constexpr int kMinResolvedNames = 2;
+
+struct ScanRange { uintptr_t start = 0; uintptr_t end = 0; };
+
+// What one Extra Scan looks for, decided from the published pointers and the live object count.
+struct RescanPlan {
+    bool      seekGObjects  = false;
+    bool      seekGWorld    = false;
+    bool      replace       = false;   // GObjects is published but reads no objects: collect candidates to replace it
+    uintptr_t avoid         = 0;       // the published GObjects, never offered back by the sweep
+    size_t    maxCandidates = 0;       // 1 = today's first hit
+};
+
+// A GObjects of 0 is sought as before (the first hit). A published one that reads no objects is a decoy only when
+// GNames is up: the candidates are judged by the names their heads resolve. GWorld is sought only over a pool that reads
+// objects, the only pool ExtraScanGWorld can search.
+constexpr RescanPlan PlanRescan(uintptr_t gobjects, uintptr_t gnames, uintptr_t gworld, int32_t objectCount) {
+    RescanPlan p;
+    p.replace       = false;
+    p.seekGObjects  = gobjects == 0;
+    p.avoid         = 0;
+    p.maxCandidates = p.seekGObjects ? 1 : 0;
+    p.seekGWorld    = gworld == 0 && gobjects != 0 && gnames != 0;
+    (void)objectCount;
+    return p;
+}
+
+// What apply_rescan does with a finished job. Fill and Replace act; the rest say why nothing was applied.
+enum class RescanApply {
+    NotSought,        // the job looked for no GObjects, or found none
+    Fill,             // GObjects was 0: publish the job's first hit, as before
+    Replace,          // GObjects is the decoy the job avoided and still reads no objects: choose and re-init
+    AlreadyApplied,   // an earlier apply_rescan consumed this job's candidates
+    Changed,          // GObjects moved, or reads objects now, since the job looked
+    Cancelled,        // Stop or shutdown cut the sweep short: its list is partial
+};
+
+constexpr RescanApply PlanRescanApply(uintptr_t published, int32_t publishedCount, uintptr_t gnames, bool jobReplace,
+                                      uintptr_t jobAvoid, size_t candidates, bool cancelled, bool consumed) {
+    if (published == 0) return candidates > 0 ? RescanApply::Fill : RescanApply::NotSought;
+    (void)publishedCount; (void)gnames; (void)jobReplace; (void)jobAvoid; (void)cancelled; (void)consumed;
+    return RescanApply::NotSought;
+}
+
+// The pipe word for each RescanApply that did not act ("filled" and the Replace outcomes are named apart).
+constexpr const char* RescanApplyName(RescanApply a) {
+    switch (a) {
+        case RescanApply::NotSought:      return "not_sought";
+        case RescanApply::Fill:           return "filled";
+        case RescanApply::Replace:        return "replace";
+        case RescanApply::AlreadyApplied: return "already_applied";
+        case RescanApply::Changed:        return "changed";
+        case RescanApply::Cancelled:      return "cancelled";
+    }
+    return "not_sought";
+}
+
+// The sweep's core over the given ranges: every 4 bytes, the address itself (inline) and then the pointer it holds, each
+// passing ValidateGObjects, distinct and in scan order, up to `max`. Never offers `avoid`, inline or pointed to. No
+// window around it is skipped: another anchor of the same struct can be the array.
+// outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested(). Returns the number appended.
+size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_t avoid, size_t max,
+                                  std::vector<uintptr_t>& out, bool* outCancelled = nullptr);
+// The same over the module's writable, non-executable sections, as ExtraScanGObjects sweeps them.
+size_t ExtraScanGObjectsCandidates(uintptr_t avoid, size_t max, std::vector<uintptr_t>& out,
+                                   bool* outCancelled = nullptr);
+
+// One candidate as Aura reads it: its count, and how many names its head resolved among the slots read.
+struct GObjectsCandidateScore { uintptr_t addr = 0; int32_t count = 0; int resolved = 0; int scanned = 0; };
+
+// UE5_Init's heap-fallback rule: a real array (count > 0, at least kMinResolvedNames names) with the largest count; the
+// first of equal counts. -1 when none qualifies.
+inline int PickLargestNamedCandidate(const GObjectsCandidateScore* s, size_t n) {
+    int best = -1;
+    for (size_t i = 0; i < n; ++i) {
+        if (s[i].count <= 0 || s[i].resolved < kMinResolvedNames) continue;
+        if (best < 0 || s[i].count > s[best].count) best = static_cast<int>(i);
+    }
+    return best;
+}
+
+// The order apply_rescan samples names in: candidates that read objects, largest count first, equal counts in scan
+// order. The first that qualifies is PickLargestNamedCandidate's answer, so only arrays larger than the winner are
+// sampled.
+inline std::vector<size_t> NameSampleOrder(const int32_t* counts, size_t n) {
+    std::vector<size_t> order;
+    for (size_t i = 0; i < n; ++i)
+        if (counts[i] > 0) order.push_back(i);
+    for (size_t i = 1; i < order.size(); ++i)   // stable insertion sort: n is at most kRescanMaxCandidates + 1
+        for (size_t j = i; j > 0 && counts[order[j]] > counts[order[j - 1]]; --j)
+            std::swap(order[j], order[j - 1]);
+    return order;
+}
+
+// Aura::Init(addr), then the heap fallback's head sample over the first min(count, maxSlots) slots, stopping at 8
+// resolved names. Leaves Aura on addr.
+GObjectsCandidateScore ScoreGObjectsCandidate(uintptr_t addr, int maxSlots);
+
+// The candidate PickLargestNamedCandidate keeps among `published` (first: it may read objects now) and `candidates`
+// (duplicates and 0 dropped), sampling names only down to the winner (NameSampleOrder). Leaves Aura on the winner, or on
+// `published` when none qualifies (addr 0) or a shutdown cuts the choice short (addr 0, *outAborted).
+// outSampled (optional): how many candidates' names were sampled.
+GObjectsCandidateScore ChooseGObjectsCandidate(uintptr_t published, const std::vector<uintptr_t>& candidates,
+                                               int nameSampleSlots, size_t* outSampled = nullptr,
+                                               bool* outAborted = nullptr);
+
+// Each step of ReplaceGObjectsAndReprobe, in order, for the hooks' observer.
+enum class ReplaceStep { Chosen, VerdictReset, AuraOnWinner, Published, LatchesReset, Probed, GEngine, UEnumReset,
+                         Climbed, WalkLatchesReset };
+enum class ReplaceOutcome { Replaced, ReinitInPlace, NoneQualified, Aborted };
+
+// What only Frieren owns: the published globals, the GEngine second pass and the version ladder.
+struct ReplaceHooks {
+    std::function<void(uintptr_t winner, bool inPlace)> publish;   // GObjects and its method; the pre-ladder version
+    std::function<void()> resolveGEngine;
+    std::function<void()> climbVersion;
+    std::function<void(ReplaceStep)> onStep;                         // optional
+};
+struct ReplaceInput {
+    uintptr_t              published = 0;     // the decoy, scored first: it may read objects now
+    std::vector<uintptr_t> candidates;        // the job's, in scan order
+    uint32_t               preLadderVersion = 0;
+    int                    nameSampleSlots = kRescanNameSampleSlots;
+};
+struct ReplaceResult {
+    ReplaceOutcome         outcome = ReplaceOutcome::NoneQualified;
+    GObjectsCandidateScore winner;
+    size_t                 scored = 0;        // candidates whose names were sampled
+};
+
+// Chooses among the candidates and, when one qualifies, re-runs what the decoy's session derived from an empty pool, in
+// UE5_Init's order: the offsets probe (from the pre-ladder version), the GEngine second pass, the version ladder, with
+// every pool-sampled latch reset where its detector would next run on the new pool. When none qualifies Aura goes back
+// to the published pointer and no DynOff state is touched. Runs under apply_rescan's init fence.
+ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHooks& hooks);
+
+// Forget the UEnum::Names detection whole -- the latch, the failure latch and the layout it chose -- under the lock the
+// detection takes, so a search either finished before (its result is dropped) or starts after, on the pool now
+// published.
+void ResetUEnumNamesDetection();
 
 // Collect GObjects candidates that pass structural validation, discovered via
 // the data-section RIP-relative pointer scan (same mechanism as the FindGObjects

@@ -7091,6 +7091,8 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
+void ResetUFunctionFuncDetection() {}
+
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.
 static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
