@@ -182,6 +182,13 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > so nothing is riding on it — but it is untested *today* and this says so rather than implying a
 > clean sweep.
 >
+> ✅ **Live Walker's Params, run 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504). The
+> entry point is the **Functions** selector at the bottom of Live Walker. `FunctionalTestUtilityLibrary` is not in the
+> Shipping package (0 objects), so the host was `Default__KismetSystemLibrary` (274 functions): the first click on
+> **Params** sorted ascending from `0 (0B)`, the second reversed it and topped with `15 (401B)`
+> `CapsuleTraceSingleForObjects`, then the other 15-parameter traces -- an ordinal sort would have topped with a
+> `9 (…)` row. The header sorts, reverses, and sorts by count.
+>
 > ✅ **Two things fell out of the same session:**
 >
 > 1. **`[CADENCEGAP-2026-08-22]` confirmed in the shipped UI**, which no unit test reaches. Live
