@@ -5135,6 +5135,14 @@ Same probe, same address, opposite answer. Without it, "0x02 came back" is only 
 > (`seethrough_arm_a.py:97-99`, `teleport_relative` over the same pipe connection that owns the
 > See-through session) and the posted close (`seethrough_arm_b.py:147-148`). No person required.
 > Recorded here rather than dropped with the section.
+>
+> ✅ **CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` with exactly that concatenation (a scratch rig, DumperTest
+> **Development**, UE 504, 25,264 objects, DLL 3776 injected, no UI): `seethrough_set enable=true` → `active`,
+> `hidden_count` 1; then `teleport_relative(60, horizontal)` every 0.15 s on the SAME connection, and after 5 steps a
+> posted **WM_CLOSE** to the game window while the steps kept coming (14 in all, until the pipe closed). The process
+> exited **1.8 s** after the close with exit code **0x00000000** (not 0xC0000409); no new `DumperTest*.dmp` in
+> `%LOCALAPPDATA%\CrashDumps`; the DLL's logs after the watermark hold **0** `tick threw` and **0** `[ERROR]`, and end
+> on `PipeServer: Stop entry (process exit — skipping drain/joins, the OS reclaims this)`.
 ℹ️ ✅ **Step 1 (See-through's four disable arms) is CLOSED 2026-08-23** — arms (c)+(d) passed
 2026-08-22, arms **(a)** and **(b)** on 2026-08-23, see `[SEETHRU-ARMS-AB-2026-08-23]` below.
 ✅ **Step 3 (close the game with a Solide hold live) is CLOSED 2026-08-23

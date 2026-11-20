@@ -513,6 +513,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[LIVEFUNCS-TIMELINE-2026-10-04]`'s load log line (2026-11-20, DumperTest58 Development; the low-memory load stays open).
 - `[A4-508MARKER-2026-09-06]`'s UI badge leg on a raised run (2026-11-20, DumperTest58 Shipping; verification-register.md).
 - `[STARK-DRAIN-OFF-GAME-THREAD]` (1), the main-thread fallback (2026-11-20, UE423_Flying Shipping).
+- `[SOLIDEHOLD-2026-08-22]` arm (a) re-scoped, a close while moving with See-through on (2026-11-20, DumperTest Development; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
