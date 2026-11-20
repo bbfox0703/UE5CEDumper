@@ -1269,11 +1269,12 @@ ratchet's baseline, which understates it by more than 2x.
 
 **Prerequisites. Do these before moving any string:**
 
+> 📦 **Archived 2026-11-20:** 1 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[I18N-READINESS-2026-11-04] P3`. Grep the tag; tags resolve across files.
+
 | # | Severity | Problem | Fix |
 |---|---|---|---|
 | P1 | ✅ **DONE 2026-11-05** (was HIGH) | ✅ red `8f5d7622`; green: the commit that marks this row. `Res.Lookup` (internal; the app's default is unchanged) is replaced once by the test assembly's `EnStringsModule` ([ModuleInitializer]) with en.axaml read through `StringTable.Parse` -- in UE5DumpUI.Tests, compiled into HeadlessTests as a linked file, and kept OUT of the app, where it put System.Xml.Linq in the AOT image (+3.1 MB, build 3689, not shipped); a run that cannot find the file throws rather than reading "". The headless `StringTableFidelityTests` pins `StringTable` against Avalonia's own loader, all 1914 keys: **Avalonia keeps leading / trailing whitespace** (a `.Trim()` mutation turns exactly the 11 such keys red), which answers the live check this row asked for. Installed, it turned up one test pinning a C# fallback the app never shows (`AobMakerActivateResultTests`: "Registered CE symbol 'gworld_addr'." where en.axaml says "… — it re-scans on enable, so it survives a game restart."); fixed to the real sentence. C# 7452 passed, 0 failed; headless 71. Still to do, gradually: retire the `Say(key, fallback)` copies, the two `StringLookup` seams and the 14 private readers. Was: **Headless tests read every `Res` string as `""`.** `Res.Get` returns `""` when there is no `Application.Current`, and every `UE5DumpUI.Tests` run has none. About 370–580 asserts compare an English literal with a status or message member, and each moved literal turns its asserts red. Worse, about 160 `DoesNotContain` / `NotEqual` asserts and 37 "stays empty" asserts keep passing on `""` and stop testing anything. Today's workarounds duplicate the English. `AobMakerStatus.Say(key, fallback)` has 132 sites, pinned by 125 hand-written `Same()` rows in `AobMakerWordingTests`. Two view models have a `StringLookup` seam. At least 14 test files hand-roll an `en.axaml` reader. This is why `[VM-INLINE-STRINGS]` judged the move expensive. | Add one seam to `Res`: an internal lookup delegate that defaults to `Application.Current.TryFindResource`. Add one `[ModuleInitializer]` in the test assembly that parses `en.axaml` once and installs it. Existing asserts then check the real sentence, and the `Say` fallbacks, the `StringLookup` seams and the private readers can be retired gradually. Confirm once in the live app that a value with leading whitespace (`str.Dump.Header.EnumsUnread`) renders the way the raw text says. |
 | P2 | HIGH | **A label that is also the value.** These ComboBox options are English strings parsed back by a `switch` with a catch-all default, compared with `==`, sent to the DLL, or saved: `SpcQueryViewModel.ParsePredicate` (`_ => SpcPredicateKind.Any`) and its abs-kind and join-mode parsers; `SnapshotViewModel`'s max-dataset, family and quota labels (`LabelToMb`); `ClassPivotViewModel.IsSnapshotSource` (`== "Snapshot"`); `PointerPanelViewModel.LabelToVersion`. Six are saved as label text in `Models/UiOptionsSettings.cs`. A translated label falls into the default arm, which is always the least restrictive one (Decreased runs as Any, a cap becomes no cap), and nothing errors. A label saved under one language does not restore under another. That is about 11–13 lists, and 56 test lines in 8 files set the labels directly. | Give each option a label and a key (the repo's `ValueSortOption(Label, Key)` record, or `SelectedIndex` as `AddressFormatOptions` does). Save the key, and map today's English labels to keys when ui-options loads. CLAUDE.md lists `SelectedItem` bound to a non-string among the failures that appear only after trimming, so check with `-Mode Publish`. |
-| P3 | ✅ **DONE 2026-11-05** (was HIGH) | ✅ red `a42adbcc`; green: the commit that marks this row. **ProxyDeploy:** `DescribeUnreadable` and `DetailNamesUnreadable` share one template (`ProxyDeployService.UnreadableTemplate` + `UnreadableNameSeparator`); the parse splits the writer's own template at its slot, so a translation changes both at once (English behaviour unchanged; the existing round-trip test passes). Keeping the names on the row instead was set aside: `StatusDetail` is written, cleared, preserved and appended in about ten places, and a parallel list missed by one of them would bring the doubled note back. **Live Walker:** no exposure today -- every container-view crumb records its `FieldName`, so the CE XML export's `" ["` strip runs only for a crumb without one; `EveryContainerViewCrumb_RecordsItsFieldName` pins that (mutation-checked). C# 7462 passed, 0 failed (red: 1). Was: **Display text parsed back by logic.** `ProxyDeployService.DescribeUnreadable` writes "Cannot read … here (…", and `DetailNamesUnreadable` parses it back with `Head = "Cannot read "`. The result decides whether `ProxyDeployViewModel` names the files again. Translate the sentence and the parse stops matching, which brings back the doubled note that parse was written to prevent. Live Walker's breadcrumb label is also read back. | Keep the data on the row (the unreadable names; the field name and descriptor), not the sentence. |
 | P4 | ✅ **DONE 2026-11-05** (was HIGH) | ✅ red `6de9f163`; green: the commit that marks this row. The CE XML export's enum note is an English constant (`CeXmlExportService.EnumNamesUnavailableExportNote`); only the status line's copy comes from en.axaml. The standalone trainer's untick quotes the record Description through `CeLuaHygiene.EscapeLuaString`. A generated CT's categories come from `KeywordScoringTable.CtGroupName` / `PropertyScoringTable.CtGroupName`, apart from the chips' `DisplayName` (the same English words today). The trainer Descriptions and the CE group names are marked do-not-localize. `ArtifactTextTests` pins all of it, plus that no script generator or exporter (CeXmlExportService's status helper aside) reads the string dictionary. The Object Tree filter labels (UE class names) are left for P2, which owns the option lists. C# 7467 passed, 0 failed (red: 4). Was: **Artifacts and external identities must stay English.** `"Teleport to cursor"` is both a button and a CT record's Description. `StandaloneTrainerScriptGenerator` finds records by Description with `getMemoryRecordByDescription`, unescaped. The CE group names (`TeleportViewModel.CeGroupDll` / `CeGroupTrainer`) are find-or-create keys. `CheatTableRow.Category` groups by the chip's display name. The Object Tree filter labels are UE class names sent as filters. `CeXmlExportService` already writes an `en.axaml` text (`str.Export.EnumNamesUnavailable`) into exported XML. | Keep generator and export output (Lua, .CT, CE XML, CSX, SDK, USMAP) out of the dictionary. A text shared with the UI gets two sources: a UI key and an English constant. UE identifiers are never translated. |
 | P5 | ✅ **DONE 2026-11-05** (was MED; the DLL error codes stay "later") | ✅ red `4c4095dd`; green: the commit that marks this row. `Constants.cs` gains a do-not-localize protocol-text block (`DllErrorUnknownCommand`, `DllErrorFunctionNotFound`, `DllErrorNoInstanceFound`, `AobMakerErrorUnknownType`, `WindowsIoBeingUsed`); the five matchers (DumpService, PointerPanelViewModel ×2, AobMakerBridgeService, ProxyDeployService ×3) use them, and `ProtocolTextTests` pins the DLL's three to the source expressions that send them. C# 7460 passed, 0 failed (red: 5). Was: **Text that is protocol.** The DLL's ~90 distinct `MakeError` texts have no code field, and the UI branches on some of them: `DumpService` reads `StartsWith("Unknown command")` as a stale proxy, and `PointerPanelViewModel` matches "Function not found" and "No instance found". | Keep DLL text in English and out of `en.axaml`. Move the matched openings to the magic-strings file, marked do-not-localize. Later, add a `code` to `MakeError` for the few texts the UI branches on, and keep the text match for old proxies. Error lines that mix languages are acceptable for an English-primary UI. |
 
@@ -2275,6 +2276,8 @@ its §3 the client rules in force, its §4 the row changes applied below. R17 wa
 
 > 📦 **Archived 2026-10-28:** 17 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-10-28-build-3661.md](archive/todo-closed-2026-10-28-build-3661.md): `[AOBM-INSTFINDER-AA]`, `[AOBM-VALUE-ROWS-CE]`, `[AOBM-INSTFINDER-CE]`, `[AOBM-OBJECT-HEX]`, `[AOBM-PTR-SCANASM]`, `[AOBM-FUNC-DISASM]`, `[AOBM-GNAMES-SYMBOL]`, `[AOBM-UI-INDICATOR]`, `[AOBM-UI-BUSY]`, `[AOBM-UI-FUNC-VISUAL]`, `[AOBM-SYSTAB-ASM-SILENT]`, `[AOBM-LIVEWALKER-HEX-SILENT]` and 5 more. Grep the tag; tags resolve across files.
 
+> 📦 **Archived 2026-11-20:** 1 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[DENKEN-WRITE-SITES]`. Grep the tag; tags resolve across files.
+
 | id | sev | status | what | where |
 |---|---|---|---|---|
 | `[AOBM-ATTACH-CHECK]` | MED | ✅ 2026-09-29 `90c732e5` — ✅ live PASS 2026-09-29, build 3599 (verification-register `[AOBMAKER-A1-A9-LIVE]`) (warning only; the one-click fix stays ⛔ AOBMaker R11: accepted, P3, not started) | **Eval A6, and the enhancement that CEB-2 was closed as.** Before any push, ask `GetAttachedProcess` and compare it with `EngineState.ProcessId`. Say so when CE is attached to nothing or to another process; the verification register records three silent clicks for exactly this. It needs a seventh `IAobMakerBridge` method, with no fallback. A one-click fix would need AOBMaker R11. Effort S · Risk low. **Shipped as a warning, not a per-push preflight:** the toolbar at connect and on ⟳, and the text of a refused +CE. **Live 2026-09-29:** CE on another process → the ⚠ and its tooltip name both pids; reattach + ⟳ clears it. Red on 3599: CE closed with the ⚠ showing and it stayed beside "Offline". Fixed in 3600 (`440fd459`, `5e211d6f`): cleared when the plugin becomes unreachable, re-checked when it comes back -- both PASS live (CE killed → ⟳ → no ⚠; CE restarted on another process → a tab switch alone brought the ⚠ back). | `IAobMakerBridge`, `AobMakerBridgeService`; every push site's status text |
@@ -2288,7 +2291,6 @@ its §3 the client rules in force, its §4 the row changes applied below. R17 wa
 | `[AOBM-FIND-ACCESS]` | INFO | ⛔ hold: AOBMaker R9 partly shipped in release `v20260930` (build 157) (clamp, failure replies, exited-process / failed-attach replies); the extension is not started, and an address needs CE's Windows debugger (reply §3 rules 13, 17–18) | **Eval B5.** A "what writes this field" button built on `FindMostAccessed`. Today it returns only the top hit, cannot tell reads from writes, and holds the bridge for the whole window. It also probably reports the instruction after the access; that is inferred, not measured. Until R9 lands, use +CE and then CE's own "Find out what accesses". AOBMaker holds R9 until a live check (reply §2.9). It also found that hit counts are unfiltered (`EV-2`) and that a failed debugger attach reads as "No accesses detected" (`EV-3`). ⚠ The plugin calls `startdebuggerifneeded(false)`, which attaches CE's debugger to the game without asking: keep this button away from games with anti-debug checks. | a future `IAobMakerBridge` method; Live Walker and Value Search rows |
 | `[AOBM-RECORD-HOTKEYS]` | INFO | ⛔ on hold: AOBMaker did not accept R10 for now (the Lua call that creates a record hotkey is unverified), and on proof | **Eval C2.** Carry the Teleport tab's bindings onto the pushed records as CE record-level hotkeys. lessons-learned records that Lua-created hotkeys were unreliable, and the app's own hotkeys are the primary path. Only worth doing if R10's hotkeys fire like user-bound ones. Risk AOBMaker raised (reply §2.10): our own `RegisterHotKey` Teleport keys may fire twice, or never reach CE. | `TeleportViewModel.AddActionsToCeAsync` |
 | `[AOBM-CUSTOMTYPE]` | INFO | ⏸ SPLIT 2026-10-01 (the maintainer) → the FName custom type under "CE export drilldown — remaining gaps" | **⏸ Split out 2026-10-01.** The `customType` field itself is easy (AOBMaker build 155+, `bulk.customType`, on the record tree `[AOBM-PLUSCE-FIDELITY]` now sends); what does not exist is a custom type worth pointing at. The maintainer chose to design the "UE FName to String" type as its own item; the constraints found on 2026-10-01 are recorded with it under "CE export drilldown — remaining gaps". **Eval C7.** The FName custom type needs `customType` on pushed records; see "CE export drilldown — remaining gaps". Registering the type itself can ride a `{$lua}` `CreateAAScript`. Two warnings from AOBMaker (reply §2.15): reading `NumericalValue` from a record whose custom type is not registered yet crashes CE (`pcall` cannot catch it), and `showAsHex` on a custom-type record silently breaks `Value` both ways, so never push the two together. | `CeXmlExportService`; the drilldown gaps item |
-| `[DENKEN-WRITE-SITES]` | LOW | ✅ **FIXED 2026-11-17** (the maintainer asked for it that day; builds 3731-3732). Denken keeps, per offset, the address of each instruction that WRITES it -- once, through-`this` first and counted (`writeSitesViaThis`), at most 8 (`kMaxWriteSites`, flagged past it). Aura maps them onto every property at the offset (packed bools share one: `sharedOffset`), `walk_function_props` sends `write_sites` / `write_sites_via_this` / `write_sites_truncated` / `shared_offset`, and the Props dialog has a Write sites column, "Write site in CE" (the AOBMaker CE plugin's disassembler, through `AobMakerActions.MoveViewAsync`) and "Copy write sites". Commits: red `b3b73a51` / green `c685c639`, red `aa98c77e` / green `a36c9d8d`; review `wf_c87eff0e-53f` (8 real): red `e038387f` / green `4bf68606`; rigs `8b04d3d4`, `d4fca524`. Live on 3732 (verification-register.md): DumperTest Shipping, 2,962 native functions walked, 73 written rows all with sites, 74 of 74 sites' own displacement the field's offset. ~~Original:~~ ⬜ open (our half of Eval C5) | Denken merges native field accesses by offset (`NativeFieldAccess`) and drops the instruction addresses. Keep them. Then a field's native write site is found statically, with no debugger. It can seed `GenerateAob` today, and AOBMaker R13's injection script later. Effort M · Risk low. | `Denken.h` / `Denken.cpp`, `walk_function_props` |
 
 ## 🐞 Found by the comment-integrity sample 2026-09-26 — rows behind stale comments `[COMMENT-INTEGRITY-2026-09-26]`
 
@@ -2613,6 +2615,8 @@ support today decodes wrong.** Reading how upstream handles the same types expos
 bookkeeping a 5.9 title would need. Everything is read from source; none is measured on a running game. Fix-pass rules
 apply: one row per commit, red before green where testable.
 
+> 📦 **Archived 2026-11-20:** 2 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[VND9-DOC]`, `[SYNCTOOLS-FALSE-FETCH-FAILED]`. Grep the tag; tags resolve across files.
+
 | id | sev | effort | what | where |
 |---|---|---|---|---|
 | `[VND9-01]` | ✅ **FIXED + LIVE-VERIFIED, build 3687** (was FIX) | M | ✅ red `4c735736`; green `e70e538e`. **Live, build 3687** (`vnd9_live.py`): the probe logs `SubPathString StrProperty at +0x10` on DumperTest Shipping 5.4 and `SubPathString Utf8StrProperty at +0x10` on DumperTest56 and DumperTest58 Shipping -- the 5.6 switch, measured; Soft_Mesh still reads `/Engine/BasicShapes/Cube.Cube`; a synthetic sub-path (its header pointed at `Str_Even2_OneNull`, restored by mutate_guard) reads `/Engine/BasicShapes/Cube.Cube:統一`. Still owed: a REAL soft reference to an actor on 5.6+ (no fixture field holds one; census Table B). `ProbeSoftPathShape` walks on past the first field and latches `SubPathString`'s width from its reflected type (`StrProperty` 2, `Utf8StrProperty` / `AnsiStrProperty` 1) and its offset (`DynOff::SOFTPATH_SUBPATH_OFFSET` / `_WIDTH`); `ReadSoftObjectPath` appends `:` + the sub-path. Unmeasured: the FString rule in UProperty mode or below 5.6, nothing on 5.6+ (`SoftPathSubPathWidthFor`). dll_core_test 1470 checks, 0 failures (red: 4); dll_helpers_test 3746, 0. **Live check owed:** DumperTest58 (5.8, FUtf8String) shows a soft reference to an actor as `…:PersistentLevel.<actor>` and its log says `SubPathString Utf8StrProperty`; one ≤ 5.5 fixture shows the same through an FString. Was: A live soft pointer drops its sub-path: a soft reference to a level actor reads as the map's path (`ReadSoftObjectPath` returns the asset path only; the snapshot fix `[LIVEFUNCS-STEP2 B7]` covered only the snapshot). All versions. ⚠ `SubPathString` is **FUtf8String from UE 5.6** (FString before): take the width from the reflected type name, never `ReadFString` on 5.6+. | `Ubel.cpp`, `Grimoire.h` |
@@ -2620,9 +2624,7 @@ apply: one row per commit, red before green where testable.
 | `[VND9-03]` | ✅ **FIXED + LIVE-VERIFIED, build 3687** (was FIX) | M | ✅ red `d8f69461`; green `bf034ead`. **Live, build 3687** (`vnd9_live.py` P4, DumperTest Shipping 5.4, DumperTest56 and DumperTest58 Shipping): FIRE `KismetStringLibrary::Conv_IntToString(42)` on its class default object returns `str_results [{name ReturnValue, off 8, text "42", read true}]`. `Ubel::ReadStringResults` / `ReadStringResultsFor` read each return / out string's text from the post-call buffer (the function's own parameter chain: `ResolveFunctionInfo` reads no parameters), skipping the slots `str_params` filled; `invoke_function` sends them as `str_results` after a call that returned 0; `DecodeParamValue` prints the text quoted, `(unreadable)` when it did not read. dll_core_test 1476 checks, 0 failures (red: 1); C# 7441 passed, 0 failed (red: 5). **Live check owed:** FIRE `KismetStringLibrary::Conv_IntToString` (static, on its class default object) shows `ReturnValue (return) = "42"`. Was: Pipe FIRE shows a returned or out string (FString / FUtf8String / FAnsiString) as its 16 raw header bytes; the CE route shows the text. The DLL reads the strings after the call and sends an additive key; `DecodeParamValue` prints it. Never free the engine's buffer. | `Fern.cpp`, `InvokeParamDialog.cs`, `pipe-protocol.md` |
 | `[VND9-04]` | ✅ **FIXED, build 3688** (was FIX-low); FString half checked live | S–M | ✅ **Live, build 3688** (`vnd9_live.py` P5 / P6, DumperTest Shipping 5.4): `Arr_StrRows[0]` reads `Text = RowStrAlpha` (it said `(str)`; `Note`, the FText control, reads `RowNoteAlpha`); an FString value search finds `Str_Even2_OneNull` (統一), `Arr_Str[1]` and `Arr_StrRows[0].Text` and a next scan keeps each -- the four rerouted readers, no regression. The narrow arm is unit-tested only: no fixture holds a UE 5.5 narrow string (census Table B). Three red/green pairs. (1) red `88ba8656`, green `607d94a7`: one reader, `Ubel::ReadStringPropertyAt`, at `Ubel::StringPropertyWidth`'s width; a TOptional of a narrow string is decoded like a `TOptional<FString>` (it was refused); a struct array's string member shows its text, where an FString said `(str)`; `ReadStringResults` and the SubPathString probe use the same width. (2) red `f05f9d45`, green `8dcd1007`: an FString value scan takes the narrow types and every reader of a match decodes at the property's width (direct field, container element, struct-array leaf, next scan); V1c gates their intrusive optionals on FString's sentinel; Scharf and Genau align them at 8. (3) red `c27a81cf`, green: the commit that marks this row -- Property Search suggests both types. dll_core_test 1487, 0; dll_helpers_test 3754, 0; C# 7443, 0. **Live check owed** (no fixture holds a narrow string): DumperTest's `Arr_StrRows` element shows `Text = RowStrAlpha`, not `(str)`, and an FString value search still finds a direct field, an array element and a struct-array member and keeps them on a next scan. Was: The other UE 5.5+ narrow-string gaps: struct-array sub-field preview (hex), `TOptional<FUtf8String/FAnsiString>` (refused), value search (`kFString` is Str only). ⚠ Each needs its decoder switched too, or the fix misdecodes (the audit lists the sites). | `Ubel.cpp`, `Ubel.h`, `Aura.cpp` |
 | `[VND9-05]` | ✅ DONE 2026-11-19 | S | Build 3772, as vendor audit #10's `VND10-A2` corrected it, once `5.9.0-preview-1` was tagged: a `"5.9."` needle heads `kVersionNeedles` with `kVersionDetectLogicRev` 11 → 12 (a corpus sweep, `tools/verify/needle_sweep/`, found no exe that reads differently); "UE 5.9" in the override list (its test now reads the DLL's ceiling); `/Script/CascadeRuntime` in the three engine-package lists. **No `case 509`**: the ProcessEvent table holds measured rows only, and no template or fixture PDB measures 5.9; the fallback extrapolates 508's `0x250` and says so. Live: verification-register.md `[VND9-05]`. | `VersionNeedleScan.h`, `Grimoire.h`, `Aura.h`, `DumpAllService.cs`, `engine_paths.py` |
-| `[VND9-DOC]` | ✅ **FIXED 2026-11-05** (was DOC) | S | ✅ The commit that marks this row: the `SubPathString` comments in `Ubel.cpp` (two), `Frieren.cpp`, `technical-notes.md` and `live-funcs-timeline-plan.md` say FString through 5.5 / FUtf8String from 5.6; the USMAP header gains point (3), and `BuildUsmap_EnumProperty_WithNoEnum_WritesNoneAtTheWidthOfItsSize` pins the Dumper-7 shape (3 cases; writing RE-UE4SS's bare integer turns all three red). The container half was checked against UE 5.8.4 `FEnumProperty::SerializeItem` (saving writes an FName). Was: `SubPathString` comments still say FString for 5.1+ (fix before or with VND9-01); the USMAP header's null-enum sentence and one test (container inners stay FName-shaped on purpose; do not align to RE-UE4SS); audit #7's reflection-date correction is recorded in audit #9. | `Ubel.cpp`, `Frieren.cpp`, `UsmapExportService.cs`, `technical-notes.md` |
 | `[VND9-06]` | — | — | zydis +13: **HOLD** (new ISA extensions only; Denken reads none of the changed fields). minhook: **HOLD** unchanged. patternsleuth: nothing after `8bcbd43`, no Himmel re-scan. Dumper-7: nothing to take. `origin/5.8` past 5.8.4: nothing. | `vendor/` |
-| `[SYNCTOOLS-FALSE-FETCH-FAILED]` | ✅ **FIXED** `795ce835` | S | `sync_tools.ps1` printed `FETCH FAILED` over a RE-UE4SS fetch that had succeeded: the fetch also fetched the moved UEPseudo pin through its `git@github.com:` URL. The clone fetch passes `--no-recurse-submodules`; the RE-UE4SS block syncs the submodules over https. | `sync_tools.ps1` |
 
 ## 🔎 Vendor audit #8 — UE 5.8.4 + RE-UE4SS / UEPseudo / Dumper-7 deltas `[VENDOR-UE584-2026-10-26]`
 
@@ -5541,112 +5543,7 @@ but it silently narrowed "fresh" to the members `CopyLiveValuesFrom` assigns. Th
 "exactly what the same-layout branch checks". What the branch at `LiveWalkerViewModel.cs:6524-6525`
 actually checks is the field **count** and **`Fields[0].Name`**, and nothing else.
 
-##### ✅ `[P4-OTHER-INSTANCE]` HIGH — opening a second instance of the same class reuses the first one's rows (FIXED IN SOURCE 2026-09-10)
-
-`LiveWalkerViewModel.cs:6524`. The in-place branch never compares the address, and no navigation
-clears `Fields` first. This was re-checked by hand:
-- `NavigateToAddressAsync:2801` clears only `Breadcrumbs`.
-- `NavigateToAsync:6112-6141` goes straight to `UpdateDisplay`.
-- The only other `Fields.Clear()` sites are GWorld (`:972`), disconnect (`:5818`) and a failed Locate (`:6409`).
-- Back, Forward, a breadcrumb jump, Parent and a bookmark load all reach the same `UpdateDisplay`.
-
-- **Scenario:** in Instance Finder, open instance A of `BP_Enemy` in Live Walker. Go back to the
-  finder, open instance B the same way. The count and first name match, so B's values are copied onto
-  A's row objects. The header, the values and the Address column are all B's. But `StructDataAddr`
-  is **absolute** (`instanceAddr + offset`, `Ubel.cpp:5311`) and still A's. Drilling B's `Stats`
-  struct walks **A's** struct under the label "B > Stats". **Editing `Stats.Health` then writes A's
-  memory in the running game** (`CommitFieldEditAsync :5406`). The same mix-up reaches:
-  - Map and Set previews: B's count, A's entries.
-  - Array drills: B's elements at A's addresses.
-  - Copy CE XML and CSX: A's entries, and A's pointer targets' classes.
-- **Widest variant:** two sibling subclasses with equal field counts and the same inherited first
-  field. Here even `Name`, `TypeName` and `Offset` are the other class's.
-- **Also reached** by a pointer drill from A to a B of A's exact class (`Owner`, `AttachParent`, a
-  `Next` link).
-- ✅ **FIXED IN SOURCE 2026-09-10 — the fix pass's third row, in the refuter's shape.**
-  - **Change:** `UpdateDisplay` captures the on-screen `CurrentAddress` / `CurrentClassName` /
-    `_currentClassAddr` before it overwrites them. The in-place branch now needs
-    `IsSameObject` **and** `HasSameRowLayout` (below). `IsSameObject` means the same address,
-    compared numerically, plus the same class name, plus the same class address when both sides
-    have one.
-  - **Everything else rebuilds.**
-  - **Sibling-subclass variant:** closed as well, because the address differs.
-  - **Coupled row:** `[A4-EDIT-STALE-PENDING]`'s "A's text written into B" variant is closed too,
-    because B gets fresh rows.
-  - **Red before green:** `LiveWalkerSameObjectGateTests.OpeningASecondInstanceOfTheSameClass_…`
-    failed first with *"Expected 0x200020, Actual 0x100020"* (A's `StructDataAddr`), then passed.
-  - **Evidence and live check:** in the `[FIXPASS-2026-09-10]` ledger and backlog.
-- ✅ **Safe fix (the refuter's):** gate the branch on identity. Capture the previous `CurrentAddress`
-  **before** `:6436` overwrites it. Require the same address **and** the same class, because a struct
-  at offset 0 shares its owner's address. Anything else takes the existing Clear+Add rebuild. The
-  grid jumping to the top when the object changes is expected.
-- ⛔ **Unsafe fixes:**
-  - Reverting to `Fields[i] = newFields[i]` brings back the measured drift.
-  - Adding the missing members to `CopyLiveValuesFrom` makes the structural members mutable, and it
-    still cannot fix the sibling-subclass variant.
-- **Caught by:** a VM test that calls `NavigateToAddressAsync(A)` and then `(B)`: same class,
-  different `StructDataAddr`; assert that the row holds B's. Live: on DumperTest, open two actors of
-  one class via Instance Finder, drill a struct row, and compare the breadcrumb address with B's base.
-- 🛡 **Until the fix, no code needed:** before opening another instance of a class already on
-  screen, click 🌍 GWorld first; `PopulateFromWorld` clears the grid. At the very least, do not edit
-  a struct or container sub-field right after switching instances.
-
-##### ✅ `[P4-GUESS-SHIFT]` MED — with Guess? on, a same-object refresh pairs rows by index after the guessed rows moved (FIXED IN SOURCE 2026-09-10, with `[P4-OTHER-INSTANCE]`)
-
-`LiveWalkerViewModel.cs:6543`. The guessed rows are re-derived from the bytes on every walk:
-padding-run length, pointer vs two int32s, a float at 0.0 turning into padding (`Ubel.cpp:3633`,
-`:3761-3944`). They are sorted in among the reflected rows by offset, so equal counts do not mean the
-rows line up.
-
-**Cross-gap variant:** in the same tick, one gap loses a row and another gains one. Every reflected
-row between the two gaps then shows its **neighbour's** value and address under its own name, and
-stays editable. An edit writes this row's type of bytes into the neighbour (`:5397-5406`).
-
-- **Guess? is not rare:** `AutoFillGapsRetryAsync` turns it on silently and leaves it on (`:6188`).
-- It self-heals as soon as the count next differs.
-- The finding's within-gap example (ptr+double) depends on the values; the cross-gap one does not.
-- ✅ **Safe fix:** the same gate as `[P4-OTHER-INSTANCE]`, plus a per-row `Name` + `Offset` +
-  `TypeName` + `Size` match. The cost is honest: on a noisy Guess? object with auto-refresh, a layout
-  change jumps the grid to the top. That is strictly better than an editable row pointing at its
-  neighbour.
-- ⛔ **Unsafe:** making the structural members observable and copying them. `SelectedField` and
-  `RestoreSelectedField` would then silently re-point to a different field under the user.
-- ✅ **FIXED IN SOURCE 2026-09-10, in the same commit as `[P4-OTHER-INSTANCE]`** (they share one
-  gate, as planned). `HasSameRowLayout` compares, row by row: `Name`, `Offset`, `TypeName`, `Size`
-  and `IsGuessed`. The cross-gap test (`Refresh_WhenGuessedRowsMoved_…`) failed first with
-  *"Expected 0x100014, Actual 0x100018"*, then passed.
-  - ⚠ **The gate's own adversarial review found a regression in the first draft,** confirmed by
-    two lenses independently and not refuted. The DLL sets a guessed float's or double's type
-    label from its VALUE (`Ubel.cpp` `IsLikelyFloat`: "Float" only for a clean .0/.5 value at or
-    below 1000, "Float?" otherwise). The Name (`?0x14_float`), Offset and Size stay the same.
-  - **The draft's failure:** it compared `TypeName` exactly, so Auto on a draining stat rebuilt
-    the grid on every label flip. That is the `[LWREFRESH-2026-08-21]` jump-to-top, with no layout
-    change at all.
-  - **The fix:** a guessed row's `TypeName` is compared without its trailing `?`. The kind is
-    already in the Name, and guessed rows are never editable or navigable, so the only cost is that
-    a reused row keeps the first walk's label (stated in `LiveFieldValue.TypeTooltip`'s remarks).
-  - **Tests for it:** `Refresh_GuessedRowOnlyChangesItsConfidenceLabel_KeepsTheRows` (3 cases)
-    failed first, then passed. The same review asked for one-fact-per-case pins of every check:
-    class name, class address, the lenient path, Name, Offset, TypeName, Size and IsGuessed. They
-    were added too (working-lessons §1.2a).
-  - **A second, narrower review** covered the `?` rule and test pinning, with a refuter defaulting
-    to REFUTED. It found the `?` rule sound:
-    - The DLL's only `?` pairs are Float/Float? and Double/Double?, each with the same Name hint
-      and Size.
-    - `NormalizeGuessedTypeToProperty` and the CE export treat both spellings alike.
-    - Guessed rows are never editable or navigable.
-  - **What it did find:** the row-COUNT check had no pinning test. Deleting it left the suite
-    green, and the in-place loop would then throw on a Guess? toggle, and on every DataTable refresh
-    (the RowMap row is appended). `Refresh_SameObject_TrailingRowCountChanges_Rebuilds` (+1 / −1)
-    was added. **Mutation-checked:** with the count check removed, both cases fail; restored
-    byte-exact, 17 / 17 pass. Its Double confidence case now uses the DLL's real `?0x10_double`,
-    8-byte row.
-  - 🟡 **Lead, LOW, not filed** (pre-existing; this change narrows it): in the in-place branch,
-    `SearchMatchCount` comes from the fresh rows but the highlights are re-marked on the reused
-    rows, and the second `MarkSearchMatches` return value is discarded.
-    - **When they can differ now:** since the gate, only on a reused guessed row whose kept label
-      differs from the fresh one, and only for a search term containing the `?`.
-    - **Fix shape:** take the count from the second `MarkSearchMatches` call.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[P4-OTHER-INSTANCE]`, `[P4-GUESS-SHIFT]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[P4-CONTAINER-BASE]` MED — `ArrayDataAddr` / `MapDataAddr` / `SetDataAddr` stay at the first walk's buffer (FIXED IN SOURCE 2026-09-11)
 
@@ -5716,24 +5613,7 @@ into freed heap and still prints `Written: …` (`:5406`, `:5418`).
     - an unbound sparse delegate's `ArrayInnerType` / `ArrayElemSize`, which stay init-only;
     - an unset→set `TOptional<Struct>`'s `Struct*` members, which stay init-only.
 
-##### ✅ `[P4-PTRCLASS]` LOW — a retargeted pointer keeps its first-walk `PtrClassAddr`, and the exporters walk the new target with the old class (FIXED IN SOURCE 2026-09-11)
-
-`LiveFieldValue.cs:176`. `PtrClassAddr` is `GetClass(target)`, which is a value (`Ubel.cpp:4165-4168`).
-`PtrAddress`, `PtrName` and `PtrClassName` are copied; `PtrClassAddr` is not. Both exporters pass it
-to `walk_instance` as the class override (`CeXmlExportService.cs:422/591`, `CsxExportService.cs:483`),
-and `WalkInstance` honours any non-zero override (`Ubel.cpp:3987`). All three conditions must hold
-for it to bite:
-- it is export only;
-- drilldown depth is ≥ 1 (the default is 0, but the value is persisted once raised);
-- the pointer retargets to a different class (e.g. `Pawn` goes from hero to car).
-
-- ✅ **Safe fix:** copy it in `CopyLiveValuesFrom`; nothing binds it.
-- ⛔ **Unsafe:** dropping the override in the exporters. The CSX DataTable drilldown relies on it for
-  row data that is raw struct memory (`CsxExportService.cs:871-881`), and the synthetic sub-field
-  pointers carry it on purpose.
-- ✅ **FIXED IN SOURCE 2026-09-11, the safe shape.** `CopyLiveValuesFrom` now copies it; nothing
-  binds it, and the exporters keep the override. `Refresh_PointerRetargetsToAnotherClass_…` failed
-  first with *"Expected 0x920000, Actual 0x910000"*.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[P4-PTRCLASS]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[P8-BOOKMARK-TIP]` LOW — re-saving into an occupied bookmark slot leaves its tooltip naming the previous target (FIXED IN SOURCE 2026-09-12)
 
@@ -5852,73 +5732,7 @@ The two real instances are both places where **advice** was written for only one
 narrow the predicate"*. "Narrow the predicate" is the cap's remedy, and Max is visible in single mode.
 ⛔ Do not "fix" this half. Only its group twin gives the wrong advice (`[P5-GROUP-ADVICE]`).
 
-##### ✅ `[P5-GROUP-ADVICE]` LOW — Group First Scan names the candidate cap but advises only deadline remedies (FIXED IN SOURCE 2026-09-12)
-
-`ValueSearchViewModel.cs:1449`. `ScanForValueGroup` folds its 50,000-candidate cap
-(`Aura.cpp:9459-9460`) into the same `deadline_hit` as the clock (`:9384`). The text reads
-*"⚠ truncated (Ns deadline / result cap) — raise the Timeout slider or refine"*. Neither remedy
-helps a cap stop:
-- A longer timeout re-scans into the same cap.
-- A refine prunes the capped set, and the panel's own `InheritedTruncation` (AE24,
-  `PartialResultNotice.cs:149-167`) says that cannot surface a match that never entered the set.
-- The control that does address the cap, **Max**, sits inside the single-mode panel
-  (`ValueSearchPanel.axaml:72`/`:209`). It never renders in group mode.
-
-The single-mode twin at `:1026` gets this right.
-
-- **Measured, not constructed.** The archived AE13 run on DQ7R
-  (`docs/archive/todo-closed-2026-08-23-build-3337.md:1674-1689`) printed exactly this text on a cap
-  stop, at 1,849 ms of a 25 s budget. The duration being shown is the only mitigation.
-- ✅ **Safe fix:** re-word `:1449` alone to name a remedy that is reachable in group mode, and drop
-  "or refine". For example: *"raise the Timeout slider (deadline) or use more / more distinctive
-  values (result cap)"*. No test pins that string. `begin_group_scan` is pipe-only, so a separate cap
-  field would not be a three-exit P3 hazard, but it is not needed.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded re-word** (batch L21). The line now reads "raise the
-  Timeout slider (deadline) or use more / more distinctive values (result cap)", with no "or refine".
-  **Test, red first:** a group First Scan stopped at 1,849 ms, as in the DQ7R run. 6/6 mutants killed.
-- ✅ **More precise, still no wire change:** a cap stop yields `Total == the sent max_results`
-  exactly. Every push is followed by a `>= maxResults` break, and the clock is checked only at the
-  top of an iteration. So the UI can tell the two causes apart. Capture `MaxResults` in a local
-  before the await.
-- ⛔ **Unsafe:**
-  - advising "raise Max" in group mode, where it is not rendered (the Z10 trap), unless the same
-    change adds Max to the group row;
-  - a per-cause field on the pipe;
-  - folding anything more into `deadline_hit`;
-  - copying this wording onto `:1026`.
-
-##### ✅ `[P5-PIVOT-FETCHCAP]` LOW — Class / Array Pivot says "(capped at 5,000)" when a different cap fired (FIXED IN SOURCE 2026-09-12)
-
-`ClassPivotViewModel.cs:986` / `:1005`. `PivotResult.Truncated` is defined as the **group** cap: 5,000
-(`PivotEngine.cs:88-93`), the top N groups of a complete input, with every count exact. Commit
-220443c7 later folded the 2,000,000-row **fetch** cap into the same flag (`SnapshotStore.cs:2239/2257`
-for class, `:2382/2409` for array). Its consequence is different:
-- the pivot is built over a **prefix**, in `gobjects_index` order;
-- the instance count, the group count and every group's count are all undercounts;
-- the break can land mid-instance, which in Field mode creates a bogus "(missing)" group.
-
-The status still says *"N groups (capped at 5,000) from M instances"*. Only a view-log Warn names the
-fetch cap. It is rare: the snapshot keeps at most 256 elements per array, so it takes something like
-800 owners × 256 elements × 10 ticked props. The feature is experimental-gated; this is reasoned,
-not measured.
-
-- ✅ **Safe fix** (C# only; no wire change, no P3): give the fetch cap its own `PivotResult` flag and
-  its own sentence, and stop presenting the counts as totals when it fires. Both caps can fire on one
-  run, so both sentences must be able to show.
-- ⛔ Word the remedy *"tick only the fields you need"*, not "fewer fields". With **zero** value fields
-  ticked, the `prop_name IN` filter is dropped and every prop is fetched (`SnapshotStore.cs:2217/2355`).
-- ⛔ Do not remove `result.Truncated = true` at `:2257/:2409` unless the new flag lands in the same
-  change. Otherwise the fetch cap goes silent, which is exactly what 220443c7 fixed.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L22, with `[W1-DT-TRUNC]`).
-  - `PivotResult.FetchCap` / `FetchCapped` is the fetch cap's own flag. SnapshotStore sets it instead
-    of `Truncated`, in the same change, so `Truncated` means the group cap again.
-  - Both pivot Runs go through `ClassPivotViewModel.PivotRunStatus`. A fetch cap puts "≥" on the
-    counts and adds its own sentence ("…cover a prefix and are not totals — tick only the fields you
-    need"), and both caps can show together.
-  - **Tests, red first:** the fetch cap alone and both caps together. The group cap alone is the
-    control. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5233/5233.
-  - ⚠ **Survivors by construction:** the two call sites and the store's flag assignment. No fake store
-    drives a fetch-capped Run; the status rule is pinned.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[P5-GROUP-ADVICE]`, `[P5-PIVOT-FETCHCAP]`. Grep the tag; tags resolve across files.
 
 ##### ⛔ Refuted or overridden — do not re-raise
 
@@ -6043,158 +5857,7 @@ predicted this: the band is August/September fix-pass code, and no audit has eve
 The sixth, `[A1-DETECT-REPUBLISH]`, is a fix (X5) that an older, still-open gap (L18) undoes; the fix
 never accounted for it.
 
-##### ✅ `[A1-COORD-RESURRECT]` MED — Teleport's coordinate library "Clear all" comes back after reconnect or restart (FIXED IN SOURCE 2026-09-11)
-
-`CoordinateLibraryStore.cs:123`. `TryRead` returns null for a **missing** main file (`:140`) as well as
-a corrupt one, and in both cases `Load` falls back to the rolling `.bak` (`:123`). Clear all deletes only
-the main file and deliberately leaves the backups (`:222`).
-
-So the next `LoadCoordLibraryForGame` silently restores the library as it was before the last save,
-and logs *"main file unreadable, recovered from .bak"*. That load runs on every connect, on the Extra
-Scan fan-out, and on every restart. The confirm dialog had promised it *"deletes all N entries … and
-removes the library file"* (`en.axaml:1267`). Any library that has been saved twice has a `.bak`, so
-this is the normal case, not an edge case. Hand-verified at source.
-
-- ✅ **Safe fix:** try `.bak` only when the main file EXISTS but cannot be read (`File.Exists(path)`),
-  which is the documented intent. `Load_CorruptMainFile_RecoversFromBackup` still passes. Add a test:
-  Save, Save, SavePreClearBackup, Delete, Load → empty.
-- ⛔ **Unsafe:** making `Delete` also remove the rolling `.bak`. `ClearCoordLibraryAsync` calls
-  `Delete` even when the pre-clear copy FAILED, because the copy swallows its own exception. In that
-  case `.bak` is the only surviving copy, and deleting it turns a resurrection into exactly the
-  unrecoverable loss B6 fixed.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B10, one commit with
-  `[A1-COORD-BACKUP]`).
-  - `Load` tries the `.bak` only when the main file EXISTS but cannot be read. A missing main file
-    means "Clear all" happened, and that loads as empty.
-  - `Delete` still keeps every backup, and `Load_CorruptMainFile_RecoversFromBackup` still passes.
-  - **Test, red first:** `ClearAll_ThenLoad_DoesNotResurrectTheLibrary` (Save, Save,
-    SavePreClearBackup, Delete, Load → empty).
-- ✅ **Review follow-up 2026-09-11** (the review of B09-B12; B10's share was 6, all LOW; see also
-  `[A1-COORD-BACKUP]` below).
-  - **Clear all could lose the NEWEST revision.** `TryRead` reads a sharing violation as
-    "unreadable", so a transient lock at Load recovers the OLDER `.bak` while the main on disk is
-    the newest good file. The pre-clear backup is written from that in-memory library, and `Delete`
-    then removed the only copy of the newest. `Delete` now rolls a main that PARSES to `.bak` first,
-    as `Save` does (`ClearAll_AfterATransientLockAtLoad_KeepsTheNewestRevision`, red first).
-  - That is not the recorded-unsafe "Delete also removes `.bak`". Every backup is still kept, and
-    when the pre-clear copy fails, the surviving `.bak` is now the newest revision instead of the
-    one before it.
-  - The resurrect test also pins that `Delete` keeps `.bak`, so the recorded-unsafe shortcut can no
-    longer pass it.
-- ✅ **Second review follow-up 2026-09-11** (the review of 70f9d372).
-  - `Delete` REFUSES when the roll to `.bak` fails: it existed to keep that revision, and deleting it
-    anyway lost exactly that (red first, `.bak` held open). The next Load shows the library again.
-  - Pinned: `Delete`'s roll is guarded on the main PARSING, as `Save`'s is, so a recovered-from-`.bak`
-    session never rolls garbage over the good copy.
-
-##### ✅ `[A1-COORD-BACKUP]` LOW — after a `.bak` recovery, the one-shot backups copy the corrupt file (FIXED IN SOURCE 2026-09-11)
-
-`CoordinateLibraryStore.cs:218` (+ `:197`). `SavePreClearBackup` and `SavePreImportBackup` copy
-whatever main file is on disk. After a `.bak` recovery, the file on disk is still the corrupt one,
-because the load runs with persistence suppressed.
-
-- **Clear all** then backs up garbage and still reports *"Backed up to …preclear.bak"*.
-- **The import twin is worse.** A Replace-import backs up the corrupt main. The same Save then rolls
-  the corrupt main over the only good `.bak`, so the pre-import library ends up in no file at all.
-- **Why LOW, down from the finder's MED:** it needs the rare corrupt-main state, AND a Clear or
-  Replace as the first change after connect. Any ordinary save in between self-heals.
-- ✅ **Safe fix:** write the one-shot backup from the IN-MEMORY library (temp file + rename).
-  Separately safe: make `Save` refuse to roll an unparseable main file over `.bak`.
-- ⛔ **Unsafe:** "re-persist after a `.bak` recovery" by calling `Save`.
-  - `Save`'s roll copies the corrupt main over the only good `.bak` before the rename. A crash in
-    between leaves both files corrupt, and this would now happen on every connect.
-  - `TryRead` also treats a sharing violation as "unreadable", so an automatic re-persist would push
-    the newest revision into `.bak` with no user action.
-- ⚠ **Fix these two rows together.** They are in the same file, and each one's safe fix assumes the
-  other's.
-- ✅ **FIXED IN SOURCE 2026-09-11, both recorded safe shapes** (batch B10, with `[A1-COORD-RESURRECT]`).
-  - `SavePreClearBackup` / `SavePreImportBackup` take the IN-MEMORY library, and write it by temp
-    file and rename. `TeleportViewModel` passes the snapshot `PersistCoordLibrary` saves
-    (`CurrentCoordFile()`). An empty library writes nothing.
-  - `Save` rolls the main file to `.bak` only when it PARSES, so a corrupt main never overwrites the
-    good copy.
-  - There is no automatic re-persist after a recovery, which is the recorded unsafe shape.
-  - **Tests, red first:** both backups after a `.bak` recovery, and a Save over a corrupt main
-    (3 red). The rolling-backup control was green both ways. They were written against the old
-    one-argument API, so they failed on behaviour; the green then passes the library.
-  - ⚠ **The view model's side is covered by compilation only:** it now passes `CurrentCoordFile()`
-    to both backups, but no test drives "Clear all" through the view model.
-- ✅ **Review follow-up 2026-09-11.**
-  - **`Save` over an unparseable main destroyed it.** The fix stopped rolling it over the good
-    `.bak`, and the rename then overwrote it, so whatever it still held (a half-written save a user
-    can repair by hand) ended up in no file.
-    - It is now moved aside as `teleport-coords.<game>.json.corrupt-<stamp>`, at most
-      `AtomicFileHygiene.MaxCorruptCopies` of them, as `AobUsageService` does. The good `.bak` is
-      untouched.
-    - A move that fails refuses the Save rather than overwriting.
-    - The copy keys to the game (`AppDataRetentionPolicy.GameKeyOf`), so it moves and expires with
-      the game's group.
-    - Red first: `Save_OverAnUnparseableMain_MovesItAside_InsteadOfDestroyingIt`.
-  - **Pins that were missing** (green before and after):
-    - the one-shot backups come from the library PASSED IN, not from a re-read of the disk;
-    - `ZTolerance` survives the hand-built copy;
-    - the rolling-backup control takes three saves, so a guard that rolls only once cannot pass.
-  - 6/6 mutants killed across both rows.
-- ✅ **Second review follow-up 2026-09-11** (the review of 70f9d372).
-  - The corrupt main is COPIED aside now, not moved: moved first, a rename that then failed left NO
-    main, which Load reads as a Clear all.
-    - ⚠ Not unit-reproducible: it needs the rename to fail after the quarantine. Its mutant (move
-      instead of copy) is the one expected survivor of the mutation check, reported as such.
-  - The prune never deletes the copy just made. A future-stamped copy (clock skew, a file from
-    another machine) outranked it, so the fresh one was pruned; it is excluded and counted, as in
-    `AobUsageService` (red first).
-  - 3/3 expected mutants killed; the 4th (move instead of copy) is the documented survivor. UI 5033/5033 (one suite run over the three second-round follow-ups together).
-- ✅ **Third review follow-up 2026-09-11** (adversarial review of B14–B21: `coord-delete-destroys-corrupt-main`
-  LOW/PLAUSIBLE, `coord-quarantine-says-moved` LOW/CONFIRMED).
-  - **`Delete` was the second door.** After a `.bak` recovery, "Clear all" deleted the unparseable
-    main outright: the destruction the first follow-up removed from `Save`. It now copies such a main
-    aside first, exactly as `Save` does, and a copy that fails refuses the Delete.
-  - The quarantine's Warn log and `Save`'s comment still said "moved aside" / "a move that fails"
-    after the switch to copy. Both say copy now.
-  - Red first: `Delete_OfAnUnparseableMain_CopiesItAsideFirst` (no main left, one `.corrupt` copy
-    holding the old bytes, the `.bak` untouched). 1/1 mutants killed; UI 5089/5089.
-- ✅ **Fourth review follow-up 2026-09-11** (the second adversarial review, of b496c866: three LOW, all CONFIRMED).
-  - **Two claims were pinned by nothing**, and now are, as pins (the code already did both; their red is
-    the mutation check):
-    - "A copy that fails refuses the Delete" (`Delete_RefusesWhenTheCorruptMainCannotBeCopiedAside`). A
-      handle sharing DELETE but not READ makes the main unreadable AND the copy fail while a delete would
-      succeed. A Delete that swallowed the failure would remove a main nobody copied.
-    - Only an UNPARSEABLE main is copied aside (`Delete_OfAHealthyMain_LeavesNoCorruptCopy`). Copying
-      every main would fill the bounded `.corrupt` set with good files and evict a real half-written save.
-  - Save's comment credited the COPY to `AobUsageService`, which MOVES its file: the unsafe shape the
-    quarantine was changed away from. Only the bound follows it; the comment now says so.
-  - 2/2 mutants killed; UI 5100/5100.
-
-##### ✅ `[A1-LOG-RESUME]` LOW — after one 8 MB roll, every later session appends to the old `{cat}-0_NNN.log` (FIXED IN SOURCE 2026-09-12)
-
-`LoggingService.cs:286`. When there is no checkpoint, Serilog.Sinks.File 7.0.0 resumes the
-highest-sequence file (the refuter decompiled `RollingFileSink.OpenFile` to confirm this).
-`ArchivePreviousLog` handles only `-0.log` and `-1..9.log` (`:312-318`), never `-0_NNN.log`. So once a
-category has rolled:
-- `pipe-0.log` / `view-0.log` are never created again;
-- sessions are no longer archived under their own date;
-- the documented "grep view-0.log" steps look at the wrong file;
-- the compression sweep treats the live rolled file as idle after an hour and reports it as "failed".
-
-Field evidence already exists: a 28-minute session on build 3262 logged into `pipe-0_005/006.log`
-(`docs/archive/todo-closed-2026-08-25-build-3356.md:498`). No data is lost; the harm is to
-diagnostics only.
-
-- ✅ **Safe fix:** have `ArchivePreviousLog` also archive `{prefix}-0_*.log` at startup (oldest first),
-  and rewrite `:286-288`.
-- ⛔ **Unsafe:** widening `LogCompressionPolicy.IsLiveLog` to match `-0_NNN.log`. That would mark every
-  closed 8 MB rolled file as live forever, dropping the largest and most compressible files from both
-  sweeps. The in-session case needs a different rule: the newest `-0*` file per prefix in our own
-  folder is the live one.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L35), the recorded safe fix:
-  - `ArchivePreviousLog` now also archives every `{prefix}-0_*.log` at startup, oldest first, so the new session
-    starts at `-0.log` again;
-  - `CreateFileLogger`'s comment is rewritten: the live-file guard knows only `-0.log`, and `IsLiveLog` must not be
-    widened.
-  - **Red first:** rolled files beside a `-0.log` and rolled files alone are both archived, in order, and another
-    category's are left alone.
-  - ✅ Residual FIXED 2026-11-02 as `[LOG-RESUME-LIVE-ROLLED]` (see the census). As found: inside ONE session that rolls, the compression sweep can still call the live rolled file
-    idle after a quiet hour. That is the "different rule" above, and it is not built.
+> 📦 **Archived 2026-11-20:** 3 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A1-COORD-RESURRECT]`, `[A1-COORD-BACKUP]`, `[A1-LOG-RESUME]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows (FIXED IN SOURCE 2026-09-12)
 
@@ -6225,68 +5888,7 @@ disconnect finishes anyway and republishes its rows at `:250-255`.
     result and once with a pipe failure. The rows and the reset status stay untouched. 7/7 mutants
     killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218.
 
-##### ✅ `[A1-SLOTSYM-FAILED]` LOW — a failed second "Get GWorld" record tears down a live record's symbol (FIXED IN SOURCE 2026-09-12)
-
-`CeLuaHygiene.cs:846`. `AppendSlotSymbolRelease` decrements the refcount unconditionally. But:
-- CE runs `[DISABLE]` on the deferred untick after every failed ENABLE (`MemoryRecordUnit.pas`
-  `setActive`; this repo measured it live as `[B30-REOPEN]`);
-- every PointerQuery ENABLE bail returns **before** the register step
-  (`PointerQueryScriptGenerator.cs:176-195/:210-221`).
-
-With two records, B's ENABLE fails, its `[DISABLE]` runs, `_rc` drops to 0, and
-`unregisterSymbol('UE_GWorld')` fires while A still reads ticked. Every `[UE_GWorld]+offset` record then
-resolves to `??`. The only report is a `dbg()` line, which is silent at DEBUG=0.
-
-The refuter **measured** this under real Lua over the UI-emitted script: *"A is still ticked but
-UE_GWorld is GONE"*. The existing rigs (`slotsym_gworld_test.lua`, `slotsym_release_test.lua`) have no
-failed-ENABLE case.
-
-- ✅ **Safe fix:** per-record ownership in the shared emitters. Keep a holder set
-  `UE5_slotSymHolders[sym][memrec.ID]`: add the record on a successful register, remove it on release,
-  and unregister only when the set is empty. Fall back to the count when `memrec` is nil.
-- ⛔ **Unsafe:**
-  - Copying `[B30-REOPEN]`'s ownership flag. It is one global boolean, and two records share Lua
-    globals, which is exactly the case SLOTSYM exists for.
-  - A `getAddressSafe(sym)` guard. A's registration makes it true for B too.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L36, with `[A1-LUA-WAIT]`), the recorded safe fix, per-record ownership in
-  the shared emitters:
-  - `UE5_slotSymHolders[sym][memrec.ID]` is set on a successful register and cleared on release;
-  - the release decrements only for a record that registered, so a failed record's `[DISABLE]` releases nothing;
-  - the count stays the fallback without `memrec`.
-  - **Red first:** a shape pin, because this suite has no Lua runtime. The register records the holder, and the release
-    checks ownership before it decrements. The two-record failed-ENABLE run is a CE live check.
-
-##### ✅ `[A1-LUA-WAIT]` LOW — `_tick and (elapsed >= Ms) or (iters >= N)` keeps the iteration bound live (FIXED IN SOURCE 2026-09-12)
-
-`CeLuaHygiene.cs:192-194` and `:644-646`. In Lua, `a and b or c` evaluates `c` whenever `b` is false.
-So both mailbox deadlines are **min(real ms, N × sleep cost)**, not the real deadline that the comments
-and commit 45eb7c2f promise.
-
-- **Harmless** while CE's `sleep(1)` costs ~15.5 ms, as on the measured machines.
-- **Where it is shorter,** the 1.5 s idle wait and the 10 s status wait shrink by up to ~15×. One such
-  case is Windows before 10 2004: there a 1 ms timer request is global, and the injected DLL makes one
-  itself (`Mimic.cpp:78-82`). A timeout while the DLL is still processing then unticks a record that
-  the DLL goes on to apply.
-- ⭐ **A P3 twin of a fixed defect.** `AA29` found exactly this in `ue5_freeze_helper.lua` /
-  `ue5_invoke_helper.lua`, and e8893e5a fixed only those two. The C# emitter that feeds every generated
-  script kept the idiom. `pattern_p3.py` never compares Lua text twins, so the P3 sweep could not see it.
-- **Evidence:** the Lua semantics were measured; the platform leg is inferred.
-- ✅ **Safe fix:** mirror the helpers' `if … elseif _tick then … else … end` shape exactly, in both
-  emitters. Add a test that runs the emitted loop under Lua. The current
-  `IdleWait_measures_a_real_deadline_not_sleep_iterations` asserts substrings, and passes both before
-  and after the fix.
-- ⛔ **Unsafe:**
-  - deleting the iteration arm, which leaves no bound at all where `getTickCount` is missing;
-  - any rewrite that keeps the `a and b or c` form;
-  - retuning the constants;
-  - changing only one of the two emitters.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L36), the recorded safe fix: both emitters now use the helpers'
-  `if st == nil … elseif tick … else iters … end` shape exactly. The iteration count is the fallback only without
-  `getTickCount`, and the constants are unchanged.
-  - **Red first:** a shape pin on both waits. The `a and b or c` form is absent, and the iteration arm must be the `else`
-    of the getTickCount branch. The substring test above passed both before and after, as recorded.
-  - ⚠ **The row asked for a test that RUNS the loop under Lua.** This repo has no Lua runtime, so that run is a CE live
-    check (backlog), not a unit test.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A1-SLOTSYM-FAILED]`, `[A1-LUA-WAIT]`. Grep the tag; tags resolve across files.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -6505,175 +6107,7 @@ the three reads therefore land one field late:
     `UBoolPropFieldSizeFor` has always applied +8, and its compound-miss pins encode that. It needs
     a 4.11-4.17 CPN build or template, not a guess.
 
-##### ✅ `[A2-TOPTIONAL-INTRUSIVE]` MED — TOptional set/unset is decided by the inner type's NAME, and is wrong on every engine version that has FOptionalProperty (FIXED IN SOURCE 2026-09-11)
-
-`Ubel.cpp:5770-5839`. UE decides "set" through `ValueProperty->HasIntrusiveUnsetOptionalState()`.
-Checked at every tag from 5.3 (where `FOptionalProperty` first appears; the comment's "5.2+" is off)
-to 5.8.2:
-- **Object, class, weak, soft, lazy and interface optionals are NON-intrusive:** a trailing `bIsSet`
-  flag. (An object optional is intrusive only under `CPF_NonNullable`.) The walker derives "set" from
-  the value bytes instead:
-  - `TOptional<AActor*>` set to null shows "(unset)";
-  - after `Reset()`, which writes no bytes, the old actor's name and a **drillable stale pointer** are
-    published.
-- **TArray / TMap / TSet optionals are INTRUSIVE from 5.5 on.** The walker reads `bIsSet` at
-  `field + innerSize`, which is the NEXT property's first byte. That is the neighbour-aliasing bug
-  build 530 fixed for Str / Name / Text, still live for containers.
-- **The measured discriminator is already in hand:** `fi.Size` vs `innerSize`.
-- **Twin:** Find Refs (`Aura.cpp:3217-3231`) holds the same wrong belief and reports a reset
-  optional's stale pointer as a live reference.
-- **Population:** stock-engine runtime code declares no pointer or container `TOptional` UPROPERTY
-  (editor gizmos and tests do). Game code is unmeasured. The defect is systematic and affirmatively
-  wrong, hence MED.
-- ✅ **Safe fix:** match UE's exact `CalcSize`, and refuse anything else:
-  - non-intrusive only when `fi.Size == Align(innerSize+1, align)`;
-  - intrusive only when `fi.Size == innerSize`.
-- ✅ For intrusive fields, use the per-type sentinel (`ArrayMax == -1` at +12 for TArray / FString)
-  and never the trailing byte.
-- ✅ For non-intrusive object / weak fields, read the flag AND gate `ptrValue` on it.
-- ✅ Keep the okProbe refusal first. Fix Find Refs in the same change, and correct
-  `technical-notes.md:586-603`.
-- ⛔ **Unsafe:**
-  - a version gate: from 5.5 intrusiveness is per type and per `CPF_NonNullable`;
-  - a loose "`fi.Size > innerSize` means trailing flag": a garbage `innerSize` would send an intrusive
-    field back to the neighbour byte.
-- 🟡 **Unfiled lead the refuter surfaced:** on 5.3 / 5.4, Str / Name / Text optionals are
-  non-intrusive too. The build-530 sentinel arms were measured on a 5.5 title, so a default-constructed
-  unset `TOptional<FString>` on 5.4 would read as set `""`. The DumperTest 5.4 fixture has
-  `Opt_Str_Set` but no `Opt_Str_Unset`.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B08).
-  - **UE's CalcSize, matched exactly.** `Ubel::ClassifyOptionalLayout(fi.Size, sizeof(T), alignof(T))`:
-    - intrusive only when `fi.Size == sizeof(T)`;
-    - trailing flag only when `fi.Size == Align(sizeof(T)+1, alignof(T))`;
-    - anything else is refused with a reason.
-    - It uses no version gate and no loose "bigger than T". It was checked against UE 5.8's
-      `PropertyOptional.h` and the Array / Set / Map / Object property sources.
-  - **Shared resolver.** `Ubel::ResolveOptionalLayout` resolves the value property, its size and
-    its alignment. The walker and Find Refs both use it.
-  - **Walker.** It decides set / unset by the layout and decodes the value only when set.
-    - An intrusive optional uses its per-type sentinel: `ArrayMax == -1` at +12 for TArray /
-      FString, FName `~0u`, FText null, a non-nullable object null.
-    - An intrusive TSet / TMap / struct is refused, never guessed: UE 5.8's sparse and compact
-      sets store different unset states.
-    - A `TOptional<UObject*>` set to null shows `(set: null)`.
-    - The okProbe refusal still comes first.
-  - **Find Refs, in the same change.** The pointer entries carry `setFlagOffset`, and all six scans
-    over them check `OptionalGateOpen`. A layout it cannot prove is not bucketed.
-  - **The 🟡 lead above is closed by the same rule:** a 5.3 / 5.4 FString optional is sized as a
-    trailing flag (24 bytes) and read through its flag.
-  - `technical-notes.md` § OptionalProperty is rewritten.
-  - **Tests, red first.** `dll_core_test` OPTLAYOUT is a pool-faking block, and 9 checks started red:
-    - a reset object optional that published a stale name and pointer;
-    - an optional set to null that read `(unset)`;
-    - an intrusive TArray, unset and set, whose flag came from the neighbour's byte;
-    - the 5.4-shape FString that read `""`;
-    - an unrecognised size that was not refused;
-    - Find Refs' enumerator emitting the stale pointer.
-  - **Controls, green throughout:** the set pointer, the set-empty string, Find Refs on a set
-    optional, and the UNREADVAL TOptional cases (unchanged: an 8-byte optional of an 8-byte object
-    is the intrusive layout). `dll_helpers_test` pins `ClassifyOptionalLayout`.
-  - ⚠ **Coverage, stated honestly:** of the six Find Refs scan sites, only
-    `EnumerateOutgoingObjectPtrs`' direct-pointer site is driven by a test, because
-    `FindReferencesToUObject` needs a live object array. The other five carry the identical
-    one-line gate.
-  - 🟡 **Leads, not filed:**
-    - Value Scan V1c's `optionalFlagOffset` still assumes a trailing flag, so an intrusive 5.5+
-      FString optional gates on its neighbour's byte.
-    - Find Refs' descent into a `TOptional<FStruct>` still assumes an unset slot is zeroed.
-  - ✅ **Review follow-up 2026-09-11 (adversarial review of cc430176 + cd73ec38: 11 survived, all LOW after refutation; 2 refuted).**
-    - **A regression this change exposed:** `Scharf::RequiredAlignment("LazyObjectProperty")` said 8.
-      `alignof(FLazyObjectPtr)` is 4 in every era, so every 5.3+ `TOptional<TLazyObjectPtr>`
-      (0x1C bytes) was "not recognised" and dropped from Find Refs. The same wrong 8 also put a
-      `TMap<int32, TLazyObjectPtr>` value at +8 instead of +4. Now 4. OPTLAYOUT's lazy case and the
-      Scharf pin were red first.
-    - **Pins the review found missing,** all green pins:
-      - the trailing-flag okProbe (UNREADVAL: a readable pointer with its flag across the page edge);
-      - the intrusive FString / FName / FText sentinels, unset and set;
-      - a struct optional, where the probe and MinAlignment decide the layout;
-      - Find Refs not bucketing an unknown layout;
-      - `(set: null)` asserted exactly.
-    - **Filed rather than half-fixed:** the two 🟡 leads above are now `[A2-TOPTIONAL-STRUCT-DESCENT]`,
-      which gains the Address Finder half, and `[A2-TOPTIONAL-VALUESCAN]`. Both need plumbing
-      through every entry kind.
-
-##### ✅ `[A2-TOPTIONAL-STRUCT-DESCENT]` LOW — Find Refs and the Address Finder walk into a reset `TOptional<FStruct>` (filed 2026-09-11; FIXED IN SOURCE 2026-09-12)
-
-`Aura.cpp` `CollectRefMetaRecursive` (the OptionalProperty/StructProperty branch) and
-`CollectContainersRecursive` (`:2318`) descend into a struct optional at the same offset. Nothing gates
-that descent on the optional's `bIsSet`, and both comments claim "an unset slot is zero". That is
-false. UE's `MarkUnset` runs `DestroyValue`, then clears the flag, and zeroes no bytes; a TArray keeps
-its Data / Num after `~TArray`. So:
-- a reset `TOptional<FMyStruct{ AActor* Target }>` is reported by Find Refs as a live `Opt.Target`
-  reference, and also by `EnumerateOutgoingObjectPtrs` (graph paths);
-- the Address Finder reads the destroyed array's stale header and freed buffer. The reads are
-  SEH-safe, so the result is false hits in dead memory, not a crash.
-
-This is the twin `[A2-TOPTIONAL-INTRUSIVE]` left: its pointer-shaped branch was gated; this descent
-was not. The review of cc430176 rated it LOW, because the shape is narrow and the outcome is a false
-positive.
-- ✅ **Safe fix (the reviewer's):**
-  - Resolve the struct optional with `Ubel::ResolveOptionalLayout(f.Address, f.Size, "StructProperty")`.
-  - Do not descend when it is Intrusive or Unknown.
-  - For a TrailingFlag optional, carry the flag's absolute offset (optional absOffset + sizeof(T))
-    down the recursion, and store it on EVERY entry kind produced underneath: direct, weak-like,
-    object / interface / weak arrays, maps, sets, `ContainerCacheEntry`. Every scan then checks it
-    before reading.
-  - A nested optional-in-optional needs an AND of flags, or a refusal.
-  - Correct both comments.
-- ⛔ **Unsafe:** dropping the descent altogether. That loses every true reference inside a SET struct
-  optional.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L40), the reviewer's safe fix:
-  - Both collectors resolve the struct optional with `Ubel::ResolveOptionalLayout`, and never descend
-    when it is Intrusive or Unknown.
-  - A TrailingFlag optional's flag offset (absolute) goes down the recursion as `gateAbs`. Every entry
-    underneath stores it relative to itself, the shape `DirectPointerEntry` already had. That covers
-    object / interface / weak arrays, maps, sets and `ContainerCacheEntry`, plus direct and weak-like
-    pointers.
-  - Every consumer checks `OptionalGateOpen` first: Find Refs' and the enumerator's loops for each
-    kind, and each container walk (the Address Finder, `MatchAddrInStructContainers`,
-    `WalkContainerLeaves`, the deep outgoing pass and deep raw).
-  - An optional inside a gated optional would need two flags ANDed, so it is **refused**: a
-    TrailingFlag optional under a gate is not bucketed; an intrusive object optional takes the outer
-    gate.
-  - Both comments are corrected.
-  - **Red first:** dll_core_test's OPTLAYOUT block builds a `{ UObject* }` and a `{ TArray<UObject*> }`
-    struct optional.
-    - A reset one reports neither its pointer nor its array; a set one reports both (controls).
-    - An Unknown-layout one is not descended.
-    - The container cache entry carries `setFlagOffset` 24.
-    - An InvokeScriptTests source pin covers Find Refs' own loops, which need a live GObjects.
-  - ⬜ **Lead, unverified (from mapping this row):** `CollectSchemaLeaves` (Property Search's deep
-    schema, Aura.cpp `OptionalProperty` + `StructProperty` branch) descends the same way. It reads no
-    instance itself; whether its leaves are later read per instance was not traced.
-    ✅ **Traced 2026-11-02** (`[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]`, the census row has it): nothing reads
-    them per instance; Freeze and Force now refuse a nested row in the command, not just by hiding it.
-
-##### ✅ `[A2-TOPTIONAL-VALUESCAN]` LOW — Value Scan V1c still sizes the TOptional flag with the loose rule (filed 2026-09-11; FIXED IN SOURCE 2026-09-12)
-
-`Aura.cpp` V1c (~`:7143-7163`) takes the flag offset from `Radar::OptionalFlagOffset(f.Size, innerSize)`:
-a loose "bigger than T" rule that `[A2-TOPTIONAL-INTRUSIVE]` names as unsafe. It never gates an
-intrusive optional either, so on 5.5+ an unset FString / FName / FText optional is scanned as a value,
-and its "flag" is read from the neighbour's byte.
-- ✅ **Safe fix (the reviewer's):**
-  - Use `Ubel::ResolveOptionalLayout`.
-  - TrailingFlag: gate on the byte at `sizeof(T)`.
-  - Unknown: skip the field.
-  - Intrusive: carry a per-type sentinel into the `ScanField` and test it before the read —
-    FString `ArrayMax == -1` @+12, FName `ComparisonIndex == ~0u`, FText `TextData` null.
-  - Drop `Radar::OptionalFlagOffset`'s loose rule.
-- ⛔ **Unsafe:** skipping every intrusive optional. That silently drops 5.5+ string optionals from
-  every scan.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L41), the reviewer's safe fix:
-  - V1c takes the layout from `Ubel::ResolveOptionalLayout`, and a pure `Ubel::V1cOptionalGate` decides from it.
-    - TrailingFlag: gate on the byte at `sizeof(T)`.
-    - Intrusive FString / FName / FText: carry that type's sentinel. `ScanField.optionalSentinel` is tested on the value
-      bytes by `IntrusiveOptionalIsUnset` before the read.
-    - Unknown, or an intrusive T with no known sentinel: skip the field.
-  - `Radar::OptionalFlagOffset` and its pin test are removed.
-  - **Red first:** dll_helpers_test's V1C block pins the decision and all three sentinels, against inert helpers. An
-    InvokeScriptTests source pin covers the Aura wiring, because no test drives `ScanForValue`.
-  - ⬜ **Lead, unverified (from mapping this row):** the value-scan REFINE path appears to re-read V1c candidates with no
-    optional gate at all, since Radar's `FieldDescriptor` has no optional member. It was not traced end to end.
+> 📦 **Archived 2026-11-20:** 3 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A2-TOPTIONAL-INTRUSIVE]`, `[A2-TOPTIONAL-STRUCT-DESCENT]`, `[A2-TOPTIONAL-VALUESCAN]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A2-STRUCT-PREVIEW-BOOLMASK]` LOW — the shared struct preview ignores the bool bit mask (FIXED IN SOURCE 2026-09-11)
 
@@ -6701,133 +6135,7 @@ repeats the defect, which contradicts "now the ONLY one" (`:1982`).
     `InterpretStructByLayout`.
   - Dropping the mask argument turns it red (mutation check).
 
-##### ✅ `[A2-LAZY-LATCH-GUESS]` LOW — `TArray<TLazyObjectPtr>` replaces the engine's ElementSize with a version guess, then latches the guess as "measured" (FIXED IN SOURCE 2026-09-12)
-
-`Ubel.cpp:1724` (+ `:1745`, `:1780`, `:3033`, `:394`).
-- `InferScalarSize("LazyObjectProperty")` is a version guess (`ver >= 503 ? 0x18 : 0x1C`).
-- `ValidateArrayElemSize` and `ResolveInnerSize` let that guess override the engine's raw
-  ElementSize.
-- `ReadLazyObjectArrayElements` then feeds the overridden size into the envelope latch, which logs
-  *"payload envelope measured"*. `Ubel.cpp:391-393` forbids exactly this.
-
-**Modelled in Python:** a 5.0-5.2 title mis-resolved as 504 strides 0x18 over 0x1C elements, reads
-every GUID 4+4i bytes early, and writes a false "measured +0x08" line. Needs a version mis-resolved
-across 5.2/5.3 AND an array walked before any scalar lazy field; the first scalar lazy walk heals it.
-- ✅ **Safe fix:** for LazyObjectProperty only, derive the size from the RAW engine value via
-  `LazyGuidOffset(raw)+0x10`, which accepts only 0x0C / 0x08 and otherwise falls back as today.
-- ⛔ **Unsafe:** deleting the `InferScalarSize` entry. The generic arm accepts any raw size from 1 to
-  65536, so a garbage ElementSize would reach the pipe, the exporter and FindInContainers.
-- 🟡 **Same shape, tracked elsewhere:** the soft path's `>= 501` discriminator
-  (`verification-register.md:500`).
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L10).
-  - For LazyObjectProperty only, `ValidateArrayElemSize` returns `LazyGuidOffset(raw) + 0x10`, and
-    `ResolveInnerSize` no longer asks the guess before reading the engine.
-  - The `InferScalarSize` entry stays (the unsafe deletion was not made).
-  - The array reader, which is only ever handed that derived size, now derives its envelope WITHOUT
-    the latch. A fallback is never latched as "measured"; a real raw size is still measured once, where
-    the size is resolved.
-  - **Test, red first:** dll_core_test at a mis-resolved 504, with guards that garbage still falls back
-    and latches nothing:
-    - a real 0x1C is kept and latches +0x0C;
-    - `ResolveInnerSize` reads 0x1C;
-    - the reader latches nothing from the size it is handed.
-    3/3 mutants killed; dll_core_test 304/304; UI 5212/5212.
-  - 🟡 The soft path's `>= 501` discriminator is untouched, and stays tracked where it is.
-
-##### ✅ `[A2-WALKCLASSEX-UNMAPPED]` LOW — WalkClassEx permanently memoizes an UNMAPPED class address, defeating Aura's refusal gate (FIXED IN SOURCE 2026-09-12)
-
-`Ubel.cpp:1229`. `WalkClass` sets `info.Address` BEFORE its read-fault early return (`:968`, `:994-998`),
-and `ReadSafe` zeroes on fault. So an unmapped address comes back as `{Address=addr, PropertiesSize=0}`.
-- `WalkClassEx` calls `ShouldPublishClassWalk(true, 0)`, which accepts, and memoizes the empty result
-  forever.
-- Aura's two refusal gates (`WalkClassEx(cls).Address != cls`, `Aura.cpp:2371`/`:3387`) then PASS and
-  pin empty container / ref metadata in two more never-erased caches.
-- ⚠ **This makes A10b's "FIXED" claim false for the exact scenario it names**, a transient read fault
-  on `cls`. Its live control measured only the healthy side.
-- Reached by `walk_class` / `walk_class_batch` with a raw address, e.g. from the ungated Class Pivot
-  handoffs `[PATTERN-P6-2026-09-10]` records.
-- ✅ **Safe fix:** thread `WalkClass`'s read-fault verdict out (a `WalkClassImpl(addr, bool& ok)`),
-  pass it to the gate, and add a `VirtualFree` / re-commit `dll_core_test` case.
-- ⛔ **Unsafe:**
-  - gating on `Fields.empty()` or `Name.empty()` (field-less classes are legitimate, forks return "");
-  - re-reading PropertiesSize (a race);
-  - un-memoizing with no once-per-address log guard (it would flood `walk-0.log`);
-  - bounding or evicting the cache (the dangling-`const&` hazard).
-- **Twin, fix together:** `GetCachedStructFields` (`:2549-2645`) publishes `WalkClass`'s result
-  unconditionally into a third never-erased cache.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix, with its twin** (batch L09).
-  - `WalkClassImpl(addr, bool& readOk)` carries the fault exit's verdict. `WalkClassEx` passes it to
-    `ShouldPublishClassWalk`, so an unreadable class is refused and NOT memoized, and Aura's two gates
-    refuse with it.
-  - `GetCachedStructFields` serves an unreadable struct empty, again without memoizing it.
-  - None of the recorded unsafe shapes: no Fields/Name gate, no second PropertiesSize read, no cache
-    bound or eviction.
-  - The un-memoizing got its log guard: WalkClass's warning is once per address (bounded at 4096), and
-    WalkClassEx says nothing extra for an unreadable class.
-  - **Test, red first:** dll_core_test decommits a page. WalkClassEx refuses it and the twin memoizes
-    nothing. It re-commits the page with a plausible class, and the class walks. 3/3 mutants killed;
-    dll_core_test 297/297; UI 5212/5212.
-  - ⚠ **Survivor by construction:** the once-per-address guard. Its only effect is log volume.
-
-##### ✅ `[A2-GNAMES-PTRSCAN-ABORT]` LOW — a WIDENING of `[P1-GENAU-ABORT]`: the GNames tier-3 pointer scan aborts with no log and no flag (FIXED IN SOURCE 2026-09-12)
-
-`Genau.cpp:2122`. `FindGNamesByPointerScan` returns 0 on `Tot::Requested()`, silently.
-`s_gnamesReport.cancelled` stays false, so `UE5_Init` can latch initialized with GNames missing, which
-is the recorded row's consequence. The recorded row names only the three LOGGED sweeps. The P1 matcher
-enumerates log calls, so a bail with no log line was outside its population by construction. Tier 3 is
-reachable: a DumperTest D1 run resolved GNames by `pointer_scan`.
-- The `ExtraScanGWorld` bails (`:4515`/`:4558`) are real but mostly masked: `RecoverGWorldViaEngine`
-  follows with no Tot poll, and GWorld is non-critical.
-- ✅ **Safe fix:** set `s_gnamesReport.cancelled` at the bail, in the recorded row's shape.
-- ⛔ **Harmful:** ORing `ExtraScanGWorld`'s bail into the latch guard. That refuses a complete init
-  over a non-critical pointer that has its own recovery route.
-- ✅ **FIXED IN SOURCE 2026-09-12, the safe fix** (batch L01, with `[P1-GENAU-ABORT]`): the bail sets
-  `s_gnamesReport.cancelled` and now logs. `ExtraScanGWorld` is untouched. Pinned by the `GENAUABORT` block.
-
-##### ✅ `[A2-CRC-PATH-LS]` LOW — CrashReportClient version detection logs its path with `%ls`, which this file forbids (FIXED IN SOURCE 2026-09-12)
-
-`Genau.cpp:2849`/`:2853`, written by 6a74065a twelve days after `[NONASCIILS-2026-08-24]` and 2,700
-lines below the file's own *"CONVERT FIRST; NEVER %ls"* note (`:116`). On a non-ASCII install path the
-record comes out empty; `utf8_helpers_test.cpp:582-609` pins the CRT behaviour. The version source is
-still named by its ASCII label elsewhere, so the loss is only the resolved path and the record's
-integrity.
-- ✅ **Safe fix:** `Utf8Helpers::EncodeUtf16`, then `%s`. It is byte-identical for ASCII paths.
-- **Gate gap:** nothing scans call sites for `%ls` in log calls.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix and the gate** (batch L11).
-  - The red is the gate: `InvokeScriptTests.DllLogCalls_NeverFormatAWideString` scans every dll/src
-    file for a `%ls` inside a `Sein::` / `LOG_` call. It skips comment lines and wide printfs.
-  - The gate found **eight** sites, not two, and all eight now `Utf8Helpers::EncodeUtf16` first, which
-    is byte-identical for ASCII:
-    - both CrashReportClient lines;
-    - the VERSIONINFO key;
-    - Fern's pipe-name line;
-    - both proxies' System32-path lines, which now keep `GetLastError()` before the conversion.
-  - 4/4 mutants killed, one of them a wide format on the second line of a multi-line call; dll_core_test 304/304; UI 5213/5213.
-
-##### ✅ `[A2-HEAP-ANCHOR-TEXT]` LOW — a data-scan GObjects anchors to the heap, and later refusals print the "GObjects never validated" text (FIXED IN SOURCE 2026-09-12)
-
-`Genau.cpp:1666`. `DataScanGObjectsCandidates` returns a HEAP `FUObjectArray` by design, so the module
-anchor has no module and collapses to `AnchorState::None`. The anchor line prints `'(unknown)'`. Every
-later Pass-2 refusal then logs *"GObjects never validated this run"*, the AA38 python.exe signature, on
-a run where GObjects DID validate. On this PC that happens whenever `GWLD_V3` matches inside
-Bitdefender's `atcuf64.dll`. **No published pointer moves:** both states refuse on a monolithic build.
-- ✅ **Safe fix:** text only. Or add a fourth `AnchorState` that refuses with truthful text.
-  - ⚠ The constexpr switch ends in `return Accept; // unreachable`, so a new enum value without its
-    case silently ACCEPTS. Extend the truth table from 12 rows to 16.
-  - Keep the `None` wording byte-identical: an archived live check greps it.
-- ⛔ **Unsafe:** treating a heap anchor as modular / Accept, which re-admits the Bitdefender GWorld
-  candidate.
-- ✅ **FIXED IN SOURCE 2026-09-12, in the enum form** (batch L12).
-  - `AnchorState::Heap` is a validated anchor in no module, and `ModuleAdmission::RefuseHeapAnchored`
-    refuses exactly where `None` refuses, with a text that says GObjects validated on the heap. The
-    anchor line says "set on the HEAP" instead of `'(unknown)'`.
-  - The mapping moved into the pure `Genau::ClassifyAnchor`. `CurrentAnchorState` only asks Windows.
-  - The switch's tail, which silently ACCEPTED a value without its case, now fails closed.
-  - The truth table is 16 rows. The `None` wording is byte-identical.
-  - **Test, red first:** dll_helpers_test. A no-module anchor classifies Heap. A heap anchor refuses a
-    foreign candidate with its own verdict and admits the producer. The main-module loop covers all four
-    states. The red made the silent Accept explicit. 3/3 mutants killed; dll_helpers_test 2716/2716, dll_core_test 304/304; UI 5213/5213.
-  - ⚠ **Survivors by construction:** `CurrentAnchorState`'s three-line wiring and the two log texts.
+> 📦 **Archived 2026-11-20:** 5 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A2-LAZY-LATCH-GUESS]`, `[A2-WALKCLASSEX-UNMAPPED]`, `[A2-GNAMES-PTRSCAN-ABORT]`, `[A2-CRC-PATH-LS]`, `[A2-HEAP-ANCHOR-TEXT]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A2-METHODE-MANUALMAP]` LOW — Methode reports a SUCCESSFUL CE force-load as "Injection failed", and blames CE's BOOL (FIXED IN SOURCE 2026-09-12)
 
@@ -6969,116 +6277,7 @@ claims not kept**, the same shape as A1 (5/6) and A2 (7/9).
   reachable from all three and 89 from two or more. The in-band multi-exit functions were compared and
   **only `[A3-ST1-SUPER-DRAIN]` survived**. P3 on the transports is now bounded.
 
-##### ✅ `[A3-ST1-SUPER-DRAIN]` MED — ST1's fail-open direct call still re-enters our ProcessEvent detour, and drains the invoke queue off the game thread (FIXED IN SOURCE 2026-09-12)
-
-`Frieren.cpp:2261-2279`. `Mimic` auto-routes any `Native|Static` UFunction to
-`UE5_CallProcessEventDirect` (`Mimic.cpp:641`/`:702`). When the instance's class overrides ProcessEvent,
-which is every `AActor`, the direct call correctly fails open to the override. But
-`AActor::ProcessEvent` then calls `Super::ProcessEvent` (vendor 5.8.2 `Actor.cpp:1488-1523`), which is
-the address MinHook patched. So `HookedProcessEvent` runs on the mailbox thread with
-`InOwnPeCall() == false`, and the drain executes **every queued request there, off the game thread**.
-
-- **The danger is the queue.** An invoke that timed out (-5) stays queued on purpose. A later static
-  native on an actor class (e.g. stock `APawn::GetMovementBaseActor`) then runs that stateful call on
-  the wrong thread: ST1's exact crash class, through a path its fix did not reach.
-- **Mailbox exit only.** The pipe queues these calls; `direct_call` is used only by the
-  KismetMathLibrary self-test, whose CDO does not override.
-- ✅ **Safe fix:** a Stark helper (e.g. `CallAddressAsOwnSEH`) that holds `OwnPeCallGuard` in an OUTER
-  frame and calls `peAddr` inside its own `__try` frame (MSVC C2712). Call it from the fail-open branch.
-  It must live in `Stark.cpp`, where the guard is. No contract bump.
-- ⛔ **Harmful:**
-  - routing overriding classes through the trampoline, which skips `AActor`'s world, GC and delegate
-    checks;
-  - queueing static natives on actor classes, which brings back the idle-menu timeouts;
-  - setting the guard in `CallProcessEventSEH`, which suppresses the legitimate game-thread drain.
-- **Live confirmation, which needs CE — ask first:** `tools/verify/st1_queued_drain_sideeffect.py` with
-  a frozen game thread, a queued `SetActorHiddenInGame`, then a mailbox static-native invoke on an
-  actor. `bHidden` flips while the thread is frozen.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch B30). No contract bump.
-  - `Stark::CallAddressAsOwnSEH` holds `OwnPeCallGuard` in its own (outer) frame and calls the resolved
-    address through `CallAddressSEH`'s `__try` frame (MSVC C2712), exactly the shape of
-    `CallOriginalSEH`.
-  - `UE5_CallProcessEventDirect`'s fail-open branch calls it, so an override's `Super::ProcessEvent` that
-    re-enters our detour now finds `InOwnPeCall()` true and does not drain.
-  - None of the harmful fixes landed: not the trampoline, not a queue, and the guard is not set inside
-    `CallProcessEventSEH`, so the legitimate game-thread drain is untouched.
-  - **Test, red first:** a source pin in `InvokeScriptTests` (the `ClassListCapTests` pattern: no test
-    target compiles Frieren.cpp or Stark.cpp). The fail-open branch must go through the helper with no
-    raw call left, and the helper must hold the guard and keep the `__try` in a separate frame.
-    2/2 mutants killed; UI 5135/5135.
-  - ⚠ The pin reads source, so it proves the shape, not the runtime behaviour. The live confirmation
-    above (CE, announce first) is the backlog check.
-  - ✅ **Review 5 follow-up 2026-09-12** (of 0edd5214: three LOW, one filed MED).
-    - **Live check L36 named a rig that cannot do its step 2.** `st1_queued_drain_sideeffect.py` freezes,
-      queues one invoke and resumes at once, so its PASS does not depend on this fix. L36 now says so, and
-      gives the manual route: the pipe's `direct_call: true` reaches the fail-open branch without CE.
-    - **Stale comments.** The rewritten function's header (Frieren.cpp) and Stark.h still said our direct
-      calls never enter the detour, and that the body could not be shared through a helper. Corrected.
-    - **The pin missed two one-line mutants:** a commented-out guard, and the recorded HARMFUL trampoline
-      swap inside `CallAddressSEH`, whose body it never read. It now reads both bodies with their comments
-      stripped. 2/2 mutants killed; UI 5193/5193.
-
-##### ✅ `[A3-DEPLOY-CANCEL]` MED — "Cancel operation" during Deploy or Undeploy crashes the UI (FIXED IN SOURCE 2026-09-11)
-
-`ProxyDeployViewModel.cs:1391-1414` (+ Undeploy `:1452`). AE20 made "Cancel operation" reach all nine
-commands, but `DeploySelectedAsync` and `UndeploySelectedAsync` have **no try/catch at all**. The cancel
-rethrows through `AsyncRelayCommand` onto the dispatcher, where the refuter decompiled both
-CommunityToolkit.Mvvm 8.4.2 and Avalonia 12.1.1. `DispatcherFaultGuard` sees our frames on the stack,
-refuses to swallow, and **the process dies**.
-
-- Even a ONE-game deploy reaches it, through the post-loop refresh's token.
-- The writes are staged-atomic, so no half-written DLL is left. What is lost is the app and the
-  connected session.
-- Refresh's `catch(Exception)` shows the user's own cancel as a red "Refresh failed".
-- ✅ **Safe fix:** wrap each loop plus its refresh in `catch (OperationCanceledException)`, mirroring
-  `UpdateAll :1562-1567`.
-  - Report the partial tally.
-  - Still call `RequestOptionSave` when picks changed.
-  - Do NOT re-run the refresh with the cancelled token inside the catch, because it throws again. Skip
-    it, or use `CancellationToken.None`.
-  - Give Refresh a neutral "cancelled" branch.
-- ⛔ **Unsafe:**
-  - `FlowExceptionsToTaskScheduler`, which hides every real fault;
-  - teaching `DispatcherFaultGuard` to swallow OCE;
-  - dropping Deploy/Undeploy from the cancellable set, which reverts AE20;
-  - a bare `catch(Exception)`.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B09, one commit with
-  `[A3-RADIO-MIDDEPLOY]`).
-  - **Deploy and Undeploy** wrap each loop and its refresh in `catch (OperationCanceledException)`,
-    mirroring `UpdateAll`. The catch:
-    - reports the partial tally: `Deploy cancelled — deployed: N, failed: M` /
-      `Remove cancelled — removed: N, failed: M`;
-    - still calls `RequestOptionSave` when a pick changed;
-    - never re-runs the refresh with the cancelled token. `RefreshAfterCancelAsync` refreshes with
-      `CancellationToken.None`, and a failure there is shown and logged, not rethrown.
-  - **Refresh** has a neutral `Refresh cancelled` branch ahead of its `catch (Exception)`.
-  - It uses no `FlowExceptionsToTaskScheduler`, no `DispatcherFaultGuard` change and no bare catch
-    as the fix. Deploy / Undeploy stay cancellable.
-  - **Tests, red first.** `ProxyDeployConcurrencyTests`, 5 red:
-    - Deploy and Undeploy cancelled mid-run (the cancel escaped `ExecuteAsync`);
-    - the saved pick;
-    - a one-game Deploy whose cancel reaches the final refresh;
-    - Refresh's red "Refresh failed".
-  - The no-cancel control was green throughout.
-  - The harness gained an opt-in `ThrowOnCancelledRefresh`, modelling the real service honouring its
-    token. It is off by default, so the existing tests keep the stub that does not.
-- ✅ **Review follow-up 2026-09-11** (the adversarial review of B09-B12: 18 survived, 4 refuted; B09's
-  share was 5, all LOW).
-  - **The shipped Deploy / Remove code was correct. The pins were weaker than ledger row 20 said.**
-    "The recorded-unsafe re-run with the cancelled token" was killed for Deploy only:
-    - every Undeploy test left `ThrowOnCancelledRefresh` off, so a Remove catch that refreshed with
-      the cancelled token stayed green;
-    - no test checked that the post-cancel refresh actually LANDED, so a `RefreshAfterCancelAsync`
-      that skipped it stayed green too.
-  - Now pinned:
-    - the mid-run Remove turns the flag on, and a one-game Remove twin mirrors the one-game Deploy;
-    - every cancel test asserts that a refresh landed (`svc.Applied`) and that `ErrorMessage` is null;
-    - Refresh's cancel is asserted neutral (`#888888`), not only "not failed".
-  - **Update All**, the model this fix was copied from, reported its partial tally on a cancel but
-    never refreshed. The rows kept the old versions for the games it HAD written. Its catch now calls
-    `RefreshAfterCancelAsync` too (`UpdateAll_Cancelled_BringsTheGridBackInLine`, red first; the
-    other additions are pins on code that was already right, green before and after).
-  - 4/4 mutants killed, the Remove catch refreshing with the cancelled token among them.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A3-ST1-SUPER-DRAIN]`, `[A3-DEPLOY-CANCEL]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A3-B30-STALE-FLAG]` MED — the `[B30-REOPEN]` ownership flag survives a table reload, so "already serving" can still tear the pipe down (FIXED IN SOURCE 2026-09-12)
 
@@ -7198,34 +6397,7 @@ fresh CE session, where the flag was nil.
   - **UI pins:** the masked read-back in both directions, and map-value and set-element rows that
     are native and write the value byte. Green pins; the mutation check kills each.
 
-##### ✅ `[A3-MIMIC-INIT-FASTPATH]` LOW — the CE mailbox skips B5's init serialization in the last 30-45% of every init (FIXED IN SOURCE 2026-09-12)
-
-`Mimic.cpp:470-471` returns "initialized" whenever `g_cachedGObjects && g_cachedGNames`. `UE5_Init`
-publishes those right after `FindAll`, **before** `Serie` / `Aura` init, decoy recovery and
-`ValidateAndFixOffsets`, which writes defaults and then probes. `UE5_Shutdown` never clears them.
-
-- So a CE hotkey in that tail runs against unprobed DynOff with no "waiting" line. That breaks
-  `Frieren.cpp:83-91`'s promise that it "waits and returns the first caller's result".
-- **Measured from real init logs:** the unguarded tail is 190-445 ms per init. Commands resolving
-  UFunctions or properties through DynOff give one-off errors that succeed on retry.
-- ✅ **Narrowest safe fix:** an "init in progress" atomic set under `s_initMutex`, so the fast path
-  waits only when it is set.
-- ⛔ **Unsafe:**
-  - always calling `UE5_Init`: a pathological rescan can pass the 10 s mailbox timeout, and after a
-    cancelled scan a full cancel-immune `UE5_Init` would run on the poller;
-  - clearing the globals in `UE5_Shutdown`;
-  - moving the publish to the end of init.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded narrowest fix** (batch L14).
-  - `g_initInProgress` is raised under `s_initMutex`, by an RAII scope that opens before `FindAll`
-    publishes the globals and closes on every exit.
-  - The mailbox's fast path is now `Mimic::InitFastPathOk(gobjects, gnames, inProgress)`. While an
-    init scans, it falls through to `UE5_Init`, which waits on the mutex, logs the "waiting" line, and
-    returns the first caller's result.
-  - None of the three unsafe shapes was taken.
-  - **Tests, red first:** the rule in dll_helpers_test, plus source pins for both ends of the wiring
-    (Frieren and Mimic reach no test target). 3/3 mutants killed; dll_helpers_test 2719/2719, dll_core_test 304/304; UI 5215/5215.
-  - ⚠ **Survivor by construction:** the scope's store semantics. No harness runs `UE5_Init`; the pin
-    fixes the scope's position.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A3-MIMIC-INIT-FASTPATH]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A3-FIRE-STRUCT-BOOLMASK]` LOW — FIRE writes a packed-bool struct sub-field as a whole byte (FIXED IN SOURCE 2026-09-11)
 
@@ -7306,50 +6478,7 @@ A2's root fix cures it. The hardening is safe only as `max(PARMS_SIZE, max(Offse
       ⚠ That test was added with the fix, not before it, so it was never observed red; the
       mutation check is what shows it bites.
 
-##### ✅ `[A3-RADIO-MIDDEPLOY]` LOW — the proxy-type radio stays live during Deploy (FIXED IN SOURCE 2026-09-11)
-
-`ProxyDeployViewModel.cs:1396`/`:1406-1408`. The radios have no `IsEnabled`, and their handler takes no
-gate, so a click mid-Deploy silently re-targets every remaining game to another DLL flavour. The
-result line never says so.
-- The finding missed a deterministic part: the in-flight game was deployed with the OLD flavour, but
-  `LastManualProxyByGame` records the NEW one and persists it. That is a wrong remembered fact which
-  feeds the Suggested column.
-- ✅ **Safe fix:** `IsEnabled="{Binding !IsBusy}"` on the four radios, not on their panel, which also
-  holds the LKG checkbox.
-- ⛔ **Unsafe:** disabling the foreign-overwrite checkbox mid-run, which would stop the user withdrawing
-  consent; gating the handler alone.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (batch B09).
-  - The four proxy-type radios carry `IsEnabled="{Binding !IsBusy}"`: on the radios, not on their
-    panel.
-  - The LKG checkbox and the foreign-overwrite checkbox stay live.
-  - Pinned from the AXAML (`ProxyTypeRadios_AreDisabledWhileBusy_TheLkgCheckboxIsNot`, red first).
-    The binding compiles in the UI build.
-  - ✅ **Review follow-up 2026-09-11:** the pin checked only that the LKG checkbox stays live. It now
-    also refuses both recorded-unsafe shapes: an `IsEnabled` on the foreign-overwrite checkbox, and
-    one on the radios' panel. 2/2 mutants killed.
-  - ✅ **Second review follow-up 2026-09-11** (the review of 64b28058): the foreign-overwrite
-    checkbox's OWN panel is pinned too; disabling that parent disables the checkbox as surely as an
-    attribute on it. 1/1 mutant killed. UI 5033/5033 (one suite run over the three second-round follow-ups together).
-
-##### ✅ `[A3-CONTAINER-4096-ADVICE]` LOW — "raise the Array Limit slider" for arrays the slider does not govern (FIXED IN SOURCE 2026-09-12)
-
-`ContainerTruncation.cs:43` via `LiveWalkerViewModel.cs:1254-1277`. The scalar-array re-fetch asks for
-the full count, but the DLL clamps every request at 4,096 (`Ubel.cpp:42`/`:2227`). So a 10,000-element
-`TArray<float>` shows 4,096 rows plus advice the slider cannot satisfy, with no paging. That is the Z10
-shape that `FixedCapStatusLine` exists to prevent. Commit 3860bfbc's "Scalar arrays are re-fetched in
-full" was false past 4,096 on the day it shipped. Pointer and struct arrays have the same problem at
-slider ≥ 8192.
-- ✅ **Safe fix:** a UI honesty fix derived from the reply (`ReadCount < TotalCount` despite a full
-  request, then `FixedCapStatusLine`), never a hardcoded 4096.
-- ⛔ **Unsafe:** unbounded paging; raising the DLL cap.
-- ✅ **FIXED IN SOURCE 2026-09-12, derived from the reply** (batch L21).
-  - Each array-drill branch records what it asked for: the full count for the scalar re-fetch, the
-    slider for the inline preview.
-  - Fewer elements back than asked means the DLL capped the reply, and gets `FixedCapStatusLine`; the
-    slider advice stays for a slider-capped view. No hardcoded 4096, no paging, no DLL change.
-  - **Tests, red first:** a scalar drill clamped at 4,096 of 10,000 by a fake reply. The existing
-    128-of-199 pointer test is the control, and it kills the mutant that counts the full count as
-    requested. 6/6 mutants killed.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A3-RADIO-MIDDEPLOY]`, `[A3-CONTAINER-4096-ADVICE]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A3-PTR-NAV-REPAINT]` LOW — a pointer that gains a target after refresh shows its name but no → button (FIXED IN SOURCE 2026-09-11)
 
@@ -7389,19 +6518,7 @@ while the UI says "moved to the Recycle Bin", which is the B13/B41 false claim. 
   - **Red first:** a failed lookup fails closed where the volume flag decides; under the global setting or a policy it
     changes nothing (control); a source pin checks the caller.
 
-##### ✅ `[A3-COORD-NONFINITE]` LOW — a coordinate CSV / Lua import stores `NaN` / `Infinity` / `1e400` as 0 without a word (FIXED IN SOURCE 2026-09-12)
-
-`CoordinateLibraryFile.cs:151-154`. `double.TryParse` accepts non-finite values, and `Round` maps them to
-0 without recording an issue. So a teleport lands at the world origin, which is exactly the silent wrong
-coordinate that B21's note says must be a visible rejected row. The Lua fence is reachable through
-`1e400`.
-- ✅ **Safe fix:** `&& double.IsFinite(value)` in `CoordPrecision.TryParse`, the in-tree idiom.
-- ⛔ **Unsafe:** changing `Round`, which is also the pose-capture and writer path; a NaN would reach
-  generated Lua as a nil global.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L39), the recorded safe fix: `&& double.IsFinite(value)` in
-  `CoordPrecision.TryParse`. `Round` is untouched.
-  - **Red first:** a CSV row whose x is `NaN`, `Infinity`, `-Infinity` or `1e400` is a rejected row with an issue on
-    column x, and a Lua entry with `x=1e400` is reported, not imported.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A3-COORD-NONFINITE]`. Grep the tag; tags resolve across files.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -7492,79 +6609,7 @@ rows below; they are CDOSCOPE, AB4, V4, e88190ba, e0dec505, X5, CEPATHS, audit #
 D4B-DELEGATEPAD, BADGEPRIME and AF5. Across Track B the count is **34 of 41**. See the close-out at the
 end of this section.
 
-##### ✅ `[A4-NAV-BACKFIRST-GRAFT]` MED — a row clicked during Back's walk grafts the old level's field onto the new parent (FIXED IN SOURCE 2026-09-11)
-
-`LiveWalkerViewModel.cs:1090-1095`. V4's fix claims that capturing the parent "at gesture time" handles
-the reverse ordering. It does not:
-- `GoBackAsync` pops the crumb synchronously (`:2352-2356`), then awaits the walk. The grid keeps
-  showing the level just left, and the Back button has no `IsEnabled`.
-- A → click on one of those stale rows captures `parentAtGesture = CurrentCrumb`, which is already
-  the popped-to crumb.
-- `IsStillOnParent` then passes, and the old level's `field.Offset` is appended under the new parent.
-- Copy CE XML, Copy CE Field, the AA script and a saved bookmark all persist the wrong chain. This is
-  V4's own corruption, through the half its re-derivation named (test #2, never written).
-
-The same window is open after Parent, Forward and a breadcrumb jump. The container drill takes the
-same path.
-- ✅ **Safe fix:** stamp which crumb the rendered `Fields` belong to, and compare that stamp to
-  `CurrentCrumb` by reference at gesture entry.
-  - Do it BEFORE the scroll-hint and view-state writes, in both `NavigateToFieldAsync` and
-    `NavigateToContainerAsync`.
-  - Set the stamp at EVERY Fields-population site, including the six that bypass `UpdateDisplay`,
-    and after `HydrateSlot` / `PathStepToBreadcrumbs` rebuild crumbs.
-  - Add the re-derivation's test #2.
-- ⛔ **Unsafe:**
-  - `IsEnabled="{Binding !IsLoading}"` on row buttons: every auto-refresh tick would blink them off,
-    and `IsLoading` is one shared flag;
-  - a global nav mutex;
-  - clearing `Fields` on Back, where the Reset jumps the grid to the top.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe shape** (fix-pass batch B03).
-  - **The stamp:** `_renderedCrumb` is the crumb the rendered rows belong to. It is stamped by
-    every grid-population site: `UpdateDisplay`, placed BEFORE its pending-scroll auto-drill;
-    `PopulateFromWorld`; and the DataTable / Array / Map / Set views. It is cleared with the grid.
-  - **The check:** `NavigateToFieldAsync` and `DrillContainerAsync` refuse, at entry and before
-    any write, a drill of a row that is ON SCREEN and whose stamp is not `CurrentCrumb` (by
-    reference). The refusal carries a status line.
-  - **Rows that are not rendered are not checked** (`Fields.Contains`). A programmatic drill of a
-    row the caller built makes no claim about the grid. The V4 tests that drill detached fields
-    with hand-added crumbs still pass unchanged.
-  - **Red → green (the re-derivation's test #2, finally written):** Back (row drill and container
-    drill), a breadcrumb jump, Forward and Parent each hold their walk on a gate and click a row of
-    the level being left. All 5 were red on the old code (grafted), and all 5 are green now.
-  - **Negative controls, green before AND after:** a current-level row drills; a current-level
-    container opens; after Back lands, the new level's rows drill; an element row inside a
-    struct-array container view drills; after Back from a container view, the parent's rows drill.
-  - ⛔ **Not done, as recorded:** `IsEnabled="{Binding !IsLoading}"`, a nav mutex, clearing `Fields`
-    on Back.
-  - ⚠ **The batch's adversarial review** (3 lenses, 16 agents): **9 survived, 4 refuted.** The 4
-    refuted were test-gap claims about pins added while the review ran. The 9 completed the
-    stamp's instance list and were repaired in a follow-up commit:
-    - **The stamp recorded the crumb current at RENDER time, not the crumb the walk was for.**
-      Back's walk landing after a Forward pressed meanwhile installed A's rows as B's.
-      `RenderSuperseded(target)` now drops a navigation's render when its target is no longer
-      current. It covers Back (both branches), Forward, a jump, Parent, the synthetic-container
-      re-hydrate, bookmark load (both renders) and all three Locate renders.
-    - **Refresh:** it discards itself across a crumb change (the identity is checked, not only the
-      address and count, since a re-rooted Back keeps both), and it **never re-stamps**. It
-      re-walks the object on screen, and after a Back or Parent whose walk FAILED, re-stamping
-      recorded the old level's rows as the new crumb's.
-    - **The same window through other commands:** Copy CE XML, Copy CE Field(s), CSX and Save
-      Bookmark combine the current spine with the grid. They now refuse while the grid is behind
-      the spine (`RefuseWhileGridBehindSpine`). Push to CE, "+CE" and the AA script use absolute
-      field or object addresses, and were checked unaffected.
-    - **A failed re-root left every drill refused:** a Go-box typo, a DLL-rejected address, or a
-      failed GameEngine start clears the spine but keeps the rows. A re-root ticket
-      (`ReleaseLeftoverGrid`) now declares such rows a rootless leftover, so a drill re-roots at
-      the pointee as it always did.
-      - An older failure cannot release a newer re-root's guard.
-      - A re-root still IN FLIGHT keeps refusing; that window is the graft.
-    - **The refusal text is now true in both states** (still loading, or failed).
-    - **"Before any write" is pinned:** a refused drill leaves Back's destination crumb view state
-      and its loading state untouched.
-  - **Follow-up red → green:** 6 new gated or failing interleavings (Back then Forward, a failed Back
-    then Refresh, a Refresh across a same-count spine swap, a failed re-root, the exports and
-    bookmark save in the window, plus a re-root-in-flight control). All were red on the recorded
-    mechanism; `LiveWalkerNavStampTests` is now 20/20.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-NAV-BACKFIRST-GRAFT]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A4-EDIT-STALE-PENDING]` MED — reopening an edited cell and closing it without typing writes the PREVIOUS edit into the game again (FIXED IN SOURCE 2026-09-11)
 
@@ -7617,101 +6662,7 @@ gate, 2026-09-10: a different object now gets fresh rows. The same-object varian
   - 🟡 **Still undecided:** the `IsEditing` latch above is not part of this fix, and still needs
     its live experiment.
 
-##### ✅ `[A4-PARENT-CRUMB-VTABLE]` MED — the Parent (Outer) crumb claims `[child + 0]` with a dereference, so CE exports through a Parent hop read the child's vtable (FIXED IN SOURCE 2026-09-11)
-
-`LiveWalkerViewModel.cs:2577-2584` (hand-verified): `FieldOffset = 0, IsPointerDeref = true`. The
-e88190ba fix named exactly this shape as the defect ("a positive claim of `[UWorld + 0]`") and gave the
-`-1` sentinel to two producers of an Outer hop. `GoToParentAsync` is the third, and was missed. So an
-Instance-Finder object followed by Parent exports `[E+0]`, E's vtable, and every ULevel record is
-applied to it. A GWorld spine passes the AA script's `FieldOffset >= 0` gate too.
-- ⛔ **The finding's own fix is PARTLY HARMFUL.** The refuter modelled it in Python: stamping `-1`
-  breaks the commonest Parent use, drilling Actor › RootComponent and pressing Parent. Both XML
-  commands run `AnchorAtLastUnchainableHop` BEFORE `CleanBreadcrumbs`, so the `-1` re-roots the chain
-  before the cycle collapse. A restart-stable GWorld chain would become a session-only address.
-- ✅ **Safe fix, either of:**
-  - (a) in `GoToParentAsync`, when `parentAddr` is already on the spine, truncate to that crumb, as a
-    breadcrumb jump does; stamp `-1` only otherwise;
-  - (b) run `CleanBreadcrumbs` before `AnchorAtLastUnchainableHop` in both export commands.
-- Add both scenarios as tests. Do not special-case the name "Outer".
-- ✅ **FIXED IN SOURCE 2026-09-11, safe shape (a)** (fix-pass batch B04).
-  - **Outer already on the spine:** `GoToParentAsync` finds the last OBJECT crumb there (not a
-    container view; no `ClassAddr`, which excludes inline structs and DataTable rows; the address is
-    compared numerically) and makes Parent a breadcrumb jump to it.
-  - **Otherwise:** it pushes the Parent crumb as an offset-less hop, `FieldOffset = -1`, the marker
-    the other two producers already use.
-  - **No special case on the name "Outer".**
-  - **Red → green:** both scenarios, as the record asks.
-    - An Instance-Finder root followed by Parent is now a `-1` hop, and the export re-anchors at
-      the parent's own address. It was red: "Expected -1, Actual 0".
-    - GWorld › PersistentLevel › Hero › RootComponent › Parent lands back on the Hero crumb, with
-      RootComponent on the forward history and every hop a real offset (restart-stable). It was
-      red: the spine had grown an `Outer` crumb.
-  - ⚠ **The batch's adversarial review** (3 lenses, 12 agents): **6 survived, 3 refuted.** It was
-    repaired in a follow-up commit.
-    - **The Outer was the GWorld ROOT.** Parent from PersistentLevel on a GWorld spine jumped to
-      the synthetic root, whose view is the cached actor list, not the UWorld object. That lost the
-      UWorld's own fields and its further Parent. Now it skips the jump for that crumb and takes the
-      `-1` hop with a live instance walk.
-    - **A detour back onto the spine re-anchored a GWorld chain as session-only** (MED; the harm
-      the record called PARTLY HARMFUL, reached by a detour). Parent to an Outer off the spine,
-      then a drill back to Hero, makes a cycle, and both XML exports anchored at the `-1` BEFORE
-      collapsing cycles. **The record's option (b) now applies as well:** both exports clean
-      first, then anchor. The re-anchor note and log compare against the cleaned spine. BuildAaScript
-      already cleaned first, so the three paths now agree.
-    - **Pins added:** the container-view skip (Parent from an array element lands on the owner
-      object), last-match (an Outer on the spine twice jumps to the nearest), and Forward after
-      Parent returning to RootComponent. One test doc misattributed the `-1` history; it is
-      corrected.
-    - **Red → green:** the two defects (GWorld root, detour export) were red first, and the pins
-      passed both ways as pins should. Mutation-checked: 4 mutants were all killed, restored by
-      sha256.
-
-##### ✅ `[A4-USMAP-ENUM-UNDERLYING]` MED — USMAP writes every EnumProperty's underlying type as ByteProperty (FIXED IN SOURCE 2026-09-11)
-
-`UsmapExportService.cs:312-317` (hand-verified). The band header claims the file was *"checked byte for
-byte against the two canonical writers"* (21ca54f8, audit #5 W1). But both vendored writers write the
-enum's REAL underlying property: Dumper-7 `MappingGenerator.cpp:203-208` and RE-UE4SS
-`Generator.cpp:250-254`.
-- **Why it matters:** in unversioned cooked data an enum UPROPERTY is serialized as an integer of its
-  own width (vendored UE 5.8 `UnversionedPropertySerialization.cpp:126-133`, `:261`). CUE4Parse takes
-  that width from the mapping's inner type.
-- **Consequence:** a `ENiagaraCoordinateSpace : uint32` field makes FModel / CUE4Parse read 1 of 4
-  bytes and misalign every later property of that object. The vendored 5.8 tree has 101 non-uint8
-  enums used directly as UPROPERTY types (136 properties).
-- **Arm 3** (`:349-356`, a ByteProperty with an enum) is written as a bare ByteProperty, so every
-  `TEnumAsByte` shows as a number instead of its name.
-- **Arm 2** (container inners) is narrowed by the refuter: 5.8 serializes container enums as FName
-  through `SerializeItem`, so its desync is doubtful.
-- Not caught: the round-trip test reader skips the inner as one byte, and the register row W1/W7 only
-  "loads" a mapping.
-- ⚠ `docs/audit-2026-09-05-vendor-ue582.md:430` asserts that *".usmap has no underlying-type field"*.
-  Both vendored writers contradict it.
-- ✅ **Safe fix:**
-  - Arm 3: emit the canonical fake `[26][0][enumName]`.
-  - Arm 1: map `Size` 1/2/4/8 to Byte/UInt16/Int/Int64, falling back to Byte, never 0xFF.
-  - Make the test reader recurse, and add a Size=4 case.
-  - The exact fix is a DLL-side underlying-type key on `walk_class`.
-- ✅ **Register:** add a step that PARSES an asset with a non-uint8 enum, using both our `.usmap` and a
-  Dumper-7 one.
-- ✅ **FIXED IN SOURCE 2026-09-11, the recorded safe fix** (batch B24).
-  - **Arm 1:** the underlying type comes from the enum's `Size`: 1/2/4/8 map to Byte / UInt16 / Int /
-    Int64 (`EnumUnderlyingTypeFor`). Anything else falls back to Byte, never the unmapped 0xFF. That is
-    the width a consumer deserializes; the signedness still needs the DLL-side key.
-  - **Arm 3:** a ByteProperty carrying an enum (TEnumAsByte) is written as the canonical
-    `[26][0][enumName]`. The old ByteProperty arm, whose comment called the bare byte "correct for
-    USMAP", is gone.
-  - **Arm 2** (a container's enum inner) is left as recorded, with a comment. An inner carries no size,
-    and 5.8 serializes container enums as FName.
-  - The band header's "checked byte for byte" claim now names this one known difference. The audit
-    note at `docs/audit-2026-09-05-vendor-ue582.md:430` carries an inline correction.
-  - **Tests, red first:** a Size theory (2 / 4 / 8 red; 1 and the 3-byte fallback green both ways) and
-    the TEnumAsByte shape. A plain ByteProperty is the control.
-  - The round-trip reader now reads an enum's underlying type through its inner reader, not as one
-    byte, and records each property's type, underlying type and enum name, as the fix asked.
-  - 4/4 mutants killed; UI 5098/5098.
-  - ⬜ **Review 3 (2026-09-12):** a container's TEnumAsByte inner is still a bare Byte, and this row's USMAP
-    header had called that desync "doubtful". It is certain, and predates B24. Filed as
-    `[A4-USMAP-CONTAINER-ENUM]` (MED, batch B32), which needs a DLL change. The header is corrected.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-PARENT-CRUMB-VTABLE]`, `[A4-USMAP-ENUM-UNDERLYING]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A4-USMAP-CONTAINER-ENUM]` MED — a container's TEnumAsByte inner is exported to USMAP as a bare ByteProperty (filed 2026-09-12 by review 3; FIXED IN SOURCE 2026-09-12)
 
@@ -7766,117 +6717,7 @@ inner's type, struct and object class, never its enum: nothing named `inner_enum
     - **L39's example was wrong.** No collision component declares a `TArray<TEnumAsByte<E>>`; it now names one
       that exists.
 
-##### ✅ `[A4-CDOSCOPE-ANCESTOR]` LOW — the CDOSCOPE preview credits a live subclass only to the NEAREST preview class (FIXED IN SOURCE 2026-09-12)
-
-`Aura.cpp:4985-5002`. `previewBaseOf` breaks at the first preview class on the super chain and
-memoizes it. An exact instance short-circuits too. So an ancestor row reads *"(CDO default)"*, which
-Aura.h defines as *"subclasses were searched and none was live"*, while Force and Freeze on the same
-row act on N live instances. That is the disagreement CDOSCOPE was written to remove, reached through
-its own untested chain walk. Modelled in Python: `Pawn · BaseEyeHeight` samples `Default__Pawn`.
-- ✅ **Safe fix:** credit EVERY preview class on the chain, including for exact hits, starting from the
-  super. Keep the per-class memo, and pin it as a pure helper.
-- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L17, with `[A4-CDOSCOPE-NESTED-PREVIEW]`).
-  - The pure helper is `Aura::PreviewAncestorsOf`, and the per-class memo now holds its vector.
-  - The Phase-2 sweep makes an object the exact sample for its own class, and a derived sample for every
-    preview class above it, exact hits included.
-  - **Tests, red first:** the helper in dll_core_test.
-    - A live C credits both B and A.
-    - An exact B still credits A.
-    - A root credits nothing.
-    - Controls: a non-preview class in between is passed over, and a self-loop terminates.
-  - 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215.
-  - ⚠ **Survivor by construction:** the sweep's wiring. No harness drives `SearchProperties`' preview
-    phase; the rule it calls is pinned.
-
-##### ✅ `[A4-CDOSCOPE-NESTED-PREVIEW]` LOW — CDOSCOPE removed the swap that kept Deep nested rows out of preview; container-element rows now show a wrong Preview (FIXED IN SOURCE 2026-09-12)
-
-`Aura.cpp:5075` → `Ubel.cpp:6479`. A nested row's lookup key became its root field's defining class. A
-Deep search matching both a direct field and a `Slots[].Count` leaf of the same class therefore
-previews `inst + 0x08`, a UObject header word, sometimes with a source suffix. Aura.h:604, the band
-comment and a69e23ba's body all promise that nested rows are never previewed.
-- ✅ **Safe fix:** skip `isNested` rows in the Phase-2 loop.
-- ⛔ **Unsafe:** restoring the swap, which brings back CDOSCOPE's proxy defect.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L17, with `[A4-CDOSCOPE-ANCESTOR]`).
-  `ResolvePropertyPreviews` skips `isNested` rows, and Aura.h's promise now names the skip. The swap
-  was not restored.
-  **Test, red first:** dll_core_test previews a direct row and a nested row that share a class. The
-  direct row is previewed and the nested one is not. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5215/5215.
-
-##### ✅ `[A4-PIVOT-CROSSGAME-ID]` LOW — Class Pivot restores the previous game's snapshot pick and class list into a different game (FIXED IN SOURCE 2026-09-12)
-
-`ClassPivotViewModel.cs:479-520`, `:562`, `:672`. Snapshot ids are per-game-DB `AUTOINCREMENT`, and
-`SetEngineState` switches the DB file but clears neither `_classCache` nor `_fieldCache`. So after a
-reconnect to a different game:
-- AF5's restore-by-Id preselects B#5 instead of the newest;
-- A's cached class list is shown for it, under a normal status.
-
-The prune comment *"a recaptured Id can't ever read a stale list"* holds within one file only.
-Out-of-band twins that carry picks across a game switch by Id: `SnapshotViewModel.RefreshAsync :632-643`
-and `SpcQueryViewModel.RefreshAsync :453-467`.
-- ✅ **Safe fix:**
-  - put the PeHash into both cache keys, captured at load start;
-  - drop the kept selection and ticks only when the PeHash CHANGED;
-  - fix the three twins together.
-- ⛔ **Unsafe:**
-  - clearing inside `SetEngineState`: it also runs on a same-game Extra Scan, which reopens AF5;
-  - a clear alone: an in-flight load re-inserts A's list after it.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix, all three twins** (batch L18, with
-  `[W1-PIVOT-LOADCTS]`).
-  - Both Class Pivot caches are keyed by the game's PeHash, captured at load start. The prune is scoped
-    to the current game.
-  - Each view model records which game its list shows (`_listedPe`), and keeps the pick and ticks by
-    Id only when the game is unchanged: Class Pivot's selection and discovery ticks, Snapshot's Diff and
-    Group picks, SPC's ticks and predicates.
-  - Nothing is cleared in `SetEngineState`, so a same-game Extra Scan still keeps AF5's pick.
-  - SPC gained a `PendingRefresh` seam, as the other two had.
-  - **Tests, red first:** one cross-game test per view model on the real per-game store. Each checks
-    that the other game's newest or default wins, and Class Pivot's also checks that the other game's
-    class list is never served. 5/5 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5225/5225.
-
-##### ✅ `[A4-AB4-UINT64]` LOW — AB4's ordered-predicate verdict never covers the 64-bit members, so `Bigger -5` still drops every UInt64Property field (FIXED IN SOURCE 2026-09-11, batch B13)
-
-`Radar.cpp:494-513`. `IntegerMemberRange` has no UInt64 or Int64 arm, and its premise ("one that
-parsed as unsigned fits UInt64") is false for a negative target. So:
-- UInt64 gets no entry at all, and every UInt64Property is silently skipped on first scan and pruned on
-  refine;
-- `Smaller 9223372036854775808` drops every Int64 field the same way.
-
-The AB4 commit says *"Bigger -5 dropped every UInt16/UInt32/UInt64 field … the same verdict covers
-it"*. Modelled in Python. `dll_helpers_test` asserts only UInt16/32.
-- ✅ **Safe fix:** a UInt64 arm with an exact `scalar >= 2^64` upper test, and an Int64 arm with an
-  exact `>= 2^63` test. Rewrite the false comment, and pin `FindEntry(UInt64)`.
-- 🟡 **Records gap:** the AB4 "Between" residual is cited as "recorded in todo.md" by three sources
-  and is NOT there. It survives only in `working-lessons.md:2805-2807`.
-- ✅ **FIXED IN SOURCE 2026-09-11, the safe fix as written.**
-  - `IntegerMemberRange` returns an EXCLUSIVE max (max + 1) and now lists Int64 (2^63) and UInt64
-    (2^64). The verdict is `scalar >= hiEx`.
-  - Why exclusive: INT64_MAX and UINT64_MAX have no double. Both round UP to exactly those values,
-    so `scalar > (double)max` would miss the target 2^63 itself. For the narrow members `>= max + 1`
-    is the old test unchanged, because `scalar` is always integral there.
-  - The false comment is rewritten, and `FindEntry(UInt64)` / `FindEntry(Int64)` are pinned.
-  - **Tests, red first:** 5 ⭐ in the AB4 block:
-    - Bigger -5 → UInt64, and its predicate;
-    - Smaller 2^63 → Int64;
-    - Smaller 2^64 → UInt64 and Int64.
-    Controls: Smaller -5, Bigger 2^63, Exact -5, and the narrow boundary Smaller 32768 → Int16,
-    which also kills a `>` mutant.
-  - The records gap is closed: the Between residual is its own row now, `[A4-AB4-BETWEEN]` below.
-- ✅ **Review follow-up 2026-09-11** (the review of aaf6a022: 13 survived across B13 and the four
-  follow-ups, all LOW; B13's share was 4).
-  - **The sign leak survived for zero.** A '-'-prefixed target whose integer value is 0 ("-0", or a
-    negative fraction that rounds to 0) never got an unsigned reading: the sign CHARACTER suppressed
-    it, so every unsigned width was dropped, even under Exact, while the snapshot matcher kept them.
-    `BuildNumericTargets` now takes an unsigned reading from a non-negative signed one (red first:
-    3 ⭐ `AB4-SIGN`; `Exact(-1)` the control; a C# parity row).
-  - **±Infinity:** `EveryValueSatisfies` refused a non-finite target, so for `Smaller Infinity` the
-    live matcher (now reading the verdict) kept every integer leaf and the snapshot mirror kept none.
-    It now refuses only NaN (red first: two C# rows).
-    - ⬜ Older and separate, recorded here only: FLOAT leaves still differ on a non-finite target (the
-      DLL encodes it, `TargetFitsWidth` rejects it), and "1e400" is an error in the DLL (`stod` throws)
-      but +Infinity in .NET. Degenerate input, both sides.
-  - **GROUPREFINE** gained an unsigned 0 under `Bigger -5` and an Int16 32767 under `Smaller 70000`:
-    a refine comparing an AlwaysTrue entry's ZEROED bytes passed the old cases (3 > 0).
-  - 3/3 mutants killed. UI 5033/5033 (one suite run over the three second-round follow-ups together).
+> 📦 **Archived 2026-11-20:** 4 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-CDOSCOPE-ANCESTOR]`, `[A4-CDOSCOPE-NESTED-PREVIEW]`, `[A4-PIVOT-CROSSGAME-ID]`, `[A4-AB4-UINT64]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A4-AB4-BETWEEN]` LOW — `Between` still drops a width either bound cannot encode, in both group matchers and the single-value scan (FIXED IN SOURCE 2026-09-12)
 
@@ -7919,73 +6760,7 @@ until now it was not here.
     `sp.targets.Find(w)`, which hides a Smaller/Bigger `AlwaysTrue` entry. Native-C raw-hole group leaves may therefore
     still lose the verdict that `[W2-ORDEN-FINDENTRY]` restored elsewhere.
 
-##### ✅ `[A4-REROOT-STALE-WARNING]` LOW — every re-root overwrites UpdateDisplay's freed/recycled warning with the Back hint (FIXED IN SOURCE 2026-09-12)
-
-`LiveWalkerViewModel.cs:2822` (+ `:2758`). This is the path the stale warning itself names as common:
-Snapshot and Pivot handoffs, 13 cross-tab handlers, the Go box, Find Refs' Open. The freed object opens
-to an empty grid with *"← Back returns to X"*, or with nothing at all. The same commit, e0dec505, wrote
-the opposite ordering rule into the GoBack twin.
-- ✅ **Safe fix:** compose at both sites; never assign `""` over a status.
-- ⛔ **Unsafe:** moving the hint before the walk, which loses the only return path when the user needs
-  it most.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L07, with `[P1-WALK-UNREADABLE]`).
-  - Both re-root sites compose. The Go box path keeps what UpdateDisplay said (`_reRootWalkStatus`) and
-    appends the Back hint; the Find Refs Open composes the same status with its "Opened … · Back" line.
-  - `ComposeReRootStatus` never drops either half, and never assigns "" over a status.
-  - **Tests, red first:** a first re-root onto a freed object keeps the warning. A later one keeps the
-    warning AND the way back. An unreadable walk says so. A theory pins the compose rule.
-    6/6 mutants killed; UI 5204/5204.
-  - ⚠ **Survivor by construction:** the Find Refs Open site's compose. No harness drives
-    `OpenReferenceOwnerAsync` end to end, but the helper it calls is pinned.
-
-##### ✅ `[A4-LW-DISCONNECT-PARENT]` LOW — X5's ClearOnDisconnect leaves the Parent button, the References header and the function list (FIXED IN SOURCE 2026-09-12)
-
-`LiveWalkerViewModel.cs:5805-5833`. The method promises *"a reconnect never shows an object (and its
-live addresses) from the previous game"*. But `HasParent` / `CurrentOuter*`, `HasReferences` and
-`_allFunctions` survive:
-- the Parent button stays live, and after a reconnect it walks the previous process's Outer address
-  under a stale crumb;
-- the Functions filter brings the old game's UFunctions back.
-
-X5's live PASS was rooted at UWorld, where `HasParent` is false, so it could not see this.
-- ✅ **Safe fix:** call `ClearDisplayedNode()` + `ClearReferences()`, and clear the function list.
-  `Flush()` the keyword memory first if the filter box is blanked.
-- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L19, with `[A1-DETECT-REPUBLISH]`).
-  - `ClearOnDisconnect` goes through `ClearDisplayedNode()` and `ClearReferences()`, and it clears the
-    FULL function list (`_allFunctions`, not only the visible one) and `HasFunctions`.
-  - The filter box is not blanked, so there was nothing to `Flush()`.
-  - **Test, red first:** a walker rooted on an object with an Outer and a loaded function list is
-    disconnected. The Parent button, the References header and the function list stay gone, even after a
-    filter edit rebuilds the list. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5218/5218.
-
-##### ✅ `[A4-PUSHCE-UNPADDED]` LOW — the batch "Push CE Field(s)" still pushes the unpadded FieldAddress (FIXED IN SOURCE 2026-09-12)
-
-`LiveWalkerViewModel.cs:4800-4802`. `[CEPATHS-UNPADDED-2026-09-09]` moved HEX and +CE to
-`PayloadAddress` and claims *"both CE-facing handlers"*. The batch push is a third, self-described as
-*"the multi-select batch form of the per-row +CE"*. On a checked build a delegate row lands on the
-access detector.
-- ✅ **Safe fix:** `field.PayloadAddress` at `:4802` only. Correct the stale doc at `:5479-5480`, and
-  add a caller-level test.
-- ✅ **FIXED IN SOURCE 2026-09-12, the recorded safe fix** (batch L03a, with `[W5-CSX-DELEGATEPAD]`).
-  - `PushCeFieldToCeAsync` sends `field.PayloadAddress`, as the per-row +CE and HEX already did.
-  - **The stale doc** was `AddFieldToCeAsync`'s summary: "batch adds go through Copy CE Field". It now
-    names the batch push, and says it sends the same payload address.
-  - **Test, red first:** a caller-level push through a recording bridge. A delegate row with pad 8 sends
-    its payload; an IntProperty row sends its field address unchanged. 5/5 mutants killed; UI 5162/5162.
-
-##### ✅ `[A4-GAMEONLY-ADVICE]` LOW — Interesting Functions and Console advise "Game classes only" when it is already ticked (FIXED IN SOURCE 2026-09-12)
-
-Interesting Functions `:650-665`, Console `:287-293`. This turns the P5 lead into a measured defect.
-Z10's written rule, *"only while it is still OFF"*, reached Property Search only (same commit
-a87706c7). Interesting Functions defaults the box to ticked, so its only advice is already applied.
-Two tests PIN the wrong text. The panels' checkbox actually reads "Game Only".
-- ✅ **Safe fix:** carry the scan-time GameOnly in `LoadScanFacts`, capture Console's before its
-  await, and invert the two tests. Never read the live checkbox.
-- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L21).
-  - `LoadScanFacts.GameOnly` and Console's local capture the scan-time value before the await.
-  - The advice names the panels' own label, "Game Only", and only while it was off. With it on,
-    Console says it is already on.
-  - The two pinning tests are inverted, and each has a control. 6/6 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5229/5229.
+> 📦 **Archived 2026-11-20:** 4 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-REROOT-STALE-WARNING]`, `[A4-LW-DISCONNECT-PARENT]`, `[A4-PUSHCE-UNPADDED]`, `[A4-GAMEONLY-ADVICE]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A4-DELEGATE-ARRAY-PAD]` LOW — CE XML / CSX element leaves of a `TArray<FScriptDelegate>` read the checked-build access detector (FIXED IN SOURCE 2026-09-12)
 
@@ -8024,33 +6799,7 @@ type.
   - ⚠ **Survivors by construction:** Fern's key (no test target compiles Fern.cpp), the UProperty-mode walk
     site (no UProperty fixture), and the struct-flatten copy (no nested fixture).
 
-##### ✅ `[A4-STEALTH-PRIME]` LOW — BADGEPRIME's connect prime skips the Stealth card, and gate 17d cannot see it (FIXED IN SOURCE 2026-09-12)
-
-`TeleportViewModel.cs:2330-2331` / `:2373-2399`. The fix promises a *"read-back of EVERY badge the
-disconnect branch resets"*. Stealth is reset with a tuple assignment and never primed.
-- So after a reconnect the card reads "Off" while Solide keeps holding the meter.
-- The M9 experimental gate-off keys on `StealthState` and therefore releases nothing.
-- Gate 17d matches only `Apply\w+State(-1)`, so it prints `CHECK OK` (measured).
-- Adjacent: Property Search's `ClearOnDisconnect` empties the Forced-fields strip claiming "holds die
-  with the process", which is false for a pipe drop.
-- ⛔ **Unsafe:** treating any numeric job at 0 as the Stealth hold. It may be a Property Search Force,
-  and gate-off would then release it.
-- ✅ **Safe fix:** intersect `find_stealth_meter`'s candidates with `get_forced_fields`, and fall back
-  to an honest "Unknown". Teach gate 17d the tuple form.
-- ✅ **FIXED IN SOURCE 2026-09-12, exactly that** (batch L20).
-  - `ApplyStealthState(-1/0/1)` gives the card the shape every other badge has. The disconnect branch
-    sets it Unknown, not "Off".
-  - `RefreshHeldStealthStateAsync` joins the connect prime:
-    - a numeric 0-hold on one of the meter's candidates reads Holding, and re-arms the card's candidate so
-      Reset and the gate-off release it;
-    - nothing forced at all reads Off;
-    - anything else stays Unknown — never "any numeric job at 0".
-  - Gate 17d now reads the tuple form too. Its `--selftest` gained a third control, a tuple reset nothing
-    primes.
-  - The adjacent Property Search comment is corrected: holds survive a pipe drop.
-  - **Tests, red first:** a still-held meter, a Property Search force that must not be claimed, and a
-    disconnect that says Unknown. A control: nothing forced reads Off. The old disconnect test's "Off"
-    was the defect, so it became the red. 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-STEALTH-PRIME]`. Grep the tag; tags resolve across files.
 
 ##### ⛔ REFUTED — do not re-raise
 
@@ -8140,52 +6889,7 @@ finders, then one skeptic per top finding, each defaulting to REFUTED. **11 raw 
 4 confirmed** (3 distinct defects), 4 refuted, and 3 lower-ranked LOWs reported unverified and then
 checked by hand. Nothing in the review built or ran anything.
 
-##### ✅ `[A2-SENTINEL-OVERREAD]` LOW — the intrusive-optional gate reads 16 bytes from a field that can be 8 (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
-
-`Aura.cpp` ScanForValue V1c reads a FIXED 16 bytes before testing an intrusive optional's sentinel
-(`[A2-TOPTIONAL-VALUESCAN]`, batch L41). An intrusive optional is exactly `sizeof(T)`, so an intrusive
-`TOptional<FName>` is 8 bytes (12 under case-preserving names). When such a field sits within 16 bytes
-of an unmapped page the SEH-guarded read fails, the `||` short-circuits to `continue`, and a **SET**
-optional is silently absent — on some instances of a class and not others. FString (16) and FText
-(≥16) never over-read, so NameProperty is the only affected type. The verifier confirmed it and
-narrowed it: no crash and no garbage value, only the silent miss.
-- ✅ **Safe fix:** the sentinel declares its own span (`Ubel::SentinelBytesNeeded`: 16 / 4 / 8 / 0) and
-  the gate reads exactly that, capped by `sf.size`, the field's own width, which it already holds.
-- ⛔ **Unsafe:** widening the buffer (keeps the over-read) or dropping the read (ungates every
-  intrusive optional, which is what L41 fixed).
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L46): `Ubel::SentinelBytesNeeded` (16 / 4 / 8 / 0) and a gate
-  that reads `min(need, sf.size)`. Red first: dll_helpers_test's V1C block pins all four counts against
-  an inert helper claiming 16 for everything, and the InvokeScriptTests source pin now requires the
-  gate to use it and refuses the flat `sizeof(v16)` read.
-
-##### ✅ `[A2-TOPTIONAL-REFINE]` MED — Value Scan's REFINE re-reads a V1c optional with no gate (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
-
-The first scan gates a `TOptional` leaf on its `bIsSet` byte, but `RefineCandidates` re-reads each
-candidate purely by its stored absolute address — `Radar::FieldDescriptor` carries no optional member
-at all. UE's `MarkUnset` clears the flag and zeroes no bytes, so a reset trailing-flag optional still
-reads as its old value: a Next Scan with **Unchanged** (or **Exact** the stale value) keeps the row,
-and the panel shows a value for a slot the engine considers empty. This is the lead L41 recorded and
-did not trace; review 6 traced it end to end and it is reachable from the UI's Next Scan button.
-- ⚠ **The verifier corrected two overstatements:** the row is NOT uneliminable (Changed / Increased /
-  Decreased / a different Exact all drop it), and the 5.5+ intrusive string case is largely
-  self-healing — `Ubel::ReadFString` returns `""` for a null Data / zero Count and never dereferences
-  a dangling pointer. The residual string case is the converse: a reset optional whose previous value
-  was `""` survives an Unchanged refine.
-- ✅ **Safe fix:** carry the same two facts the first scan uses (`optionalFlagOffset`, and the sentinel
-  as its `int8_t` base — Radar.h includes no project header) on `FieldDescriptor`, stamp them in
-  `ensureDescriptor`, and apply the identical gate in `RefineCandidates` before any re-read. V1c emits
-  only Direct anchors, so `c.addr` IS the value address and the flag is at `c.addr + flagOffset`; a
-  group session leaves the members at their defaults (audit #5 A12) and is unaffected.
-- ⛔ **Unsafe:** dropping every optional candidate at refine — a SET optional is a true hit.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L47), the safe fix above: `FieldDescriptor` carries
-  `optionalFlagOffset` + `optionalSentinel`, `ensureDescriptor` stamps them, and `RefineCandidates`
-  applies the same gate before any re-read (with `SentinelBytesNeeded`, not a flat 16 — L46).
-  - **Red first:** dll_core_test's new **REFINEOPT** block drives `RefineCandidates` over a hand-built
-    session. A reset optional and an intrusive unset one are dropped; a SET optional, an intrusive set
-    one and an ordinary leaf survive as controls. It fakes no pool — refine reads plain process memory,
-    so a static buffer is the object — and building the pools by hand is itself the point: the gate has
-    to live on the DESCRIPTOR, the only per-field thing a refine is handed.
-  - An InvokeScriptTests source pin covers the stamping in `ensureDescriptor`.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A2-SENTINEL-OVERREAD]`, `[A2-TOPTIONAL-REFINE]`. Grep the tag; tags resolve across files.
 
 ##### ✅ `[A1-VERDICT-STALEMB]` MED — `getOffsetsVerdict` drops the AA19 stale-mailbox latch (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
 
@@ -8221,24 +6925,7 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
     string buffers and carries its own refusal text, so folding it in was out of scope for a LOW-risk
     repair; the duplication is recorded rather than hidden.
 
-##### ✅ `[A1-REVIEW6-PINS]` LOW — two stale decision comments, and a scan gate with no guard-the-guard (found 2026-09-12 by review 6; FIXED IN SOURCE 2026-09-12)
-
-- `Mimic.cpp:326` still says the exemption list is *"today only CMD_FOREGROUND, whose handler is pure
-  Win32"* after `[W5-OFFSETS-MAILBOX]` added a second exemption whose handler is not; and
-  `dll_helpers_test`'s *"Exactly ONE exemption"* comment sits directly above
-  `EXPECT("exactly two commands are init-exempt", ...)`. Mimic.h's own block was updated, which is
-  what makes the other two stale rather than merely old.
-- `InvokeScriptTests.DllLogCalls_NeverFormatAWideString` ends on `offenders.Count == 0` with nothing
-  asserting the scan matched anything, so renaming the logging entry points it keys on (or adding a
-  DLL source in a subdirectory — the enumeration is non-recursive) makes it pass forever. Both sibling
-  source scans added in the same range guard their scans explicitly.
-- ✅ **FIXED IN SOURCE 2026-09-12** (batch L49): both comments now name **both** exemptions and give each
-  its own reason, and the `%ls` gate counts the files it scanned and the log-call lines it recognised.
-  - **Red first for the comments:** a source pin requires both to name `CMD_FOREGROUND and
-    CMD_OFFSETS_VERDICT` and refuses the old text.
-  - **The guard-the-guard passes the moment it is written**, so its red IS the mutation check: one mutant
-    stops the enumeration finding sources, another stops it recognising the loggers, and both turn the
-    gate red. Recorded here because "red first" means something different for a test-gap item.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A1-REVIEW6-PINS]`. Grep the tag; tags resolve across files.
 
 #### ⛔ REFUTED — do not re-raise (review 6)
 
@@ -8270,6 +6957,8 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 
 > 📦 **Archived 2026-10-28:** 1 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-10-28-build-3661.md](archive/todo-closed-2026-10-28-build-3661.md): `[W1-DT-TRUNC] + [P5-PIVOT-FETCHCAP]`. Grep the tag; tags resolve across files.
 
+> 📦 **Archived 2026-11-20:** 2 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[W2-TPREL-MAP] ledger #40`, `[A4-STEALTH-PRIME] ledger #72`. Grep the tag; tags resolve across files.
+
 | # | row | sev | commit | offline evidence |
 |---|---|---|---|---|
 | 8 | `[A3-PTR-NAV-REPAINT]` | LOW | `git log --grep A3-PTR-NAV-REPAINT` (the bundle's follow-up; it belonged in 5's commit) | red → green |
@@ -8282,14 +6971,12 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 | 26 | `[W2-GROUPMATCH-ENUM]` | MED | same commit as row 25 (batch B12) | the first tests were VACUOUS (a one-slot `Run` is always false) and were rewritten on `LeafSatisfiesSlot` + a real two-slot group, so their red is the mutation check, not a pre-fix run. 3/3 mutants killed, including the recorded harmful partial (`WidthBytes` without `IsOneByte`), which the NumericNoByte control catches; UI 4994/4994 |
 | 38 | `[W2-GRAVDIR-VERDICT]` | MED | `git log --grep W2-GRAVDIR-VERDICT` (batch B21) | the readout and the apply without a pawn red first; the pre-5.4 apply the control. 9/9 mutants killed across both rows; UI 5057/5057 |
 | 39 | `[W2-MS-PROMISE]` | LOW | same commit as row 38 (batch B21) | Move Speed without a pawn red first, plus the Hemmung twin (both time lanes, red first). The clause is deleted, not made true |
-| 40 | `[W2-TPREL-MAP]` | MED | `git log --grep W2-TPREL-MAP` (batch B22) | 5 tests red first (the ParsePose key, the directional TP keeping map and source, the add-time read, the connect prime, an unknown map); the reported-map control green both ways. 11/11 mutants killed; UI 5063/5063 |
 | 42 | `[W5-CEXML-FSTRING]` | MED | `git log --grep W5-CEXML-FSTRING` (batch B23) | 7 tests red first (the 3-row array theory, map key + value, flatten key, struct member, FText array, fabricated tail); the TSet control green both ways. 10/10 mutants killed; UI 5077/5077. The walk's own TArray elements came with `[W5-STRARRAY-ELEMENTS]` (row 43, B23b); the review of 110cbb4e corrected "inert" |
 | 45 | `[W3-XREF-CAP]` | MED | `git log --grep W3-XREF-CAP` (batch B25) | dll_core_test (the merge helper, and FindPropertyXrefs over the fake pool) and the UI (cell, clause, dialog status, batch loops, the parse) red first against inert stubs. 11/11 mutants killed; dll_core_test 214/214; UI 5112/5112. Five UI sites, not four |
 | 47 | `[W4-STRIDE-TENTATIVE]` | MED | `git log --grep W4-STRIDE-TENTATIVE` (batch B27) | dll_core_test (re-inits over throwaway arrays: detected, tentative, undetected, forced, and the reset at entry) and the UI (parse, badge, dump stamp) red first against inert accessors. 12/12 mutants killed; dll_core_test 237/237; UI 5129/5129. Its own field, not a fourth layout mode |
 | 48 | `[A3-B30-STALE-FLAG]` | MED | `git log --grep A3-B30-STALE-FLAG` (batch B28) | one ordering pin per shipped artifact (generator + `.CT`), red first: the serving branch clears the flag before its untick. 2/2 mutants killed; UI 5134/5134. The recorded safe fix; no contract bump |
 | 53 | `[A4-USMAP-CONTAINER-ENUM]` | MED | `git log --grep A4-USMAP-CONTAINER-ENUM` (batch B32) | dll_core_test (a fake Array / Set / Map whose inners carry a UEnum), the byte-exact USMAP shapes and the parse, red first. 6/6 mutants killed; dll_core_test 243/243; UI 5148/5148 |
 | 60 | `[P1-UPROP-DELEGATE]` | LOW | `git log --grep P1-UPROP-DELEGATE` (batch L06) | dll_core_test, red first: a UProperty-mode walk over a refusing delegate array and a refusing multicast array. 2/2 mutants killed; dll_core_test 283/283; UI 5195/5195. The recorded safe fix, copied verbatim from the FProperty twins |
-| 72 | `[A4-STEALTH-PRIME]` | LOW | `git log --grep A4-STEALTH-PRIME` (batch L20) | TeleportViewModelTests, red first: a still-held meter primes Holding, a Property Search force is not claimed (Unknown), and a disconnect says Unknown; nothing forced reads Off. Gate 17d reads the tuple form (a third selftest control). 4/4 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5221/5221. The recorded safe fix |
 | 77 | `[W5-INSTEXPORT-TRUNC]` | LOW | `git log --grep W5-INSTEXPORT-TRUNC` (batch L24) | AuditL11HonestyTests, red first: a 61,000-field Instance Finder export says "Copied, but TRUNCATED…" with this panel's levers, never Live Walker's; a small one adds nothing. 3/3 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5236/5236. The four copy hazards handled, not copied |
 | 78 | `[W1-PIPEBUSY-LOG]` | LOW | `git log --grep W1-PIPEBUSY-LOG` (batch L26) | AobMakerInjectTableFileTests, red first through an internal seam (pipe name, 150 ms timeout, existence probe): a busy pipe is a Warn "EXISTS but no instance was free", an absent one stays the Debug "not running". 2/2 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5238/5238. The public constructor is unchanged |
 | 80 | `[W1-PARTIAL-MARK]` | LOW | `git log --grep W1-PARTIAL-MARK` (batch L25) | SnapshotStoreTests + SnapshotViewModelTests, red first: the reason round-trips and the partial survives `DeleteUnusableSnapshotsAsync`; a capped capture persists `cap` and stays usable; a mid-capture low-disk stop persists `disklow`, not `cap`; the grid label and the picker line both carry it; a clean capture carries none. 7/7 mutants killed; dll_core_test 311/311, dll_helpers_test 2721/2721; UI 5244/5244. A NEW column, per the refuted-fix note: `is_usable=0` would auto-delete the partial |
@@ -8315,6 +7002,8 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 
 > 📦 **Archived 2026-10-28:** 1 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-10-28-build-3661.md](archive/todo-closed-2026-10-28-build-3661.md): L61 [W1-DT-TRUNC] [P5-PIVOT-FETCHCAP]. Grep the tag; tags resolve across files.
 
+> 📦 **Archived 2026-11-20:** 2 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): L26 [W2-TPREL-MAP], L58 [A4-STEALTH-PRIME]. Grep the tag; tags resolve across files.
+
 | # | row | the check | needs |
 |---|---|---|---|
 | L9 | `[A3-BOOL-NATIVE-NOWRITE]` `[A3-FIRE-STRUCT-BOOLMASK]` `[A2-STRUCT-PREVIEW-BOOLMASK]` | On DumperTest, with the NEW DLL:
@@ -8334,10 +7023,6 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 | L25 | `[W2-GRAVDIR-VERDICT]` `[W2-MS-PROMISE]` | On a UE5.4+ game, in the main menu or a loading screen (no pawn):
 1. **Gravity Direction:** press ↻ and Apply. The badge stays Unknown and the text says to enter gameplay, never "needs UE5.4+". In gameplay the card works; on a pre-5.4 game it says Unavailable.
 2. **No promises:** Apply Move Speed and both time levers. None says the override "applies once" a pawn or world exists. ✅ **PASSED 2026-09-16 — all three arms, plus the THIRD entrance the row does not mention.** Two hosts, run sequentially: DumperTest **Shipping 5.4** (pid 14988, UE504, 24508 objects) for the gameplay and no-pawn arms, then **UE427_3rdPerson Shipping** (pid 19360, **UE427**, 15,887 objects) for the pre-5.4 arm; the AOT UI against each in turn, CE only to drive the pawn away. ⭐⭐ **THE DEFECT AND THE FIX IN ONE TABLE, from the DLL's own replies rather than from the UI's wording.** `get_movement_params` was read on BOTH hosts: 5.4 with no pawn gives **`has_cmc=false, code=-3` (`MR_ERR_NO_PAWN`), `gravity_direction.resolved=false`**; 4.27 with a live pawn gives **`has_cmc=true, code=0`, `gravity_direction.resolved=false`**. **`resolved` is false in BOTH** — which is exactly why a pre-fix build, which keyed on `resolved` alone, could not tell a menu from a pre-5.4 engine and answered *"needs UE5.4+"* to both. The fix splits on `HasCmc` FIRST (`TeleportViewModel.cs:3232-3243`). Everything below is that split observed through the UI. **ARM 1 — GAMEPLAY (5.4, pawn present). ✅** Badge `State: OFF` → after Apply `State: ON`; readout `Current: (0.00, 0.00, -1.00)` matching the pipe's `x=0,y=0,z=-1`; ↻ → *"Read gravity direction."*; Apply → *"✓ Gravity direction held at (0.00, 0.00, -1.00)."*; and **Locate** navigated to `CharacterMovementComponent CharMoveComp` and selected `0x1A8 GravityDirection StructProperty {X=0, Y=0, Z=-1}` at `0x2B97AFD3278`. The card works. **ARM 2 — NO PAWN (5.4). ✅ All three entrances.** Badge **`Unknown`** (grey), NOT the amber Unavailable; readout *"Current: — (no pawn / no CharacterMovement right now; enter gameplay)."*; ↻ → *"Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."*; Apply → *"Gravity direction: no pawn / no CharacterMovement (enter gameplay first)."*; ⭐ **Locate → the same "right now (enter gameplay first)" text** — that is the third entrance `19a47fc2` added after the review of `3e1413c1`, which the row's own steps never mention; pre-fix it overwrote the correct badge with *"No GravityDirection field to locate (needs UE5.4+)"*. **"needs UE5.4+" appears nowhere in this arm.** ⚠⭐ **THREE ATTRIBUTION GUARDS this run satisfies by its ORDERING, added 2026-09-16 after the adversarial review — a re-run that ignores them gets a false pass.** **(a) The badge's DEFAULT is already `Unknown` / `#888888`** (`TeleportViewModel.cs:779-780`), and the connect/disconnect reset sets exactly that with `GravDirCurrentText = "—"` (`:907-909`). Worse, `PrimeHeldBadgesAsync` (`:2404-2418`) runs fire-and-forget on EVERY connect and calls `ApplyGravDirReadout(mp)` at `:2417`, which sets the badge AND the readout — deliberately WITHOUT touching `StatusText` (`:2379-2383`, *"QUIET IS THE WHOLE CONTRACT"*). So a run that disconnects and reconnects after the pawn is gone sees the correct badge and the correct readout **with no click at all**. This run never reconnected: the UI connected ONCE with the pawn present, the gameplay arm drove the badge `OFF → ON`, and the no-pawn reading is the transition **`ON → Unknown`** with the readout moving off a real vector — not a default. **(b) ↻ and Locate emit a CHARACTER-IDENTICAL string** (`:3262` and `:3354`) and issue the same single `get_movement_params`, so pressing them back-to-back cannot tell a working Locate from a dead button. The attribution here is the ORDER: **Apply sits between them** with a DIFFERENT string (`:3301`, no "right now"), so the bar demonstrably went `:3262` → `:3301` → `:3354`. **(c) A badge reading `Unknown` is ALSO what an exception looks like** — the catch at `:3267-3272` calls `ApplyGravDirState(-1)` and returns WITHOUT touching `StatusText` or the readout, so a pipe timeout renders a correct-looking card over a stale status bar. Here `StatusText` CHANGED on every click and no error banner appeared, so no click took the catch. ⭐ **How the no-pawn state was reached, and what it measured on the way.** The fixture has no menu, so the pawn was driven off through CE's mailbox (zero pipe slots). It took THREE calls, and the first two failing is itself a finding: `invokeUFunction('PlayerController','UnPossess')` returned ok **and `has_cmc` stayed true**; so did `DetachFromControllerPendingDestroy` on the pawn. The reason is in `Laufen.cpp:211-216` — **`ResolvePawn` falls back to `AcknowledgedPawn`** when `Pawn` is null, and neither call clears it. `ClientRestart(nullptr)` does, and only then did the DLL report `code=-3`. ⭐ **Confirmed against the vendored engine, not just inferred from behaviour:** `AcknowledgedPawn = NULL;` appears at `vendor/UnrealEngine/…/Private/PlayerController.cpp:821` (inside `APlayerController::ClientRestart_Implementation`, declared `:816`) and `:909` (inside `OnPossess`) — and **nowhere inside `UnPossess` or `PawnPendingDestroy`**. Both pawn readers carry the same fallback: `Laufen.cpp:211-216` and `Wirbel.cpp:364-369` are the same four lines. ⚠ **Which means every "no pawn" witness in this project is ONE predicate, not several.** A regressed `FindFieldOffset(cls, "Pawn"/"AcknowledgedPawn")` would make every module report "no pawn" with the character still standing in the level, and this run took no screenshot of the game window. What rules it out is the BEFORE/AFTER inside a single process: the same lookup resolved a pawn in arm 1 minutes earlier, and — sharper — `UnPossess` and `DetachFromControllerPendingDestroy` both left it STILL resolving. A broken lookup would have answered "no pawn" from the first call, not the third. ℹ CE was convenient but not required: `invoke_function` is a pipe command (`Renge.h` / `Fern.cpp:5494-5505`, taking `class_name` / `func_name` / `params_hex` / `parms_size`), so `ClientRestart(nullptr)` is reachable from `pipe_client.py` with the UI disconnected. Worth knowing before anyone tries to stage a menu on a fixture again. **ARM 3 — PRE-5.4 (UE427). ✅ And it is the CONTROL that makes arm 2's absence mean anything.** Badge **`Unavailable`** (amber); readout *"Current: unavailable (needs UE5.4+ with a reflected GravityDirection)."*; ↻ → *"Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection)."*; Apply → *"Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection)."* — the **both-signals** branch the fix narrowed (`r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved`). So the string EXISTS in this build and this code path can emit it: arm 2 is silent because the split works, not because the card never rendered. **STEP 2 — NO PROMISES. ✅ where the refusal branch is reachable.** Run in the no-pawn state, so the refusals are real: **Move Speed** Apply → *"No pawn / no CharacterMovement — enter gameplay first."*; **Player-pawn time lever** Apply → *"No player pawn — enter gameplay first."* (its readout also went `State: Unavailable` / *"Current: unavailable (no player pawn — enter gameplay first)."*). Pre-fix both ended `…; the override applies once a pawn exists.` (`git show 3e1413c1` removes exactly that clause). ⭐ **The absence is non-vacuous because the FIRST HALF of each sentence is still there** — the refusal branch demonstrably ran; only the promise is gone. ⛔ **The WORLD lever's refusal was NOT exercised, and is not claimed.** ⚠ **Corrected 2026-09-16:** an earlier draft said that branch "needs a state with no `WorldSettings`". It does not. `TeleportViewModel.cs:2527-2529` selects the text by **LANE, not by cause** (`< 0 => lane == TimeLane.Pawn ? … : "No WorldSettings — enter a level first."`), so that sentence is what the world lane prints for ANY negative state. What went untested is the world lane's `< 0` branch as such (pre-fix it ended `…; the override applies once a world is loaded.`); a map was loaded throughout, so Apply SUCCEEDED — *"✓ World time held at 2× (200%). Drag + Apply to change; Reset to restore."* That satisfies "none says applies once" only trivially. Reaching it needs a real main menu, i.e. a commercial title. | a game + UI |
-| L26 | `[W2-TPREL-MAP]` | A connected game with a Coordinate Library for the current map:
-1. **Directional TP:** use TP facing. The Current Pose Map row keeps the map name, and the library rows keep their distances — no "⚠ different map (you are on '')".
-2. **Fresh connect:** reconnect the UI and do NOT press ↻. The map shows at once. *Add from fields* saves an entry carrying the map (its Map column).
-3. **Main menu:** connect with no pawn. The library rows are not flagged as another map's. ✅ **STEPS 1-2 PASSED 2026-09-12**; ✅ **step 3 PASSED 2026-11-20** `[LIVEPASS-2026-11-20]` on this fixture after all (DLL and AOT UI 3776, DumperTest Shipping): the pawn was removed with `ClientRestart(nullptr)` on the live PlayerController (L25's method; `get_movement_params` and `teleport_get_pose` → code -3). *Control first, pawn present:* Coordinate Library (5), *Current map only* ticked, five `ThirdPersonMap` rows, none flagged. Then **Disconnect → Connect, ↻ never pressed**: Current Pose read `—` for every value and an empty **Map**, and the same five rows were listed under *Current map only* with no *"⚠ different map (you are on '')"*. The pawn is not respawned (the game was killed afterwards). The 2026-09-12 note "not reachable on this fixture" follows. DumperTest Shipping (pid 23232, DLL `1.0.0.3546`) + AOT UI, with a 4-entry library for the current map `ThirdPersonMap` (all `Dist 0`, the pawn standing on the saved spot). **1. Directional TP:** *Teleport forward* (Distance 100 uu, "Horizontal only" ticked) moved the pawn from X **900 → 1000.000** with Y/Z unchanged — so the step size is confirmed, not assumed. Afterwards the Current Pose row still read **`Map: ThirdPersonMap`** (kept, not blanked), and all four library rows kept their Map column and now showed **`Dist = 100`**, exactly the configured step. No *"⚠ different map (you are on '')"* anywhere. **2. Fresh connect:** Disconnect → Connect, and **↻ was never pressed** — the Map row read `ThirdPersonMap` at once. *+ From fields* then created `ThirdPersonMap 5` from the (0,0,0) fields and it **carries the map**, confirmed in three independent places: the grid's Map column, the detail line *"ThirdPersonMap 5 — ThirdPersonMap — 1,497 uu away"*, and the on-disk entry `map='ThirdPersonMap'`. ⬜ **Step 3 needs a no-pawn state on a game that ALSO owns a library for its own key.** DumperTest boots straight into `ThirdPersonMap` with a pawn and has no main menu, and the CheatManager pawn-destroying execs cannot supply one: Shipping has no live `CheatManager`, and in a cooked build its bodies are stripped (working-lessons §1.1a). The natural host is EVERSPACE 2 — its title screen genuinely has no live `PlayerController` — but its library would have to be built in-game first, so it belongs to a future ES2 trip. | a game + UI |
 | L28 | `[W5-CEXML-FSTRING]` | ⚠ Needs CE. A game with a `TMap` keyed or valued by an FString, and a struct array with an FString member:
 1. **Map / member:** Copy CE XML and paste into CE. The key, value and member rows are CE Strings showing the live text (Unicode for FString; UTF-8 CodePage for FUtf8String).
 2. **TArray<FString>** (with `[W5-STRARRAY-ELEMENTS]`, B23b): both a top-level Copy CE XML of the object and a Copy CE Field from inside the drilled array write CE Strings showing the live text. ✅ **CLOSED 2026-09-16 — both steps, in real CE.** DumperTest **Shipping** 5.4 (pid 52648, UE504, 24,508 objects) + the AOT UI + CE 64-bit attached by `openProcess('DumperTest-Win64-Shipping.exe')`. ⭐ The struct-array host was built for this row (`a54d4374`): `FDumperTestStrRow {FString Text; int32 Num; FText Note}` in `Arr_StrRows`, a NEW type rather than a widened `FDumperTestStat`, which would have moved every offset the README quotes for `Arr_Struct`. **XML SHAPE — read BEFORE CE, and it is the discriminator.** Pre-fix, a string that was a TMap key/value, a TArray element or a struct-array element's member was emitted as **nothing** (`MapInnerTypeToCeField` returned null and `EmitLeaf` was skipped), leaving an empty folder; the fix routes all of them through `EmitContainerStringLeaf`. Parsed out of the exported table (1,241 `<CheatEntry>`, 35 String leaves): `Map_StrToInt[0..2]` each carry `Key → String(unicode=1 codepage=0 zeroTerminate=1 length=256 offsets=[0])` beside a `Value → 4 Bytes`; `Arr_Str[0..3]` are four such Strings; `Arr_StrRows[0..1]` carry `Text → String(…)`, `Num → 4 Bytes` (the scalar control) and `Note → 8 Bytes` — the FText arm folded into the same fix, the ITextData pointer, which `Arr_Struct`'s `Label` shows too. **STEP 1 — in CE. ✅** The table was loaded with `loadTable(…, true)` (1,241 records) and every `vtString` row read back through CE's own renderer, not off a screenshot: the map keys resolve to **`StrAlpha` / `StrBeta` / `StrGamma`**, and the struct-array members to **`RowStrAlpha` / `RowStrBetaBeta`** — each through a `P->…` pointer chain, i.e. CE followed the Data hop. **STEP 2 — both halves. ✅** Top-level export: `Arr_Str[0..2]` read **`StrElemAlpha` / `StrElemBetaBeta` / `StrElemGammaGammaGamma`** in CE. Copy CE Field from inside the drilled array (element `[1]` selected in Live Walker) produced a 44-line table whose single leaf is `[1] (10)` → `String`, chained `21BA82E9A00` → `+A38` (Offset 0, the TArray Data hop) → `+10` (Offset 0, the FString Data hop); loaded into CE it reads **`StrElemBetaBeta`**, the same text from an independent export. ⚠ **`[3]`, the EMPTY element, renders as `??` in CE** — correctly: an empty FString's `Data` is **null**, so the row is `P->00000000` and CE has nothing to read. Worth knowing before someone reads `??` as a broken export; it is the difference between "no string" and "an empty string". ⚠ **NOT COVERED:** a TMap **valued** by an FString (this fixture's map is keyed by one, so the value entrance and the record-flatten branch of the key entrance are unexercised); and the `FUtf8String` **CodePage** half, since `FUtf8String` does not exist before 5.5 and the 5.8 fixture has none either. No pre-fix build was run — the "empty folder" behaviour is from the row's own finding text and `CeXmlExportService.cs`'s history. ✅ **The FString-VALUED map, 2026-11-20** `[LIVEPASS-2026-11-20]` (Avowed through its dxgi proxy, UE 503, 92,031 objects, the title screen; DLL and AOT UI 3776; CE was in another session's use, so CE's read was stood in for by following each record's own `<Address>` / `<Offsets>` chain through the pipe's `read_mem`, as CE resolves it). A survey of every MapProperty (433 in 262 classes, `walk_class` for key and value types) found two live hosts: `RedirectorMap.RedirectorMap`, a `TMap<FString, FString>` of 2,658 entries, and `Conversations.ConversationNameLookup`, a `TMap<FGuid, FString>` of 1,198. **Copy CE XML** of each (the container limit took 64 entries, and said so): every entry is a folder with **`Value (10)` → `String` (unicode=1 codepage=0 length=256 offsets=[0])**, beside `Key (0)` → the same String for the first map and the FGuid in the entry's label for the second (`[0] {A=-1567939293, B=542066715, …}`). Followed as CE would: RedirectorMap `[0]` reads *"/Engine/ArtTools/…/BoundingSphereBased_0-1_UVW…"* → *"…/BoundingSphere_LightTransform…"*, and ConversationNameLookup `[0..2]` read *"0001_bs_cta_examinables"*, *"0001_bs_ff_almhurst_general"*, *"0001_cv_almhurst_caerholm"* under the labelled keys. An FString member inside a map VALUE struct came out too (`chatter.VariantSets[0].Value.LanguageCode` → String). ⬜ **Still not exercised:** the key entrance's record-flatten branch -- a string-keyed map whose value is a leaf record, with Flatten leaf records on (it was) -- has no host here: the two string-keyed maps with entries carry object pointers (`PlayerLight_GlobalSettings.PlayerLightsData`, MainLight / SecondaryLight) or an array (`VariantSets`, Variants) in the value; and the `FUtf8String` CodePage half still needs a 5.5+ host that has one. | a game + UI + CE |
@@ -8368,9 +7053,6 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 | L46 | `[P1-UPROP-DELEGATE]` | A UE4 < 4.25 game (UProperty mode) with a `TArray<FScriptDelegate>` or a multicast array:
 1. Live Walker shows its elements, or its count, as on an FProperty title.
 2. The refusal text ("(delegate array — unexpected … element size N, not read)") appears only for an ElementSize the readers do not recognise. A stock build does not produce one, so dll_core_test covers it. ✅ **PASSED 2026-09-23 — step 1 green on UE 4.23 (UProperty mode) with the 4.27 FProperty comparison, and step 2 RED → GREEN, reached LIVE rather than left to dll_core_test. The wire arm ran on Shipping AND Development; the UI arm ran on Development.** Host: the self-built `UE423_Flying` package with `ADelegatePadFixture` (`Arr_MulticastDelegates`, a `TArray` of a dynamic multicast delegate whose [0] is empty and [1] is bound in BeginPlay), spawned by `UCheatManager::Summon` through a non-CDO CheatManager. ⚠ **The plan's "Use DEVELOPMENT: … Shipping has no CheatManager" (§ L46 Fixture and Traps; sw9's old `--config` help said the same) is UE5's rule, not UE4's.** UE 4.23 has no `UE_WITH_CHEAT_MANAGER` gate: `APlayerController::PostInitializeComponents` calls `AddCheats()` unconditionally (UE_4.23 `PlayerController.cpp:970`), gated only on `AllowCheats` (standalone, `GameModeBase.cpp:1335-1337`), and `Summon` (`CheatManager.cpp:313`) is outside every `#if`. Measured: on the Shipping exe the rig found 2 CheatManagers, 1 of them non-CDO (`out\l46_sw9_ship.txt` line 10), and the Summon spawned the fixture (line 12: 2 instances, 1 non-CDO). sw9's `--config` help and its no-CheatManager error are corrected in this commit. ⚠ Only **Phase K** (the multicast arm) was exercised. The fixture declares no `TArray<FScriptDelegate>`, and no UE4 < 4.25 host known here has one (the real < 4.25 titles in `docs/test-games.md` were not surveyed for it), so **Phase J** (the unicast arm) has no live check. Adding one to `ADelegatePadFixture` (DumperTestActor's `Arr_Delegates` is the shape) and repackaging UE423_Flying would give it one. Until then it is the twin two-line branch that dll_core_test covers (`cb20b61d`'s test walks a DelegateProperty inner with ElementSize 20). ⚠ The row's step 2 says "a stock build does not produce one, so dll_core_test covers it". But the UProperty arm reads the inner UProperty's ElementSize live on every walk, so a 4-byte poke of `inner + uproperty_elemsize` reaches the fix in a running game. **GREEN** (`dist\UE5Dumper.dll` `f0ad99a0` + AOT UI `b1ea2660`). *Step 1, wire:* `py tools/verify/sw9_ue4_delegate_read.py --engine 423 --keep` on **Development** (pid 54800) gave `use_fproperty=False validated=True`, the fixture at `0x1817FBDCE00`, Arr elems elem_size=16 `['(0 bindings)', '(1 binding) [DelegatePadFixture_2147482559::DPad_OnPingProbe]']`, and **SW9: PASS**. The same with `--config Shipping` (pid 12816, fixture `0x28E3854D300`) gave the same list for `DelegatePadFixture_2147482570` and SW9: PASS. *Step 1, UI* (Development): Live Walker → Go `0x1817FBDCE00`. The `Arr_MulticastDelegates` tooltip read **`[2 x MulticastInlineDelegateProperty (16B)] = [(0 bindings), (1 binding) [DelegatePadFixture_2147482559::DPad_OnPingProbe]]`**, with no "not read" text. `walk-0.log`: `UArrayProperty::Inner at UProperty+0x78 (delta=0) for 'Arr_MulticastDelegates' -> 'MulticastInlineDelegateProperty' elemSize=16`. *"As on an FProperty title":* `sw9 --engine 427` (UE427_3rdPerson dev, `use_fproperty=True`, a separate session) gave the same shape, elem_size=16 `['(0 bindings)', '(1 binding) [DelegatePadFixture_2147482531::DPad_OnPingProbe]']`, SW9: PASS. *Step 2, wire* (UI disconnected): `py tools/verify/sw6_stride_refusal.py --class-name DelegatePadFixture --elemsize-key uproperty_elemsize --only Arr_MulticastDelegates --poke 20`. **Development**: `uproperty_elemsize=60`, inner `0x1808FD8B680`, `ElementSize at 0x1808fd8b6bc reads 16`. POKED gave elem_size=20, elements=None and value **`'(multicast array — unexpected multicast element size 20, not read)'`**, with `[2026-09-23 17:11:04.003] [WARN] [WALK] ReadMulticastDelegateArrayElements: ElementSize=20 is neither 16 nor 24 (+detector) -- refusing to guess a stride` and `walk-0.log` `… elemSize=20` at the same instant; restored identical, **SW6: PASS**. **Shipping**: `uproperty_elemsize=52` and the Inner at `UProperty+0x70` (the dev layout is 60 / +0x78, so nothing here is hard-coded), inner `0x28D8BE12600`; the same value string and WARN (18:01:16.848), restored identical, SW6: PASS. *Step 2, UI* (Development, UI connected; the poke done out of process, so it costs no pipe slot, with a scratch helper committed here as `tools/verify/wpm_int32.py` plus argtypes and a read-back check): poke `54800 1808FD8B6BC 20` (before 16, after 20; stdout recovered verbatim from the session transcript into `out\l46\wpm_recovered.txt`, and `walk-0.log` agrees: `elemSize=16` at 17:11:37.054, `elemSize=20` at 17:12:36.252) → Live Walker **Refresh** (`walk-0.log` `elemSize=20` plus the same WARN at 17:12:36.252). The tooltip read **`(multicast array — unexpected multicast element size 20, not read)`**. Poked back to 16 → Refresh (17:13:17.078, `elemSize=16`) → the step-1 tooltip again. **RED**: `out\staged\l46-uprop-refusal-prefix` (spec `tools/verify/staging/l46-uprop-refusal-prefix.json`: `cb20b61d` reversed under `dll/src`; sha `7c532ded`), injected with `sw9 --dll`. It was staged at HEAD `e1c29798` (STAGED.txt), whose `dll/` tree is identical to green's `439c990b`. Both DLLs log the same stale stamp `1.0.0.3546 439c990b-dirty (… 2026-09-23T01:08:46)`, so the red is identified by its `Module identity … out\staged\l46-uprop-refusal-prefix\UE5Dumper.dll` line and its sha. Step 1 on the wire was identical on both configs (Development pid 43168, Shipping pid 22072: same Arr elems, SW9: PASS). The red UI's pre-poke tooltip was not captured; the screenshot shows only the clipped cell. *Step 2, wire:* Development inner `0x2D4DAFEB680` and Shipping inner `0x19DB8352600`: each POKED to elem_size=20, elements=None, with the same WARN (17:15:19.895 / 18:03:00.566) but **value None** → **SW6: FAIL** on both ("the wire carries no refusal string"). *Step 2, UI* (Development): after the poke and Refresh (17:16:04.645, `elemSize=20` plus the WARN) the tooltip read only the bare header **`[2 x MulticastInlineDelegateProperty (16B)]`**: a count of 2 with no elements and no reason. That is the pre-fix defect: the refusal lived only in the log. (The header's "16B" is the first walk's `ArrayElemSize`, an `init` member that `LiveFieldValue.CopyLiveValuesFrom` does not refresh on a same-layout Refresh. A real game's ElementSize is a class constant, so this is not a defect.) Restored → Refresh 17:16:33.922, `walk-0.log` `elemSize=16` with no WARN after it; the red tooltip after this restore was not captured. Rig changes: `sw6_stride_refusal.py` `--class-name` / `--elemsize-key` / `--only` and `sw9` `--dll` came in `e1c29798`. This commit adds `tools/verify/wpm_int32.py`; sw9's offsets line now names the engine it ran on, and its `--config` help no longer calls Development required. The dev and 4.27 outputs predate that and still print `(4.23 -> False = the UProperty path)` on every engine. Evidence: `out\l46_sw9_{green,red,427,ship,ship_red}.txt`, `out\l46_sw6_{green,red,ship,ship_red}.txt`, `out\l46\{green,red,ship_green,ship_red}_logs\` (DLL `*-0.log`, plus the dev runs' `ui-*.log`). The UI tooltips were read from screenshots, copied to `out\l46\shots\` (UTC names; green baseline `…091211…`, refusal `…091307…`, restored `…091327…`; red bare header `…091619…`). The UI pipe log truncates RX lines, so it does not carry them. Cleanup: every sw6 poke restored and read back (`restored : identical to baseline`); the UI-arm pokes restored and read back (`out\l46\wpm_recovered.txt`; `walk-0.log` `elemSize=16` at 17:13:17.078 green, 17:16:33.922 red); games and UI killed. ⏸ **Phase J host survey 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL 3776, headless; every installed UE4 < 4.25 title whose scan runs, at its title screen): `search_properties` over every ArrayProperty, deep descent included, tallied by inner type. OCTOPATH TRAVELER (4.18, 1,229 arrays), EVERSPACE (4.20, 1,200), Extinction (4.15, 708), NEKOPALIVE (4.11, 476) and DRAGON QUEST XI S (4.18, 1,903) all run in UProperty mode, and every one carries the engine's two unicast delegate arrays, **`InGameAdManager.ClickedBannerDelegates` / `ClosedAdDelegates`** (inner `DelegateProperty`, element 16) -- only on the CDO, and empty, so the unicast reader (which needs a non-empty array) is not reached. DQ XI S alone adds a game one, **`JackUMGMapResourceRequester.AsyncLoadDelegateList`** (+0x58, element 16), also CDO-only at the title screen; a live requester would come from the game's map UI loading in gameplay, which needs the maintainer's save. None of them carries a multicast delegate array either. IS Defense (4.10) skips the scan and was not surveyed. ✅ **PHASE J CLOSED 2026-11-20 on that host, in gameplay** `[LIVEPASS-2026-11-20]` (the maintainer cleared loading a save; DRAGON QUEST XI S injected, DLL 3776, UE 418, `use_fproperty` false, `uproperty_elemsize` 68, FName 8 bytes, so the unicast reader's legal sizes are 16 and 24; the autosave loaded, 350k objects). The list was seen non-empty only twice, briefly, each time holding a map widget's `AsyncLoadFinished` binding (the name suggests it fills while that widget's resources load): the first world-map open of the session left one element (*"WBP_Menu_WorldMap_000_modern_C_2::AsyncLoadFinished"*, seen by a poll about every 0.3 s and gone by the next change a second later), and later opens of the map and its Nearby Maps views read empty at every poll (844 polls about 0.14 s apart in one 120 s window). A scratch rig polled every live requester's TArray header (`+0x58`) through `read_mem` and, on `Num > 0`, walked, poked the inner UProperty's ElementSize (`inner + 68`, checked to read the wire's 16 first) to **20**, walked, restored in a `finally`, walked -- all inside the fill. It fired at 19:11:26, after the maintainer walked out of the town, on a requester whose one binding targets the minimap HUD widget (Num 1, Max 4 in the raw header). **Baseline:** `array_elem_size` 16, inner `DelegateProperty`, elements **`['WBP_Hud_MiniMap_000_C_1::AsyncLoadFinished']`** -- the unicast reader decoding a binding the game itself made, in UProperty mode. **Poked:** `array_elem_size` 20, **`value` = `(delegate array — unexpected FScriptDelegate element size 20, not read)`**, elements gone. walk-0.log inside the window: `[WALK:ArrayP] UArrayProperty::Inner at UProperty+0x80 (delta=0) for 'AsyncLoadDelegateList' -> 'DelegateProperty' elemSize=16`, then `elemSize=20`, then **`[WARN] [WALK] ReadDelegateArrayElements: ElementSize=20 is neither 16 nor 24 (+detector) -- refusing to guess a stride`**, then `elemSize=16` again. **Restored:** ElementSize read back 16, and the next walk's elements were identical to the baseline. The UI arm (the refusal rendered in Live Walker) was not run: the one fill that was timed lasted about a second at most, too short to catch by hand in Live Walker. | a UE4 < 4.25 game + UI |
-| L58 | `[A4-STEALTH-PRIME]` | A game where the stealth meter auto-finds (experimental gate on):
-1. Detect, then Hold @0. Restart the UI with the game still running and reconnect. The Stealth card reads "Holding @0", and Reset releases it.
-2. With only a Property Search Force active, the card reads "Unknown", and turning the experimental gate off does not release that Force. ✅ **PASSED 2026-09-23 — RED → GREEN, BOTH steps on DumperTest Shipping 5.4.** ✅ **The optional M9 check, run 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776, DumperTest Shipping): Stealth card **Hold @0** (`force_field: … StealthDetection … value=0.0000` at 14:49:28), then the System tab's experimental checkbox unticked: the game's `pipe-0.log` logged `reset_field: class=DumperTestStealthComponent field=StealthDetection` at 14:50:08.008, then `set_foreground_lock enable=0`; `get_forced_fields` → `[]`; re-ticked, the card read **Off** with no value in its readout. The gate-off releases a Holding card, as step 2's inverse requires. Step 1 was "fixture-limited"; the 2026-09-22 fixture change (`UDumperTestStealthComponent`, attached to the player pawn, `float StealthDetection` rising 0.1/s and wrapping at 1) made it reachable. With the UI closed, `find_stealth_meter` → code 0, top candidate **`DumperTestStealthComponent::StealthDetection`** (score 19, `FloatProperty`), then `SkeletalMeshComponent::CapsuleIndirectShadowMinVisibility` (5). **GREEN** (`dist\UE5Dumper.dll` + AOT UI `b1ea2660`; experimental gate on). *Step 1:* Teleport → Stealth Meter → **Detect meter** → badge *Ready*, readout `DumperTestStealthComponent::StealthDetection = 0.3`. **Hold @0** → *Holding @0*; game `pipe-0.log`: `force_field: class=DumperTestStealthComponent field=StealthDetection kind=numeric value=0.0000`. UI closed and relaunched, Connect, wait for the prime: the card read **"Holding @0"** with the readout **`DumperTestStealthComponent::StealthDetection = 0 (held)`**. **Reset** → badge *Off*, `reset_field: class=DumperTestStealthComponent field=StealthDetection`. ⚠ The readout kept saying *"= 0 (held)"* after the Reset: raised as `[STEALTH-RESET-STALE-HELD]` (LOW). *Step 2:* Properties → `F32` (Game classes only) → right-click the DumperTestActor / F32 row → *Force field (hold across instances)* → *Force value…* → **0** → *Hold this value* (a numeric force AT 0 on a non-candidate, as trap 1 requires). The status read *"✓ Holding DumperTestActor::…"* and the strip showed `DumperTestActor :: F32 (1 held)`; `force_field: class=DumperTestActor field=F32 kind=numeric value=0.0000`. UI restart → the Stealth card read **"Unknown"**. Unticking the experimental gate sent only `set_foreground_lock enable:false`: **no `reset_field`** for F32. Re-ticking it, the forced strip still listed `DumperTestActor :: F32 (1 held)`. *Control:* forced strip *Clear all* (`reset_all_fields`) → reconnect → the card read **"Off"**. **RED** (the pre-fix UI, `git archive a28ed440^` → `dotnet build`, run from `dist\` via `dist_swap.py`; HEAD's DLL injected from a byte copy in `out\`; a fresh process). Detect → Hold @0 → *Holding @0* (`force_field … StealthDetection … value=0.0000` at 11:33:01). UI restart → the card read **"Off"** with readout `—`, over a LIVE hold. The game's `pipe-0.log` received no `get_forced_fields` and no `find_stealth_meter` from that UI after its `init`, so "Off" was its initial value, not a reading. With the UI closed, `get_forced_fields` then returned `[{class_name: DumperTestStealthComponent, field_name: StealthDetection, held: 1, kind: numeric, value: 0.0}]`, and `reset_all_fields` released it. ⬜ Not run: the optional M9 gate-off-releases-a-Holding-card check. Every force released; `dist\` restored and verified (16 files, 0 mismatches, `UE5DumpUI.exe` `b1ea2660`); `ui-options.json` restored; `experimental.json` byte-identical to its backup (on). Game and UI closed. | a game + UI |
 | L63 | `[W5-INSTEXPORT-TRUNC]` | A game, Instance Finder, and an instance whose CE XML export is huge (a dense object with Collapse Pointer Nodes off):
 1. Copy CE XML. The status says "Copied, but TRUNCATED at the 60,000-entry export cap", naming Collapse Pointer Nodes and the DropDown Limit.
 2. A normal instance copies with no warning. ⛔ **NOT RUN 2026-09-16 — the 60,000-entry cap is UNREACHABLE on this fixture, measured.** DumperTest Shipping 5.4 (pid 43912, 26,000 objects after inflating it) + the AOT UI. The row needs an instance whose CE XML export exceeds the cap; every lever was pushed and the export stayed three orders of magnitude below it: `A9_BuildDeepContainers(60,60,20)` (72,000 leaf floats) → **542** `<CheatEntry>`; Array Limit **16384**, Drill Depth **8**, Deep container scan cap **4096** → **677**; `Spawn_ManyComponents(1500)` → still **677**; **Collapse Pointer Nodes OFF** → **677** (the XML changed, so the setting did take effect); and the `World` instance, the densest object here, → **54**. The instance export does not descend into nested container elements, so a fixture cannot inflate its way past the cap. ⚠ **A UI limit met on the way, recorded as a method note:** the toolbar's **Collapse Pointer Nodes** checkbox could not be toggled by synthetic input — a click on the box or its label, and `Tab`/`space`, only dismissed the flyout (a plain `Flyout` + `CheckBox`, `MainWindow.axaml:107-113`). It was set through its persisted value instead (`%LOCALAPPDATA%\UE5CEDumper\ui-options.json`, `main.collapsePointerNodes`), with the UI restarted, and every option changed for this attempt was restored afterwards. ⭐ **What this row needs:** a commercial title with a genuinely dense object graph, or an export path that expands nested containers. Do not close it on the fixture. ✅ **PASSED 2026-09-23 — step 1 RED → GREEN on DumperTest Shipping 5.4 inflated past the cap; step 2 GREEN on the same actor before inflation. Step 2 is a no-regression check with no red arm, because the pre-fix code also blanks the status on every successful copy. The 2026-09-16 ⛔ above is superseded.** Two UNCLAMPED UFUNCTIONs make the cap reachable: `V1a_GrowContainers(16384)` and `Spawn_Holders(4096)`. `Spawn_Holders` spawns with Owner = the actor (`DumperTestActor.cpp:834`), so it feeds `AActor::Children` as well as `SpawnedHolders`. Rig: `tools/verify/l63_instexport.py`. `counts` reports what the rig's `walk_instance` returns at array_limit 16384; `clip` counts `<CheatEntry>` in the clipboard text. Array Limit 16384 was set through `ui-options.json` with the UI closed; DropDown Limit was 512. ⚠ The row's "(Collapse Pointer Nodes off)" was NOT reproduced: Collapse was ticked (persisted) for every copy. That does not affect the verdict. `_collapsePointerNodes` is read only at `CeXmlExportService.cs:3702`/`:3736`, to add `<Options moHideChildren>`, so neither `_emitEntryCount` nor the TRUNCATED flag depends on it. The plan's step 7 (Collapse OFF on the truncated export) was not run. Status lines were read from zoomed screenshots, because they are not logged; the TRUNCATED line was fully visible. **GREEN** (AOT UI `b1ea2660` from `dist\`, DLL `f0ad99a0`). Instances → `DumperTestActor` (Exact match) → Search → the live `DumperTestActor` (not `Default__`) → **Copy CE XML**. *Step 2 (pristine actor, 12:07:47)*: `counts` gave Map_Churn 6, Arr_Churn 4, SpawnedHolders 0 and Children 3. The copy blanked the status line, which had read "Found 2 instances…". `view-0.log` read `CE XML copied to clipboard for instance DumperTestActor (5 structs resolved)`, with no TRUNCATED. The clipboard held **573** `<CheatEntry>`, not the plan's 677: that was measured on 2026-09-16's actor after `A9_BuildDeepContainers(60,60,20)`, which this run did not call. *Near-miss control (12:08:23)*: `grow` → Map_Churn 16,390 (16,384 returned) and Arr_Churn 16,388 (4,096 returned). Re-selecting and copying gave a blank status and no TRUNCATED, at **53,799** entries (15,461,297 chars). That is EXACTLY the source arithmetic from the measured baseline: 544 non-container entries, + Map_Churn 1 + 3 × 16,384, + Arr_Churn 1 + 4,096, + SpawnedHolders 1, + Children 1 + 3. The exact match also shows the UI walked what the rig walked. *Step 1 (12:09:04)*: `spawn` → SpawnedHolders 4,096 and Children 4,099 (4,096 returned). Re-selecting and copying gave the status **`⚠ Copied, but TRUNCATED at the 60,000-entry export cap — the CE table is incomplete; tick Collapse Pointer Nodes or lower the DropDown Limit`**, and the log line `CE XML copied to clipboard for instance DumperTestActor (5 structs resolved) — TRUNCATED at the entry cap`. The clipboard held **61,870** entries (17,712,449 chars). That is above 60,000, as the recipe predicted. The cap is checked per field in EmitFields (`CeXmlExportService.cs:2179`) but not inside the walked-element loops of EmitArrayProperty (`:2932`) and EmitMapProperty (`:3397`), so the field that crosses 60,000 is emitted whole. It is still a real truncation: uncapped, the export would hold 544 + 49,153 + 3 × 4,097 = 61,988 entries, so 118 were dropped. *The advice itself*: Collapse Pointer Nodes was ALREADY ticked. At 12:09:45, with the DropDown Limit lowered from 512 to its minimum (64), the copy was still TRUNCATED and byte-identical (61,870 entries, 17,712,449 chars). That only shows that no DropDownList here fell between 64 and 512 entries (DumperTest's UENUMs have 4 and 5 members); the source says what the lever does. At 12:10:31, with Array Limit 64, there was no warning, no TRUNCATED in the log, and **797** entries. The limit's setter re-walks the selected instance (`InstanceFinderViewModel.cs:63-73`), so the re-select done here was redundant. The export then held only 64 of Map_Churn's 16,390 pairs, and its status line was empty. The lever that works is not the one the warning names. Raised as `[INSTEXPORT-TRUNC-ADVICE]` (LOW). **RED** (the pre-fix UI, `git archive af5944fa^` → `dotnet build`, run from `dist\` via `dist_swap.py`; HEAD's DLL injected from a byte copy in `out\`; a fresh game with the same inflation: Map_Churn 16,390, Arr_Churn 16,388, SpawnedHolders 4,096, Children 4,099; Array Limit 16384). Its `Loaded 28,605 named objects of 28,612 total` (24,516 + the 4,096 spawned holders) shows the game was inflated before the UI loaded. Step 1, **Copy CE XML** on the live actor (12:12:55): the status line was **blank**, the log read `CE XML copied to clipboard for instance DumperTestActor (5 structs resolved)` with no TRUNCATED, and the clipboard held the same **61,870** entries (17,712,449 chars). A truncated table was copied without a word. Cleanup: `dist\` restored (16 files, 0 mismatches, `UE5DumpUI.exe` `b1ea2660`, no leftover files); `ui-options.json` restored (sha `729f2848`); game and UI closed, and the inflation died with the process. | a game + UI |
@@ -8521,6 +7203,8 @@ test pins them. Each names its own evidence; the live check that raised it is in
 
 > 📦 **Archived 2026-10-28:** 25 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-10-28-build-3661.md](archive/todo-closed-2026-10-28-build-3661.md): `[PARTIAL-MARK-SPC]`, `[CONSOLE-CHEATMGR-HINT]`, `[AXAML-INLINE-STRINGS]`, `[UINT8PROP-DEAD]`, `[AUTOSNAP-STOP-STALE-STATUS]`, `[LW-EDIT-RETYPE-DROP]`, `[KEYWORD-BOX-VIEW-KEEP]`, `[TEXTBOX-HOMEEND-CARET]`, `[SDK-MEMBER-NAMES]`, `[SDK-TYPE-NAMES]`, `[SDK-UDS-MISSING]`, `[SDK-LIVE-VALUE-TYPES]` and 13 more. Grep the tag; tags resolve across files.
 
+> 📦 **Archived 2026-11-20:** 12 closed row(s) of the table below moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[WALK-NULLCLASS-SILENT]`, `[SNAPDIFF-SHADOWED-PROP]`, `[FINDINSTANCE-SUBSTRING-USERFACING]`, `[STEALTH-RESET-STALE-HELD]`, `[WALK-REFRESH-SCALAR-SHRINK]`, `[LW-DISCONNECT-STALE-STATUS]`, `[FABRICATE-DEFAULT-UNSEEDED]`, `[OBJTREE-SEARCH-TIP]`, `[LW-SEARCH-TIP]`, `[LW-SEARCH-CLEAR-KEEP]`, `[USMAP-UDS-MISSING]`, `[FLY-EXPORT-EXPERIMENTAL]`. Grep the tag; tags resolve across files.
+
 | id | sev | what | where |
 |---|---|---|---|
 | ~~`[PROXY-LEFT-IN-GAME]`~~ | ⛔ ~~MED~~ | **WITHDRAWN 2026-09-17 — NOT A DEFECT, I misread the design.** Proxy Deploy's whole job is to leave a proxy DLL in the game folder so the game loads it at start; that is the feature, not a leak. And the panel already owns the other half: `ProxyDeployViewModel.cs:692` is a *"Leftover ('orphan') proxy cleanup"* section with a **Find leftovers** scan (`:770`), a reveal-in-Explorer step so the user can look before agreeing (`:752`), and a list kept deliberately separate from the deploy list (`:699`). So the state I filed is a supported one with a first-class clean-up path. ⚠ **The lesson, not the finding:** before filing "an artifact was left behind", check whether the feature that put it there has a clean-up path — and whether a PREVIOUS session of mine put it there deliberately, which is what happened here. ~~The original text:~~ Found 2026-09-17 while looking for an L31 host: `D:\SteamLibrary\steamapps\common\DQ7R\DQ7R\Binaries\Win64\version.dll`, **2,977,792 bytes** — byte-for-byte the size of `dist\UE5Dumper.dll` — dated **2026-09-16 12:42**, and it contains the literals `UE5Dumper` and `UE5CEDumper`. The folder otherwise holds only the game's own `DQ7R-Win64-Shipping.exe`, `OpenImageDenoise.dll` and `tbb12.dll`, so it is ours and it is not supposed to be there. ⚠ **NOT removed:** deleting a file from a game install is the maintainer's call, and Proxy Deploy has its own clean-up path that should be the one used. ⚠ It also changes what any future run on that title measures — the DLL is already loaded before an injector gets there. Worth a standing check at the end of a proxy session: the panel deploys, and nothing today proves it undeployed | `ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs` (clean-up path) [L31 host hunt] |
@@ -8532,23 +7216,14 @@ test pins them. Each names its own evidence; the live check that raised it is in
 | `[FIXTURE-FRAMECOUNT-DEAD]` | ✅ **FIXED 2026-09-16** (one line in `Tick`, repackaged) — LOW | ⚠ **A fixture field that has never held a value, and two documents say it does.** `ADumperTestActor::Tick` increments the private `FrameCount` and never mirrors it into the reflected `FrameCountReflected`, so the field reads **0** forever — measured 2026-09-16 on 5.4 Shipping: `TickCount` advanced 97 → 100 over 3 s while `FrameCountReflected` stayed 0. The header calls it *"Mirrored every Tick"* and the sample README calls it *"mirrors `FrameCount` each Tick"*. It exists to be **Linie's cadence denominator**, so any row that divides by it divides by zero. The 5.8 fixture's own copy DOES tick (4301 in the same kind of session), which is the control. One line in `Tick` | `DumperTestActor.cpp` Tick, `DumperTestActor.h:667-670` [L12 session] |
 | `[CSX-STRCHILD-BYTESIZE]` | ✅ **FIXED 2026-09-16** (the window is the export's String Len, the same option the CE XML path has always used; red 3 → green, UI 5300/5300) — LOW | Every CSX string child is emitted with the literal `Bytesize="18"` (`CsxExportService.cs:411`), i.e. 9 wide characters, whatever the string's real length — so CE's Structure Dissect shows only the first 9 characters of a longer FString. Measured on `Arr_Str`, whose elements are 12, 15 and 22 characters. Related but separate: an element label longer than 20 characters is dropped entirely (`:838`), so `[2]` exports with no text at all | `CsxExportService.cs:411`, `:838` [L29 session] |
 | `[FTEXT-REFUSAL-OVERCLAIM]` | LOW | ✅ **FIXED 2026-10-28** (red `e7934130` / green `95f5aa54`; review round 1 widened the rationale comments in `bba29604`: a callee that only STORES the FText leaves the null for a later reader). The reason now reads "a zeroed one is not an empty FText: a function that reads it can crash the game" in app FIRE, the CE form gate and `ue5_invoke_helper.lua` (a third copy this row did not list), and the rationale comments say the same. The vendored 5.8.4 `FSharedReferencer` (the TSharedRef machinery) skips a null controller on copy and on destroy, so the 4.18–5.3 shape probably survives passing too — read, not measured on a 4.x game; either way the reworded reason holds, since it claims only the reader. The helper's version stays 1.5: a resident older copy only shows the old wording. `AuditL11HonestyTests` / `InvokeScriptTests` / `invoke_helper_test.lua` pin the wording. ~~Original:~~ Both FText refusals (the CE form gate and app FIRE) assert that a zeroed FText *"crashes the game"*, and the rationale comment says the same. **Measured otherwise on UE 5.4** (L10 1f): a zeroed FText through the by-value thunk — copied, passed, destroyed, `TRefCountPtr<ITextData>` being null-safe — into a body that ignores it returned `ProcessEvent OK`, `result=0`, with no SEH fault. ⛔ Keep the refusal (a callee that READS it is the dangerous case, and 4.x's `TSharedRef` is a different shape); reword the reason so it does not state as fact something a run can falsify | `ParamBufferBuilder.cs:348`, `InvokeScriptGenerator.cs` FText gate [L10] |
-| `[WALK-NULLCLASS-SILENT]` | LOW | ✅ **FIXED 2026-10-27** (red `a3bf584c` (core) + `4411fbde` (UI)` / green `55c98015` (core) + `b0e856fa` (UI)`): a walk that resolved its own class and found a null or unmapped ClassPrivate returns `no_header` (lean and full) with a Sein warning; Live Walker says "No UObject header at this address — freed, or not an object" and never retries fill_gaps. ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776, DumperTest Shipping): two pages allocated in the game from outside -- a committed zero page (ClassPrivate 0) and a committed page whose +0x10 points at a reserved, uncommitted page (ClassPrivate unmapped). Over the pipe, `walk_instance` full and lean on each: `ok`, `no_header: true`, no fields, and per call one walk-0.log WARN *"WalkInstance: 0x… has no UObject header (ClassPrivate is null)"* / *"(ClassPrivate 0x… is unreadable) -- freed, or not an object; nothing walked"* (the unmapped arm also logged `WalkClass: … is not readable at +0x58` once). In the UI, Live Walker's Go to each address showed *"⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder."*; the UI pipe log holds ONE `walk_instance` per address (`no_header:true` in the reply) and view-0.log *"Skipping fill_gaps auto-retry … no UObject header"*. Pages released afterwards. **Raised by L47's first attempt, 2026-09-23.** A walk on a COMMITTED address whose header reads `ClassPrivate` = 0 comes back as `{…,"class":"","class_addr":"0x0","fields":[],…,"name":"None",…}`, with no `stale` and no `unreadable` key. Live Walker then shows a blank grid headed `None` and **no status at all**. **Measured:** l47's rig RELEASED a page holding a cloned UObject, and the running DumperTest re-committed that 64 KB region within about 25 s, as all zeros. The next Refresh read that reply (`ui-pipe-20260923-083950.log:69`, 08:39:50.564), and the walk log logged a plain `WalkInstance 'None' (): 0 fields` (`walk-20260923-084409.log:139`). **Why it slips through:** `GetClass` returns 0, `WalkClass(0)` yields `PropertiesSize` 0, and `IsPlausiblePropertiesSize` accepts it (`>= 0`, `Ubel.h:604`), so the stale gate at `Ubel.cpp:~4431` never fires. A live UObject never has a null `ClassPrivate`, so this is the recycled-slot case that `[A4-REROOT-STALE-WARNING]`'s *"freed/recycled"* text exists for, in its most common shape: a zeroed allocation. ⚠ **The sibling shape, the same silence:** a header whose `ClassPrivate` is non-null but UNMAPPED. `WalkClass()` at `Ubel.cpp:4421` discards the `readOk` verdict that `[A2-WALKCLASSEX-UNMAPPED]` added (`WalkClassImpl`, `:1008-1051`). The fault exit returns `PropertiesSize` 0, the plausibility gate accepts it, and the reply is again classless, fields-empty and flag-free. **Fix, with its limits.** Mark the walk when no class was PASSED and either (a) the header's class is 0, or (b) the class read faulted (use `WalkClassImpl`'s `readOk` in place of `WalkClass()`). A raw-struct walk always passes its class, and only Live Walker reads `IsStale` (`AutoFillGapsRetryAsync`, `UpdateDisplay`), so the other callers are unaffected. ⚠ **But do NOT reuse the stale text:** the Go box accepts any address, `module.exe+RVA` included, and a first Go to something that was NEVER a UObject would be told it *"appears to have been freed/recycled"*. That is the over-claim this repo keeps refusing (`[FTEXT-REFUSAL-OVERCLAIM]`). The UI's stale branch also logs *"(implausible PropertiesSize)"*, which would be false here. So: a distinct key and wording that covers both readings (e.g. *"no UObject header here — freed, or not an object"*), plus a DLL `Sein::Warn` naming the reason. Red tests: a no-class walk of a readable zero buffer and of an unmapped-class header both report the new verdict, a raw-struct walk with an explicit class does not, and no text claims *"implausible PropertiesSize"*. | `dll/src/Ubel.cpp` `WalkInstance` (the `GetClass` at ~:4343 and the stale gate at ~:4431); `dll/src/Ubel.h:604` |
-| `[SNAPDIFF-SHADOWED-PROP]` | LOW | ✅ **FIXED 2026-10-27** (red `284d9624` + `4882d67e` / green `ae0ca0cd`): the diff's join key and SPC's InSession key carry prop_offset (Strict already did); Loose stays name-only on purpose, matching across sessions and patches where an offset may move. SPC InSession had MISSED the real change. ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, one game session): snapshots `14:10:14` (#6) and `14:41:29` (#7), each 719 objects / 17,040 fields, NumericAll, game objects only, and each holding both shadowed pairs (`MovieSceneCinematicShotSection` #21374 and `TemplateSequenceSection` #22591, `PrerollTime` at +196 `00000000` and +296 `FFFF7FFF`; 4 rows per snapshot, read-only SQLite). **Snapshot Diff** #6 → #7: *"8 changed · +0 added · −0 removed"* -- no `PrerollTime` row, and the removed count is 0, not −2. **SPC Query, Join In-session**, the pair ticked, #7 Compare = Changed: *"8 match across 2 snapshots (in-session)"*, the same 8 rows (`TickCount` 99 → 1974, `F32_Ticking`, `F64_Ticking`, `FrameCountReflected`, `Health.CurrentValue`, the Stealth component's two, the ABP's `InternalTimeAccumulator`). Second witness: a SQL join of #6 and #7 keyed with `prop_offset` returns exactly those 8 rows. **Raised by L65's run, 2026-09-23.** Snapshot Diff's hash join keys a row by `(class_fqn, gobjects_index, prop_name, array_field, elem_index)` and assumes that key is *\"unique within one snapshot\"* (`SnapshotStore.cs:937`). It is not, when a class carries two properties with the same NAME at different offsets (a shadowed name). **Measured** on DumperTest Shipping 5.4, snapshots #3 and #4 (`Snapshot 2026-09-23 10:35:45` / `10:35:53`): `MovieSceneCinematicShotSection` #21363 and `TemplateSequenceSection` #22578 each hold two `PrerollTime` rows, at +196 (`00000000`) and +296 (`FFFF7FFF`), so each snapshot has 16,942 rows but only 16,940 distinct keys (read-only query, `immutable=1`). **What it costs:** A's map keeps only the last row per key while every B row is matched, so the +196 B row is compared against A's +296 value. Result: **phantom \"changed\" rows** for values that did not change (the two sequence classes in L65's noise picker), and `RemovedCount = aMap.Count - matched` goes **negative**. The status read *\"10 changed  ·  +0 added  ·  −-2 removed\"* (`SnapshotViewModel.cs:1505`, `SnapshotStore.cs:1051-1052`). **Safe fix:** add `prop_offset` to the join key on both sides; a red test with two same-named props at different offsets must show 0 changed and 0 removed. Check the other consumers that key by prop name (SPC, Pivot, Group) for the same assumption. | `ui/UE5DumpUI/Services/SnapshotStore.cs:930-1052`; `ui/UE5DumpUI/ViewModels/SnapshotViewModel.cs:1505` |
-| `[FINDINSTANCE-SUBSTRING-USERFACING]` | LOW | ✅ **FIXED 2026-11-03**: derivation first, substring only for a name no class has; the census row of the same tag has the details. **Raised by `[SEETHRU-PROBE-SUBSTRING]`'s fix, 2026-09-23 (read from source, not measured).** The USER-facing "an instance of class X" lookups still gate on a class-name SUBSTRING and fall back to the FIRST matching CDO: the C ABI `UE5_FindInstanceOfClass`, which the pipe's `invoke_function class_name` calls (the Console's by-class exec passes `className`, `ConsoleViewModel.cs:480-486`), and Mimic's `FIND_INSTANCE` / `LIST_FUNCTIONS`, which copy its shape for CE. That fix moved every INTERNAL caller to `Aura::FindLiveOrDefaultOf` and left these, because what a user-facing lookup returns is a contract decision (the mailbox's is versioned in `Mimic.h`). **What it costs:** on a stock 4.27+ development build with GAS, a Console exec on `CheatManager` can resolve a live `UAbilitySystemCheatManagerExtension` at a lower GObjects index and answer *Function not found*; a partial name keeps matching whatever contains it, which a CE script may rely on. **Fix candidates (not decided):** exact name + derivation (`FindLiveOrDefaultOf`) for all three, or derivation first and the substring only when no class has that exact name. | `dll/src/Frieren.cpp` (`UE5_FindInstanceOfClass`); `dll/src/Fern.cpp` (`invoke_function`, `class_name`); `dll/src/Mimic.cpp` (`HandleFindInstance`, the `LIST_FUNCTIONS` class-name branch) |
-| `[STEALTH-RESET-STALE-HELD]` | LOW | ✅ **FIXED 2026-10-27** (red `2401c60c` / green `4118e264` + `4012e4c3`): Reset leaves `{Class}::{Field}` without the value, and with no meter says nothing was released (en.axaml `str.TP.StReleased` / `StNothingToRelease`). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776, DumperTest Shipping, experimental gate on): Teleport → Stealth Meter → **Detect meter** (*Ready*, `DumperTestStealthComponent::StealthDetection = 0.833`) → **Hold @0** (*Holding @0*; game `pipe-0.log` `force_field: … StealthDetection kind=numeric value=0.0000`). UI closed by WM_CLOSE with the game running, relaunched, Connect: the card primed to **Holding @0**, readout **`… = 0 (held)`**, holder badge *"Held by a program that has exited (pid 39196)"*. **Reset** → badge **Off**, readout **`DumperTestStealthComponent::StealthDetection`** with no value and no "(held)", the tab's status line *"Released the stealth-meter hold."*, `reset_field: class=DumperTestStealthComponent field=StealthDetection` in the game's log, and `get_forced_fields` → `[]`. **Raised by L58's run, 2026-09-23.** After a UI restart, the Stealth card's connect prime sets the readout to `{Class}::{Field} = 0 (held)` (`TeleportViewModel.cs:2484`, added by `a28ed440` `[A4-STEALTH-PRIME]`). **Reset** then releases the hold (`reset_field: class=DumperTestStealthComponent field=StealthDetection`) and sets the badge to *Off* and the status to *\"Released the stealth-meter hold.\"*, but `ResetStealthAsync` (`:1880-1895`) never touches `StealthFieldText`. So the card shows badge *Off* over a readout that still claims *\"= 0 (held)\"*. Measured on DumperTest Shipping 5.4 with the AOT UI `b1ea2660`. Without a restart the readout was the Detect value (`= 0.3`), so only the primed path is affected. **Safe fix:** Reset clears the \"(held)\" readout (e.g. back to `—`, or the candidate's name without a value); red test: prime a held field, Reset, and the readout must not contain \"(held)\". | `ui/UE5DumpUI/ViewModels/TeleportViewModel.cs` `ResetStealthAsync` (~:1880) and `:2484` |
-| `[WALK-REFRESH-SCALAR-SHRINK]` | LOW | ✅ **FIXED 2026-10-27** (red `3629c0f9` / green `dbb989b2`): Refresh re-reads a drilled scalar array in full through the drill's own helper and re-derives the status line and crumb for array / map / set / DataTable views. Left: `RepopulateContainerView` ignores a container whose count dropped to 0 (filed below). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping): `Arr_Churn` grown to **5,004** over the pipe (`V1a_GrowContainers(5000)`), drilled at Array Limit **16384**: crumb `Arr_Churn [5004 x IntProperty] ⚠ showing 4,096 of 5,004`, header `Arr_Churn ⚠ showing 4,096 of 5,004`, status *"Showing the first 4,096 of 5,004 elements — this view is capped at 4,096 per fetch."* Slider moved to **64**: the view kept the full re-fetch and all three still read 4,096 of 5,004 (was: header `showing 64 of 5,004`, status cleared, crumb stale); a **Refresh at the unchanged limit** kept them too. ⚠ Found on the way: several Refreshes in flight at once (each slider step runs one) write the status sentence once EACH, joined by " — " -- filed as `[LW-REFRESH-STATUS-DUP]` (census Table A). The slider was restored to 64. **Raised by L60's run, 2026-09-23; promotes the unfiled lead \"Live Walker refresh inside a container view\" (Leads, not filed).** A drilled scalar array whose walk preview came back short is re-fetched in full, up to the DLL's 4,096 per-request cap (`LiveWalkerViewModel.cs:1368-1376`). The preview is short when the array is longer than the Array Limit, or longer than 4,096, because the walk's inline read has the same cap (`Ubel.cpp:42`, `:4783-4786`). Any Refresh of that view renders only the parent walk's inline elements, which is min(Array Limit, 4,096) rows. `RefreshAsync` (`:5387`) calls `ClearStatus()` (`:5421`). Its container branch (`:5429`) re-walks the PARENT with `arrayLimit: ArrayLimit` (`:5462`) and hands the matched field to `RepopulateContainerView` (`:5474` → `:1740-1759`), which never re-fetches and is given no crumb. So a drill and a Refresh at the same limit disagree: the slider does not govern a scalar drill (`[A3-CONTAINER-4096-ADVICE]`), and a Refresh re-applies it. **Measured** on DumperTest Shipping 5.4 with the AOT UI `b1ea2660`, through the slider: `Arr_Churn` grown to 5,004 and drilled at Array Limit 16384 showed *\"Showing the first 4,096 of 5,004 elements — this view is capped at 4,096 per fetch.\"* Moving the toolbar slider to 64 re-rendered the header as `Array<IntProperty>` · `Arr_Churn  ⚠ showing 64 of 5,004`; the slider reaches the setter through `MainWindowViewModel.cs:402-407`, and the setter (`:280-291`) runs Refresh. The status line was cleared, and the crumb still read `⚠ showing 4,096 of 5,004`. No log line records it, because the container branch logs nothing. **Code-read, not measured:** a Refresh at an UNCHANGED limit, and the other entry points: the Refresh button, Auto refresh, the Preview Limit slider (`:294-306`), the Guess? toggle (`OnFillGapsChanged`, `:817-823`), and an inline element edit, where `CommitFieldEditAsync` calls `RefreshAsync` (`:5778`). An edit of element [N] with N ≥ Array Limit would make the edited row vanish right after \"Written: …\". The cleared status and the stale crumb are not scalar-specific: every container view loses its drill-time status on a Refresh, and the branch writes back neither `containerBc.Label` nor `ContainerField`. This qualifies `[P4-CONTAINER-BASE]` (\"A refresh from **inside** the container view re-walks and is correct\") and `[W1-CONTAINER-STALE]` (\"refreshing while already inside the container view is clean\"): the refresh is correct only while the view shows no more than min(Array Limit, 4,096) elements. Related: the unfiled lead that the same branch leaves the crumb's cached `ContainerField` stale (the `RepopulateContainerView` paragraph above). **Safe fix:** in that branch, re-fetch a scalar array the way the drill does. For every container kind, re-derive the badge and status line from what came back, and write both `Label` and `ContainerField` back to the crumb. Red tests: refresh a drilled scalar array whose count exceeds Array Limit, and its rows and crumb must not drop to Array Limit; refresh a truncated pointer array, and it keeps its status line. | `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs` `RefreshAsync` container branch (:5429-5477), `RepopulateContainerView` (:1740) |
 | `[INSTEXPORT-TRUNC-ADVICE]` | ✅ **FIXED IN SOURCE 2026-09-25** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-25 as `[R7-S6]`** (Review 7; R7-D-03 had half-fixed it the wrong way). `InstanceFinderViewModel.ExportStatus` derives the advice from the walk: the Array Limit is named only when a walked Array/Map/Set is bound by it (fewer elements back than it holds, or as many as the limit allows), with the containers that pay for it; otherwise no toolbar lever, and Open in Live Walker → Copy CE Field. Collapse Pointer Nodes and the DropDown Limit are never named. A complete copy with a clipped container now discloses it ("only part of these containers was exported: X (64 of 16,390)"), naming no lever. Red tests (1)-(3) as prescribed below, in `AuditL11HonestyTests`. Live re-check PASS 2026-09-25 on the container arms -- recorded on `[R7-S6]`. **Raised by L63's run, 2026-09-23; predicted from source beforehand** in `docs/fixpass-low-live-plan.md` § L63 (\"Row text vs source\" (a), Traps (2)). The `[W5-INSTEXPORT-TRUNC]` warning (`InstanceFinderViewModel.cs:855-857`) names two levers: *\"tick Collapse Pointer Nodes or lower the DropDown Limit\"*. Neither changes the entry count at this call site. Measured on DumperTest Shipping 5.4 with the AOT UI `b1ea2660`, on a DumperTestActor inflated with `tools/verify/l63_instexport.py` at Array Limit 16384: the export was TRUNCATED at 61,870 `<CheatEntry>` while Collapse Pointer Nodes was ALREADY ticked. With the DropDown Limit lowered from 512 to its minimum (64), the copy was byte-identical (61,870 entries, 17,712,449 chars). That only shows that no DropDownList here fell between 64 and 512 entries (DumperTest's UENUMs have 4 and 5 members). The source is what shows the lever does nothing. Each of its four uses (`CeXmlExportService.cs:2386`, `:2832`, `:3122`, `:3376`) only chooses whether DropDownList content is attached to an entry that is emitted anyway. `_emitEntryCount` is incremented only at `:3686`, `:3726`, `:3750` and `:3795`. Collapse only adds `<Options moHideChildren>` (`:3702`, `:3736`), and `GenerateInstanceXml` gets no `resolvedInstances` here (`InstanceFinderViewModel.cs:836-841`), so no pointer is drilled. Collapse was not toggled on the truncated export (plan step 7 was not run). Its half rests on that source read and on 2026-09-16's untruncated Collapse-OFF measurement (677 → 677). Array Limit 64 removed the warning (797 entries); its setter re-walks the selected instance itself (`InstanceFinderViewModel.cs:63-73`). But that export then held 64 of Map_Churn's 16,390 pairs with an EMPTY status line: Instance Finder has no container-clipping disclosure, unlike Live Walker's `BuildContainerLimitWarning` (`LiveWalkerViewModel.cs:2129`). The already-ticked box is the `[A4-GAMEONLY-ADVICE]` symptom, but the main defect has the `[A3-CONTAINER-4096-ADVICE]` shape: both named levers leave the count unchanged in either state, so \"advise it only while it is off\" would not fix it. This refutes the parent row's reasoning (`[W5-INSTEXPORT-TRUNC]` and commit `af5944fa`), which read \"a lever this panel has\" as \"a lever that shrinks the export\". The wrong text is PINNED by `AuditL11HonestyTests.cs:272` (`Assert.Contains(\"Collapse Pointer Nodes\", …)`). **Safe fix:** derive the advice from the walk, not from a fixed string (the A3 approach). Name the Array Limit only when a walked Map/Set/Array came back as long as that limit allows, so lowering it really shrinks the export: arrays at min(Array Limit, 4,096), maps and sets at the Array Limit. The limit is re-applied live, so no re-select is needed. Otherwise name no toolbar lever, and point to Open in Live Walker → Copy CE Field for the part that is needed. Drop Collapse Pointer Nodes and the DropDown Limit in every case. State what the lever trades away (\"large containers then export only their first N elements\"), or disclose the clipping the way Live Walker does. Red tests: (1) a container-driven truncation names the Array Limit and neither of the other two; (2) the existing 61,000-IntProperty fixture (`AuditL11HonestyTests.cs:246-260`) still says TRUNCATED but does NOT name the Array Limit; (3) invert the `:272` pin. | `ui/UE5DumpUI/ViewModels/InstanceFinderViewModel.cs:855-857`; `ui/UE5DumpUI.Tests/AuditL11HonestyTests.cs:263-274` (the pinning test) |
-| `[LW-DISCONNECT-STALE-STATUS]` | LOW | ✅ **FIXED 2026-10-27** (red `fe50bf63` / green `9f244b93`): ClearOnDisconnect calls ClearStatus. Left: ClassStruct's ClearOnDisconnect never calls ClearError (filed below). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping): Live Walker on `DumperTestActor_0` → **Find Refs** set the status to *"Found 4 reference(s) [scanned 24530/24530 in 51ms]"*; `taskkill /F` on the game: the header went **Disconnected** and Live Walker returned to its empty view with no status line; DumperTest relaunched and injected, **Connect** (`Connected — UE504 (24530 objects)`): still no status line. **Raised by L57's run, 2026-09-23.** Live Walker's `ClearOnDisconnect` (`LiveWalkerViewModel.cs:6172`) resets the node, crumbs, references and the function list. It never resets `StatusText`, and never `ErrorMessage` either (no `ClearError`; code-read). The panel shows each on its own line whenever it is non-empty (`LiveWalkerPanel.axaml:511-513`, `:519-522`). Measured on DumperTest Shipping 5.4 with the AOT UI `b1ea2660`: **Find Refs** set the status to `Found 4 reference(s)  [scanned 24516/24516 in 202ms]` (`:2879`). After the game was killed, the header read *Disconnected* and the Live Walker went back to its landing view with the References panel hidden, but the line stayed. It was still there after a new process connected, quoting a scan of a process that no longer exists above an empty landing view. The pre-fix UI (`e21bb297^`, whose `ClearOnDisconnect` does not touch `StatusText` either) showed `Found 4 reference(s)  [scanned 24516/24516 in 203ms]` after its kill. LOW: the line is only text, with no command or jump attached, and the next navigation clears it, because `StartFromWorldAsync` and the other entry points call `ClearStatus()` first. Live Walker is the one panel whose `ClearOnDisconnect` leaves its status behind; InstanceFinder, PropertySearch, ObjectTree, DetectStats, Console, InterestingFunctions/Properties and ValueSearch all reset theirs. **Safe fix:** call `ClearStatus()` (`:837`) in `ClearOnDisconnect`, next to `ClearReferences()`. It clears `StatusText`, `ErrorMessage` and `LocateFailureMessage` in one call. Red test: set `StatusText` and `ErrorMessage`, call `ClearOnDisconnect`, and both must be empty (extend `AuditL11HonestyTests`' LiveWalker ClearOnDisconnect test). Sibling lead: ClassStruct's `ClearOnDisconnect` never calls `ClearError` either (Leads). | `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs` `ClearOnDisconnect` (:6172) |
 | `[PIVOT-ARRAY-LOADID]` | LOW | ✅ **FIXED 2026-10-27** (red `d672f214` / green `01751bd1`): the Snapshot Array field load takes its own load id. Live check owed. **Raised by L59's run, 2026-09-23 (code-read, not measured).** `[W1-PIVOT-LOADCTS]` (`8037bc94`) split the class-list and field-list CancellationTokenSources, so a scalar field load no longer cancels an in-flight class load. In **Snapshot Array** source, though, a class click runs `LoadArrayFieldsAsync`, and its first line is `int id = ++_classLoadId;` (`ClassPivotViewModel.cs:966`). That is the same counter `LoadClassesAsync` takes at `:680` and checks before applying its list at `:714` (`if (id != _classLoadId) return;`). So switching the snapshot and clicking a class in the still-visible old list discards the NEW snapshot's class list, and the old list stays. That is the `[W1-PIVOT-LOADCTS]` symptom by a different counter, and the fix's scalar-only unit test does not cover it. L59's live step 4 ran in Array source and could not show it: B's snapshots share one class set, and `class_counts` is prebuilt, so the window is milliseconds. **Safe fix:** give the array-field load its own id (as the scalar field load has `_fieldLoadId`), so a class click never supersedes the class-list load. Red test: in Array source, start a class-list load for snapshot B, fire `LoadArrayFieldsAsync` for a class before it completes, and B's list must still be applied. | `ui/UE5DumpUI/ViewModels/ClassPivotViewModel.cs` `LoadArrayFieldsAsync` (:966), `LoadClassesAsync` (:680, :714) |
 | `[PARTIAL-CAP-COMPLETE]` | LOW | **Raised by L66's run, 2026-09-23 (status measured on `025dc031^`, whose loop is byte-identical; the persisted half is code-read).** The size cap is checked only after a NON-EMPTY chunk (`SnapshotViewModel.cs:926` skips empty ones before `:943-950`). When every capturable object sits in the LAST chunk (Game objects only ON: DumperTest's 717 objects are indices 19,510-24,515 of 24,516), the cap first trips after the final chunk, when the producer has already scanned everything. Nothing checks `_capOffset < total`: `partialReason` (`:978-981`) and `wasCapped` (`:990`) key on `capReached` alone. So a COMPLETE capture reports `stopped at 1.3 GB cap (partial: first 24,516 of 24,516 objects)` (measured, L66 red, id 11: its counts equal the uncapped ids 2 and 10), and at HEAD it would also persist `partial_reason='cap'` and show `(partial: stopped at the size cap)` on a complete snapshot: a false marker. **Safe fix:** treat the stop as partial only when the producer had not reached the end (`_capOffset < total`) when the cap tripped; otherwise finalise with no reason and no cap note. Red test: a capture whose only non-empty chunk is the last one, with the DB already over `Max size`, persists `partial_reason=''`. | `ui/UE5DumpUI/ViewModels/SnapshotViewModel.cs` (:926, :943-950, :978-981, :990) |
 | `[CABI-EXECCODEEX-RC-COMMENT]` | LOW | **Raised by L78's run, 2026-09-23 (measured).** `Frieren.h:189-190` says "executeCodeEx cannot retrieve these return values — CE Lua integration goes through the Mimic mailbox". L78 read them: `executeCodeEx(0, 10000, UE5_TeleportGetLast, …)` returned `4294967290` = `0xFFFFFFFA` = -6 (`TP_ERR_EMPTY_MARKER`), and the pose getters returned 0. CE's x64 stub stores RAX (`mov [result],rax`, `LuaHandler.pas:11804`, pushed at `:11867` in the local CE clone), so the int32 rc arrives in the low 32 bits. The upper half is not ABI-defined for an int32 return, so a caller must sign-extend the low 32 bits. **Safe fix:** reword the note: CE's `executeCodeEx` returns RAX; take the low 32 bits and sign-extend them; the mailbox is still the route when remote threads are blocked. Comment-only, no test. | `dll/src/Frieren.h` (:189-190) |
 | `[QUERYPTR-LOG-ABSENT-LABEL]` | LOW | ✅ **FIXED 2026-10-27** (red `67467464` / green `93e7ca53`): the log names the branch taken: already pushed / refused / absent. Live check owed. **Raised by L80's run, 2026-09-23 (measured).** A second **Get GWorld** click in one session takes the already-pushed branch: `available = !alreadyPushed && …` (`TeleportViewModel.cs:2040`) is false, so the record is copied to the clipboard, and the status line correctly says it "was already pushed to Cheat Engine this session". But the shared log line at `:2067` prints `Teleport query-ptr -> clipboard XML (AOBMaker {(available ? "refused" : "absent")})`, so it logs `(AOBMaker absent)` while AOBMaker is connected. Measured in both L80 arms (`ui-view-20260923-152434.log` 15:24:34.076 and the red UI's 15:30:12.467), with the toolbar reading `AOBMaker Connected`. A log reader chasing a failed push is sent after a disconnect that did not happen. **Safe fix:** log the branch that was taken: `already pushed`, `refused`, or `absent`. Log text only; a VM test can pin the three strings. | `ui/UE5DumpUI/ViewModels/TeleportViewModel.cs` (:2040, :2067) |
 | `[METHODE-STALE-LOGPATH]` | LOW | ✅ **FIXED 2026-10-27** (red `1beb2d96` / green `ed960442`): one `METHODE_LOG_DETAILS` literal names init-0.log under `%LOCALAPPDATA%\UE5CEDumper\Logs\` in Cheat Engine's folder and the game's. Live check owed. **Raised by L53's run, 2026-09-23 (measured).** Every CE-plugin injection dialog in `Methode.cpp` ends `Details: Logs\UE5Dumper-*.log` (`:433`, `:442`), a layout that no longer exists: logs are per process, `Logs\<process>\<category>-0.log` (`Sein.cpp:582-600`). L53 read the string on both the new two-possibility dialog and the pre-fix one; the lines it points at were in `Logs\cheatengine-x86_64\init-0.log` (the CE process, where the `CEPlugin:` lines go) and `Logs\DumperTest-Win64-Shipping\init-0.log` (the game). **Safe fix:** name the two real places, `%LOCALAPPDATA%\UE5CEDumper\Logs\<CE process>\init-0.log` and `…\Logs\<game process>\init-0.log`, in one shared constant. The Methode.cpp source pin can assert the new text. | `dll/src/Methode.cpp` (:433, :442) |
 | `[METHODE-MANUALMAP-EXCEPTION-CLAIM]` | LOW | ✅ **FIXED 2026-10-28** (red `98827726` / green `ae5d7cb6`; review round 1 corrected the comment in `d38a327a`: with /EHa a catch(...) also takes SEH, so L53's contained exception is not known to be a C++ one). (2) is done: the dialog reads "A manually mapped UE5Dumper.dll is not supported: CE's mapper may skip the tables its exception handling relies on, so a fault it would normally contain could crash the game", then the same advice to untick. (1), half answered: the published CE source's mapper (`ManualModuleLoader.pas`, the local clone) applies only the export, import and relocation directories, never TLS or .pdata, and the comment now cites that read instead of "measured", and records L53's contrary run. Why the installed CE contained the exception is still unexplained. It is left open on purpose and is not in the census: the mode is unsupported, the dialog says so, and no fix depends on the answer. `InvokeScriptTests.CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify` pins the source (Methode.cpp reaches no test target). ~~Original:~~ **Raised by L53's run, 2026-09-23 (measured, cause not isolated).** `Methode.cpp:398-400` says CE's manual mapper "processes neither TLS nor .pdata … so no SEH or C++ exception can be dispatched inside the image", and the new force-load dialog tells the user a manually mapped UE5Dumper.dll "cannot handle exceptions". On the installed CE, both manually mapped runs of L53 (green pid 35412, red pid 34728, DumperTest Shipping) logged, 1 s after the inject when DllMain's second `UE5_AutoStart` probed the pipe (`Frieren.cpp:2417`): `Client connected (conns=1)`, `PipeServer: Already running`, then `[ERROR] PipeServer: connection: UNCAUGHT non-standard exception — contained` (`DumperTest-Win64-Shipping\pipe-20260923-153918.log:5-8`, 15:39:18.557; the red run's `pipe-0.log:5-8`, 15:43:24.080). So an exception WAS dispatched to a `catch(...)` inside the manually mapped image, and neither game crashed. No normally loaded run in retention has that line, but none reached the same double start either. Two things to settle: (1) whether the installed CE's mapper registers .pdata (so the comment's "measured" claim is stale for this CE build) and what the "non-standard" exception was (an unprocessed-TLS fault would fit); (2) whether the dialog's "cannot handle exceptions" should become "may not handle". The advice to untick the setting stays right either way. | `dll/src/Methode.cpp` (:398-400, the force-load dialog :424-433), `dll/src/Frieren.cpp` (:2417) |
-| `[FABRICATE-DEFAULT-UNSEEDED]` | MED | ✅ **FIXED 2026-10-27** (red `63db63bd` / green `3ce1180d`; `FabricateDefaultSeedTests` 3/3): the main window seeds `LiveWalker.FabricateArrayCount` right after building Live Walker. ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776 started fresh, `ui-options.json` `fabricateArrayCountExponent: 2` = Fabricate 4, slider never touched; DumperTest Shipping, `DumperTestActor_0` at `0x18587D58D40`): Copy CE Field on the selected `Arr_Delegates` (+0x960, 2 live elements) said **"Copied: 0 objects, 62 XML lines."**, and the clipboard held `[0]` / `[1]` and the fabricated `[2] (20)` / `[3] (30)` (8 Bytes each, under `+960` with offset 0) -- the 62-line shape the 2026-09-23 run got only after nudging the slider, not its 46. **Raised by L43's run, 2026-09-23 (measured three times: HEAD on DumperTest dev and on Shipping, and the `6ffd827a^` UI).** ⚙ Options reads `Fabricate: 4`, but Live Walker's **Copy CE Field** fabricates nothing until the slider is moved: the same selected `Arr_Delegates` row gave "Copied: 0 objects, 46 XML lines." (the two live rows) and, after a 4 → 8 → 4 nudge, 62 lines with `[2]`/`[3]` fabricated. Cause: `LiveWalkerViewModel.FabricateArrayCount` (`:318`) has no initializer, so it starts at 0, and its only assignment is `MainWindowViewModel.OnFabricateArrayCountExponentChanged` (`:430`). The exponent's field default is 2 (`:193`, and `UiOptionsSettings.cs:76`), and the [ObservableProperty] setter skips the handler on an equal value, so ApplyOptions loading the persisted default 2 (`:2463`) never reaches Live Walker. Only a change of exponent (the slider, or a persisted value other than 2) seeds it. It has been present since `93852adf` changed the default from 0 to 2. The sibling options avoid it because their Live Walker defaults match (`DropDownLimit`, `CeStringLength`, …). **Safe fix:** seed `LiveWalker.FabricateArrayCount = FabricateArrayCount` after ApplyOptions (or initialise it from the same constant). Red test: a VM built with the default options exposes `LiveWalker.FabricateArrayCount == 4`. | `ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs` (:193, :430, :2463), `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs` (:318) |
 | `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` | MED | ✅ **FIXED 2026-10-27, option (c), the maintainer's choice** (red `1dd4d0f6` / green `1ff3be91`): a queued Force OFF says it did not complete and to press Force OFF again once the game responds (`DebugCameraText`, en.axaml `str.DbgCam.QueuedOff`; a queued ON keeps its text), and the CE [DISABLE] queued branch prints that ungated and raises, so CE keeps the record ticked (`TMemoryRecord.setActive` sets fActive only on success). (a) and (b) are not done. Live check owed: L83 step 6's queued-OFF text and the CE record's end state (`docs/fixpass-low-live-plan.md` § L83). **Raised by L83's run, 2026-09-23 (the effect measured on DumperTest 5.4 dev, both arms; the mechanism read from stock UE source, 4.18–5.8).** A Debug Camera OFF that times out on a stalled game thread (-5) does not turn the camera off when it finally runs. `UE5_SetDebugCamera` returns at `Frieren.cpp:1280` on any non-zero toggle result, before the escalation at `:1285-1290` (`DbgCam_SwapControllerBack`), and every completed OFF in L83 needed that escalation (green 16:46:52.357, 16:53:20.612, 16:55:55.757; red 16:59:34.660, 17:00:53.852). **Why the toggle cannot turn it off:** `UE5_SetDebugCamera` fires `ToggleDebugCamera` (`Frieren.cpp:1269-1275`) on the CheatManager that `DbgCam_ReadState` picked with `UE5_FindInstanceOfClass("CheatManager")` (`:1183`), the first non-CDO match. On DumperTest that is the ORIGINAL PlayerController's CheatManager (green `0x1D62A1FB1E0`, red `0x24E7462BA00`). The lookup returned it at 16:45:40.769, when the only DebugCameraController was the CDO (green `init-0.log:23-24`). After the first ON, the `via instance scan (CheatManager ref empty)` fallback never appears again, so its DebugCameraControllerRef is set. The 4th CheatManager that appears then (3 → 4) is the DCC's own: `APlayerController::PostInitializeComponents` → `AddCheats()` (UE 5.4 `PlayerController.cpp:1046`), forced for a DCC in non-Shipping builds (`DebugCameraController.cpp:462-468`), with the DCC as outer (`PlayerController.cpp:1123`). The class is stock `CheatManager` (`ToggleDebugCamera … (2 class level(s) searched)`). Stock `UCheatManager::ToggleDebugCamera` branches on the OUTER being a DCC (UE 4.18 `CheatManager.cpp:542-553`, 4.27 `:622-633`, 5.4/5.6/5.7 `:643-657` via `IsDebugCameraActive`), which is false for that CheatManager, so it calls `EnableDebugCamera`. That call does nothing once `UPlayer::SwitchController` (UE 5.4 `Player.cpp:160-170`; 4.18 `:142`, 4.27 `:150`, 5.6/5.7 `:163`) has set the original PC's `Player` to null. So on stock UE 4.18–5.7, wherever the lookup lands on the original PC's CheatManager, only the swap turns the camera OFF. ⚠ **UE 5.8 differs (source-read, not measured):** its toggle goes through `FDebugCameraManager`, which finds the original PC through the DCC's `OriginalControllerRef` when that PC's `Player` is null (`DebugCameraManager.cpp:128`, `:153`), and its `DisableDebugCamera` (`:79-96`) switches back. The header comment (`Frieren.cpp:1136-1146`) names only the "stripped DisableDebugCamera" case. **What the user sees:** the Console and Teleport say a queued Force Off "will run when the game thread is free" (`ConsoleViewModel.cs:805-806`, `TeleportViewModel.cs:1631-1632`), and it runs without effect. L83's UI arm: after the queued Force Off (enqueued 16:49:34.002) the game was refocused and ticked (screenshots 16:50:07 and 16:51:05, the debug camera HUD still up; `get_diagnostics` at 16:52:29 puts the last hook fire at about 16:51:45.4), and the camera was still ON (`already ON — no-op` at 16:51:46; `state 1` at 16:52:29). A CE Debug Camera record unticked while stalled ends unticked with the camera ON, and by default it does so SILENTLY: its `[DebugCamera] OFF queued -- the toggle will run when the game thread is free` is a `dbg()` (`DebugCameraScriptGenerator.cs:105-106`), shown only with `UE5_DEBUG` ≠ 0, which L83 set for the capture (`out\l42\l83_print.txt`). That is the record/camera mismatch `[W3-DEBUGCAM-QUEUED]` fixed for ON, left open for OFF. L83's CE arm: the untick `req=0 -> state=-5` (16:54:54.095); `get_debug_camera_state` at 16:55:32.663 read `state 1` with `game_thread_stalled: false` (a hook fire within 500 ms, after the enqueue), and `get_diagnostics` at 16:55:32.991 read `ms_since_last_fire` 5, `liveness responsive`: it had drained and the camera was still ON. (Both readings are pipe_client replies recovered verbatim from the session transcript into `out\l42\l83_pipe_replies_recovered.txt`; `pipe-0.log` logs only the requests. Stark's drain, `Stark.cpp:195-222`, logs only SEH failures, so each drain is inferred from a hook fire after the enqueue; every fire drains the whole queue unless nested under the DLL's own direct ProcessEvent call, `Stark.h:220-222`, and neither run logged one.) ⚠ **Implication for `[W3-DEBUGCAM-QUEUED]` (inferred, not measured):** by the same code, a second queued toggle on this CheatManager also runs `EnableDebugCamera` and does nothing. So on UE ≤5.7 two queued ONs leave the camera ON, rather than draining "ON then OFF" as the `[W3-DEBUGCAM-QUEUED]` finding says. The "a second toggle would undo the first" texts (`ConsoleViewModel.cs:806-807`, `TeleportViewModel.cs:1632-1633`, `DebugCameraScriptGenerator.cs:103-104`) hold only where the toggled CheatManager can disable. **Fix candidates (not decided):** (a) for OFF, toggle the CheatManager whose outer IS the DCC, so the stock `DisableDebugCamera` runs whenever the queued call drains. (b) Keep a pending-OFF flag and finish it (re-read, swap if still ON) only once the queued toggle is known to have DRAINED. Stark drops a timed-out request's future (`Stark.cpp:426-439`), so this needs a drain signal Stark does not publish today. ⚠ Swapping while the toggle is still queued is the fix the 2026-08-13 audit refuted: escalating on `-5` "is actively harmful because the request stays queued" (`docs/audit-2026-08-13-early-code-findings.md:2635-2638`). By the stock code above, the swap restores the original PC's `Player`, so the toggle that drains afterwards passes `EnableDebugCamera`'s guard (UE 5.4 `CheatManager.cpp:663`) and turns the camera back ON. (c) At minimum, stop promising "it will run" for a queued OFF, and make the CE untick say so and keep the record ticked while the camera is still ON. **Live check:** for (a) or (b), L83 steps 6 and 9 as written (`docs/fixpass-low-live-plan.md` § L83); for (c) alone, the queued-OFF text and the CE record's end state. | `dll/src/Frieren.cpp` (:1136-1146, :1181-1213, :1255-1294), `dll/src/Stark.cpp` (:195-222, :426-439), `ui/UE5DumpUI/Services/DebugCameraScriptGenerator.cs` (:101-106, the queued branch), `ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs` (:805-807), `ui/UE5DumpUI/ViewModels/TeleportViewModel.cs` (:1631-1633) |
-| `[OBJTREE-SEARCH-TIP]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: the tooltip now ends *"As you type, it suggests common UE class names from a fixed list (not your past searches)."*; `ObjectTreeViewModelFilterTests.SearchFieldTooltip_describes_the_fixed_suggestion_list_the_box_binds` pins it to the panel's `ItemsSource` (red on the old text). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`: hovered on the AOT build 3776 (`dist\UE5DumpUI.exe` 62,882,304 bytes, sha256 `cab59503ae5050a1`…), not connected; the tooltip ends *"As you type, it suggests common UE class names from a fixed list (not your past searches)."* word for word, and nothing in it mentions recent searches. **Raised by the Wiki re-translation check, 2026-09-26 (code-read, confirmed against the source).** The Object Tree search box's tooltip (`str.Tip.ObjectTree.SearchField`) ends *"Recent searches are suggested as you type."* The box's suggestions are `ObjectTreeViewModel.SearchSuggestions`, a fixed list of common UE class names, and the VM says so on purpose (the top box is a server-side search; the remembered-keyword `KeywordSearchMemory` belongs to the bottom filter box). The tooltip describes a feature that does not exist. **Fix:** say what the list is. Test: pin the wording against the panel's `ItemsSource`. | `ui/UE5DumpUI/Resources/Strings/en.axaml`, `ui/UE5DumpUI/Views/ObjectTreePanel.axaml` |
-| `[LW-SEARCH-TIP]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: the tooltip names the AND, the matched columns (name, type, value, the class or struct type behind the field), the 2-character floor and the ▲ / ▼ stepper; `LiveWalkerSearchHighlightTests.SearchTooltip_names_what_the_matcher_matches` pins it (red on the old text). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, Live Walker from GWorld): the field-search box's tooltip reads word for word as `str.Tip.LiveWalker.Search` -- every keyword ANDed; a field's name, type or value, or the class or struct type behind it; *"at least 2 characters"*; rows *"highlighted, not hidden: ▲ / ▼ step between them"*; nothing says it searches by name only. **Raised by the Wiki re-translation check, 2026-09-26 (code-read, confirmed against the source).** Live Walker's field-search tooltip (`str.Tip.LiveWalker.Search`) says it searches *"fields by name"*, but `LiveWalkerViewModel.MarkSearchMatches` matches every keyword against the field's name, type, displayed value, pointed-to class and struct type (`MatchesAcrossFieldsNotJustName` already pins that), and ignores a query under 2 characters. **Fix:** name what is matched, the AND, the 2-character floor, and that rows are highlighted rather than hidden. Test: pin the wording. | `ui/UE5DumpUI/Resources/Strings/en.axaml` |
 | `[WIKI-TIPS-B2]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: all seven reworded (the filters say ANDed; the timeout range and default are the slider's and the VM's; native Props is a heuristic; no GWorld gate is claimed; Clear names BP/Exec only; Category lists every category and the tie order). `WikiTooltipAccuracyTests` derives the timeout text from `ValueSearchPanel.axaml` + `ValueSearchViewModel` and the categories from `KeywordScoringTable.DisplayName` (red on the old text). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, sha256 `cab59503ae5050a1`…; DumperTest Shipping for the two row buttons): **hovered and read word for word** -- (1) Property Search's result filter (ANDed, the five columns), (2) the Interesting Funcs and Interesting Props filters (ANDed), (3) Value Search's Max tooltip (`10–90s, default 25`, and the Timeout slider showed 25s), (6) Interesting Funcs' Clear (names Show All and BP/Exec only), (7) its Category (the tie order Stats > Inventory > Movement > Combat > Utility > Gameplay, and Other). **(4) the row Props and (5) the row Locate in GWorld were witnessed in the binary instead:** a hover on a per-row DataGrid button never opened its tooltip under computer-use (the row's Inst tooltip opened twice, then not again; every non-row control opened at once), so the two new texts were searched in `dist\UE5DumpUI.exe`: each occurs once (UTF-16), and the old *"show nothing"* / *"Disabled until GWorld is resolved"* occur 0 times. The binding that puts them on those buttons is what the source pins. **Raised by the Wiki re-translation check, batch 2, 2026-09-26 (confirmed against the source).** Seven tooltips describe behaviour the code does not have: (1) `str.Tip.PropertySearch.ResultFilter` and (2) `str.Tip.IF.Filter` / `str.Tip.IP.Filter` say *substring*, but all three filters are space = AND (`ObjectTreeFilter.MatchesAllTerms`); (3) `str.Tip.VS.MaxResults` gives the timeout as *10–60s, default 15* while the slider is 10–90 and `ValueSearchViewModel` defaults to 25; (4) `str.Tip.IF.Props` says native functions *show nothing*, but `FunctionPropsDialog` disassembles them (heuristic, with a Conf column) and shows nothing only when `UFunction::Func` is unresolved; (5) `str.Tip.IP.LocateGWorld` says *Disabled until GWorld is resolved*, a gate audit #5 AE10 removed on purpose; (6) `str.Tip.IF.ClearFilters` omits that Clear also turns off BP/Exec only (`CallableOnly`); (7) `str.Tip.IF.Category` omits the Gameplay category (opt-in, lowest tie priority) and Other. **Fix:** reword each; test what can be derived (the timeout range from the slider and the VM default, the categories from `KeywordScoringTable.DisplayName`). | `ui/UE5DumpUI/Resources/Strings/en.axaml` |
 | `[GENCT-ONE-ROW]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: both refusals now read *"Select at least one row first (Ctrl/Shift+click adds more)."*; `GenerateCheatTableSelectionTests` pins both (red on the old text). Nothing to live-check beyond reading the status line. **Raised by the Wiki re-translation check, batch 2, 2026-09-26 (confirmed against the source).** Generate CT on Interesting Funcs and Interesting Props answers an empty selection with *"Select 2+ rows first"*, but the guard is `Count == 0` and one row produces a table. **Fix:** ask for at least one row. | `ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs`, `ui/UE5DumpUI/ViewModels/InterestingPropertiesViewModel.cs` |
 | `[VM-INLINE-STRINGS]` | ✅ **DECIDED 2026-09-26 — not a defect** (was LOW) | ⚠ **2026-11-04: the maintainer asked what moving the existing literals would take, ahead of UI languages: `[I18N-READINESS-2026-11-04]`. This decision stands until the maintainer changes it.** ✅ **DECIDED by the maintainer, 2026-09-26: NEW view-model status strings go to `en.axaml` (`Res.Get` / `Res.Format`); the EXISTING literals stay as they are** (too little gain for a large round of re-testing). Do not re-raise them. Guarded by `check_vm_status_literals`, a ratchet: the per-file count of `StatusText` literals is frozen in `tools/vm_status_literals_baseline.json` (388 in 19 files when first set; 558 in 22 once `[WIKI-REVIEW-GATES]` counted ternaries, multi-line values and the `…Status` siblings; the 458 below was a rougher count that included `""` clears and comments). A rise fails; a fall fails until `--update` lowers the baseline. Also recorded in `working-lessons.md` §6. **Raised by the Wiki re-translation check, batch 2, 2026-09-26 (confirmed against the source).** Property Search's `FreezeUnavailableTooltip` and its Force / Freeze status texts are C# literals, against the en.axaml rule. **It is not one panel:** 458 `StatusText = "…"` literal assignments sit in 22 view models, against 68 `Res.Get` / `Res.Format` calls, so the practice has been to allow them. Moving them has a cost the axaml sweep did not: `Res.Get` returns `""` with no `Application.Current`, so every unit test that asserts on a status text would need a resource loader first. **Decide:** enforce the rule for VM text (a test-time loader, then a sweep and a gate), or write the exception into CLAUDE.md. Not started. | `ui/UE5DumpUI/ViewModels/*.cs`, `ui/UE5DumpUI/Core/Res.cs` |
@@ -8556,13 +7231,10 @@ test pins them. Each names its own evidence; the live check that raised it is in
 | `[SNAPSHOT-MANUAL-GATE]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: Estimate and Capture bind `CanManualCapture`; `SnapshotManualCaptureGateTests` pins both (red on `CanCapture`). ✅ **Live check PASSED 2026-09-26** on build 3566 (AOT `UE5DumpUI.exe` `2e641eb08d76`, DLL `ee31f4023b5d`), DumperTest 5.4 Shipping (pid 42752, UE504, 24,518 objects). Auto snapshot ON (FixedCount 2, 60 s, so nothing was evicted): the first capture ran (717 objects), and during the wait (*"Auto: next snapshot in 48s · captured 1"*) Estimate size and Capture Snapshot were both DISABLED; Auto OFF → both enabled again, and no second capture came 30 s later. Existing snapshots (R1, R2, C1, C2, …) untouched; one test snapshot added. Settings put back to KeepRecent / 10. **Raised by the Wiki re-translation check, batch 3, 2026-09-26 (confirmed against the source).** `SnapshotViewModel.CanManualCapture` (= `CanCapture && !AutoSnapshotEnabled`) exists so the MANUAL Capture and Estimate buttons are off while Auto Snapshot owns capturing, and the VM notifies it, but `SnapshotPanel.axaml` binds both buttons to `CanCapture`: the gate was never wired (the panel has never bound it; `git log -S`). So a manual capture can start between two auto ticks. **Fix:** bind the two buttons to `CanManualCapture`. A behaviour change: tell the Wiki session. | `ui/UE5DumpUI/Views/SnapshotPanel.axaml` |
 | `[LW-BACK-SCROLL]` | ✅ **FIXED IN SOURCE 2026-09-27** (was MED) | **Raised by the maintainer, 2026-09-26; reproduced on build 3567** (DumperTest 5.4 Shipping, DumperTestActor_0: scrolled mid-list, top row `0x150 Role`, drilled `0x190 Children` `[]`, Back → the grid showed `0x148 NetDriverName` at the BOTTOM edge and `Children` was off screen). Back / Forward / a breadcrumb jump replayed the saved TOP row with `ScrollIntoView`, which from the top of a rebuilt grid lands a row on the BOTTOM edge, so the view never came back and the drilled row sat below it — since `7cc3d5e2` (build 2550). ✅ **FIXED IN SOURCE 2026-09-27**: the View scrolls to the end first, so the saved top row is ABOVE the viewport and returns as the first visible row (the exact view left), then makes sure the drilled row is on screen; the VM hands it that row (Back: the popped crumb; a jump: the target's child on the old spine; Forward: none, it goes deeper). Bookmark loads take the same exact-position restore. `LiveWalkerForwardNavTests` pin what the VM hands over; the View's scrolling has no headless test, so the live check is the proof. ✅ **Live check PASSED 2026-09-27 on build 3568** (AOT `UE5DumpUI.exe` `83e699018eda`, DLL `355af731e422`), DumperTest 5.4 Shipping (pid 78208, UE504, 24,518 objects), DumperTestActor_0: **Back** — top row `0x150 Role`, drilled `0x190 Children` `[]`, Back → the SAME view (`0x150 Role` first, `Children` at the same height, highlighted); **Back to the GWorld list** — `DumperTestActor` visible and highlighted, the list at the position it was left; **Forward** — back into DumperTestActor at `0x7E0 SpawnedHolders` … `0x980 Del_Unicast`, exactly as left; **a breadcrumb jump** two levels up (GWorld ⇐ DumperTestActor0 ⇐ DumperTestActor0) → `DumperTestActor` visible and highlighted; **a bookmark** saved at `0x7E0`, left via Start from GWorld, loaded → `0x7E0` first again. Not exercised: a bookmark whose rows are gone in a later session — the restore then falls back to the first selected row still present, or stays at the top (code-read). A test bookmark is left in DumperTest's slot 1. | `ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs`, `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs` |
 | `[LW-EDIT-UNDER-REFRESH]` | ✅ **ANSWERED 2026-09-27** (was LOW) | ✅ **Measured again 2026-09-27 on build 3568 with typing that reaches the editor** (`send_key.py --post`, after a click INSIDE the opened editor — see below): typing `777` into `F32_Ticking` with Auto on held *paused (editing)*; pressing Refresh then COMMITTED the typed value first (`write_mem` 777 between the Refresh walk and the post-commit walk), exactly as focus loss does — the user's text, not a stale one. The retype case was real and is split out as `[LW-EDIT-RETYPE-DROP]`. The in-flight-tick race (a window of one walk) stays unreproduced; nothing else open. **The rig fault behind the first attempt:** after a computer-use double-click opens the editor, keyboard focus is NOT in the editor's TextBox — every key went to the DataGrid (text ignored, Enter = move to the next row) — so a click inside the box must come first; the box showed the typed number only because it equalled the value already there. **Raised by the maintainer's question, 2026-09-26: what happens when Auto Refresh fires while a Live Walker cell is being edited?** Answer, measured on build 3567 (DumperTestActor `F32_Ticking`, Auto 6 s): the editor sets the `IsEditing` latch, every tick is skipped and the label reads *sec · paused (editing)*; the value in the open editor did not move for 15 s. Pressing Refresh with the editor open closed the editor, wrote nothing (0 `write_mem`) and Auto resumed — a consistent state, not the "editor open, latch cleared, refresh under it" the code-read predicted. Still UNPROVEN, from a code + Avalonia decompile read (workflow `wf_0aacd03d-5f2`, skeptic-checked): a tick already in flight when the edit begins can land under the open editor (a window of one walk), its selection restore can make the DataGrid commit a half-typed value, a refresh can leave the box showing the game's value while Enter writes the earlier typed text, and re-typing exactly the displayed value may drop the last keystroke. ⚠ **Why unproven:** on this rig computer-use keyboard input never reaches the editor's binding — typed text was never committed (3 attempts, 0 `write_mem`), and Enter was taken by the DataGrid (the editor moved down a row) — and `send_key.py` now hands the foreground to the NVIDIA overlay, which then blocks computer-use. **Next:** the maintainer re-runs the typing cases with a real keyboard; fix only what reproduces. | `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs`, `ui/UE5DumpUI/Views/LiveWalkerPanel.axaml.cs` |
-| `[LW-SEARCH-CLEAR-KEEP]` | ✅ **FIXED IN SOURCE 2026-09-27** (was LOW, a UX request) | **Requested by the maintainer, 2026-09-27:** find a field with the Live Walker search (e.g. at 0x1138), clear the keyword to look for something else, and the grid jumped back to its first row. Cause: `ApplySearch` re-sets the grid's items on every change (so the highlight styles re-evaluate), which returns the grid to the top and drops the selection; a non-empty keyword then scrolls to its first match, an empty one does not. **The maintainer's rule**, only when the keyword goes from 2+ characters to EMPTY in one edit (select all, Delete): the selection contains the match ▲/▼ last landed on → the view stays exactly where it is; it does not → the first selected row (grid order) comes to the top. Typing, pasting, shortening, a partial delete, 1 → 0 characters, and a navigation clearing the box keep the old behaviour. The maintainer's follow-up the same day: with NOTHING selected, the view stays where it is too. ✅ **FIXED IN SOURCE 2026-09-27**: the VM captures selection + top row before the swap and hands them to the view restore `[LW-BACK-SCROLL]` built. `LiveWalkerSearchClearKeepsViewTests` (3 red first, 6 controls). ✅ **Live check PASSED 2026-09-27 on build 3572** (AOT `UE5DumpUI.exe` `450684c436e8`, DLL `63a87743b364`), DumperTest 5.4 Shipping (pid 47456, UE504, 24,518 objects), DumperTestActor_0, keyword `Del_Unicast` (0x980), cleared by select-all + Backspace: **nothing selected** → the view stayed (`0x7E0 SpawnedHolders` first, `Del_Unicast` last); **▼ selected the match** → the view stayed and `Del_Unicast` stayed selected; **the match stepped to, then `0x8F0 WideGrade` clicked** → `WideGrade` came to the top, still selected. ⚠ Rig note: a click on ▼ right after typing only closes the keyword-memory dropdown; the second click steps. **Second follow-up (same day): the FIRST character typed also threw the grid to the top.** Root cause of every one of these jumps: `ApplySearch` re-set `Fields` "to re-evaluate row styles", a leftover from when the tint was painted per realized row (`26ac1af6`); the tint is a style bound to `IsSearchMatch` since `[LWREFRESH-2026-08-21]`. ✅ **The re-set is gone** — no keyword edit moves the grid or drops the selection now; the only restore left is "a selection without the stepped match → its first row to the top". Tests: `No_keyword_edit_replaces_the_grid_items` (6 cases, red first). ✅ **Live check PASSED 2026-09-27 on build 3573** (AOT `UE5DumpUI.exe` `0cf426959fc9`, DLL `e92600cbc43d`), DumperTest 5.4 Shipping (pid 74552): scrolled to `0x150 Role`, typed `I` → the grid did not move; `I32` → scrolled to its first match `0x468 Map_I64ToI32`, tinted; cleared → the grid did not move and the tint went; `0x310 Str_Even2_OneNull` selected, `Del_Unicast` typed (scrolled away), cleared → `Str_Even2_OneNull` at the top. | `ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs` |
 | `[FILTER-RESTORE-LOADED-PRIORITY]` | LOW — **an improvement, NOT a bug** (the maintainer, 2026-09-27: leave it for now) | The keyword boxes' view restore (`Views/FilterViewBinding`) is posted at `DispatcherPriority.Background`, below input: while keys keep arriving the grid can show the detached, unselected frame until the typing stops. The END state is right since `[KEYWORD-BOX-VIEW-KEEP]`'s restore queue (build 3575). Posting at `Loaded` (above input, below layout) would remove the transient frame — suggested by the analysis workflow `wf_1baae452-908`. Not done: it moves the scroll timing `[LW-BACK-SCROLL]` measured, so it needs its own live check of every restore path. | `ui/UE5DumpUI/Views/FilterViewBinding.cs` |
-| `[USMAP-UDS-MISSING]` | ✅ **FIXED 2026-09-27, live check PASSED on EVERSPACE 2 (build 3587)** (was LOW; found while fixing `[SDK-UDS-MISSING]`) | ✅ **FIXED**: one predicate for both whole-pool exporters, `DumpAllService.IsExportedTypeRow` — the class-like metas plus `ScriptStruct` and `UserDefinedStruct`, never a `Default__` class-default object — so the USMAP collector can no longer drift from the SDK one. Red first: `AuditL11HonestyTests` W8 compared the collector with a COPY of the old rule, so it could not see the drift; it now drives both exporters over one stub. ✅ **Live check PASSED 2026-09-27, EVERSPACE 2** (UE 5.6.1, 79,834 objects at the main menu, name sanity 10/10), the AOT UI's `.usmap` export, builds 3585 and 3587 on the same game state: **UserDefinedStructs 0 → 22 of 22** (`find_instances`, not truncated), **`Default__` structs 5 → 0** (`Default__ScriptStruct`, `Default__Class` and the three Blueprint-generated-class CDOs), **struct references to undefined names 36 → 0**, structs 11,055 → 11,072 (= −5 + 22). With a save loaded (1,154,897 objects): **33 of 33**, 0 undefined. **Independent consumer** — CUE4Parse, `tools/verify/usmap_probe --mode uds` over ES2's own paks (47 cooked `STRCT_*` structs): 3585's mapping has none of them (`MAPPING-MISSING=47`, nothing schema-checked); 3587's has 21 (main menu) / 32 (save), **every one with descriptors identical to the cooked schema**, 17 / 27 of them SAME on a serialized value (the rest carry only zero values). `--mode holders` over 555 Blueprint CDOs: `NESTED-MISSING` 133 → 0, SAME 0 → 132. Its 6 / 9 `SCHEMA-DIFFER` are the same before and after and are all case-only FName spellings (`Duration` vs `duration`: the runtime name pool keeps the first casing registered, and UE and CUE4Parse match names case-insensitively). A UDS still `MAPPING-MISSING` was not loaded when the file was written — a runtime export carries only loaded types; the 22nd main-menu UDS, `STRC_MaterialInfo`, is simply outside the probe's `STRCT_` filter. Artifacts: `out/usmap-live/` (gitignored). *Original row:* The USMAP export uses the same meta filter the SDK export used (`UsmapExportService`: class-like metas + `"ScriptStruct"`), so it writes no Blueprint `UserDefinedStruct` schema — and, by the same shape as the SDK export's CDO defect, probably the metaclasses' `Default__*` objects as empty structs (not measured in a `.usmap` yet). Dumper-7's `MappingGenerator` writes every `IsA(Struct)` that is not a function (`PackageManager::InitDependencies`), so it includes UDS. **Not changed with the SDK fix on purpose:** the `.usmap` acceptance test is a CUE4Parse parse of cooked content (`tools/verify/usmap_probe`, `usmap_compare.py`), not a header. Host: EVERSPACE 2 (22 UDS at the main menu, 36 references). Check first whether CUE4Parse consults a UDS's schema from the mapping at all, and whether a UDS named like a native struct would shadow it in a name-keyed consumer. | `ui/UE5DumpUI/Services/UsmapExportService.cs`, `DumpAllService.cs` |
 | `[STRUCTPROBE-ANY-NAME]` | ✅ **FIXED 2026-09-28, build 3595; no-regression check PASSED on six fixtures** — no fixture puts a named non-struct in the slot, so the rejection itself is unit-proven (was LOW; review `wf_63e981ac-5e4` (2026-09-27), S2; plausible, not observed); follow-ups build 3597; ✅ Frieren getters live 2026-09-28 (build 3597; red on 3594; EVERSPACE 2 too) | ✅ **FIXED**: `Ubel::IsScriptStructObject` / `Ubel::IsClassObject` — the candidate's class chain reaches `ScriptStruct` / `Class` (so `UserDefinedStruct` and `BlueprintGeneratedClass` pass) — gate every probe the row names: the slot-name reader, split into `ReadStructTypeName` and `ReadPropertyClassName` (it served both kinds), `CorrectSubclassOffsets`, `WalkInstance`'s StructProperty probe, `Wirbel::StructInner` and `Frieren`'s two getters. `UE5_GetFieldPropertyClass` used to delegate to the struct getter; it now probes for a class. A function parameter's struct is walked only when the slot holds a struct. Red first: `dll_core_test` STRUCTPROBE — a StructProperty and an ObjectProperty whose slot holds a NAMED Actor instance were typed `Decoy`, and `WalkInstance`'s probe stopped on it at delta 0 instead of finding the struct one pointer on; a native struct, a `UserDefinedStruct` and a class stay named. FAMILYEPOCH's fixture gave its PropertyClass objects no class at all and now gives them `Class`. ⚠ Not covered by a test: `CorrectSubclassOffsets` (a process-wide latch an earlier block has already set), `Wirbel` and `Frieren` (no test target compiles them). ✅ **Live, build 3595:** whole-pool no-regression check (`walk_class_batch` over every class `list_classes` returns, each field's struct / object-class / container metadata compared row by row, build 3594 against 3595, fresh inject each): UE423_Flying 39,071 rows, UE427_3rdPerson 48,057, DumperTest51 56,387, DumperTest58 92,249, NEKOPALIVE 30,824 — **identical**; DQ XI S 178,438 shared rows, **0 changed** (3595 saw 7 more fields in three Blueprint classes, a per-session difference in the loaded classes — the field list comes from the plain chain walk, which neither fix touches). Every struct and object slot typed in 3594 stays typed in 3595. `walk_instance` on ten UE 4.23 actor CDOs resolves 61 of 61 StructProperty fields through the probe, with no `WALK:StructP` correction. ✅ **`Frieren`'s two getters, live 2026-09-28** (`tools/verify/frieren_getters_live.py`): CE, through the AOBMaker bridge, calls `UE5_GetFieldStructClass` and `UE5_GetFieldPropertyClass` with `executeCodeEx(1, ...)` — `ue5_dissect.lua`'s own call, full 64-bit answers — on every StructProperty and object-family field of `DumperTestActor`, `DumperTestSubsystem` and the `/Game/` classes; the expected answer is the slot pointer read with ReadProcessMemory (+0x70), not through the DLL, and the other-kind getter must answer 0. DumperTest 5.4 Shipping, fresh inject each, 81 distinct properties (51 StructProperty, 25 ObjectProperty, 2 WeakObjectProperty, 2 ClassProperty, 1 SoftObjectProperty; `walk_class` lists them in 134 rows, inherited fields once per subclass, so the rig counts each FProperty once). **Red, build 3594:** both getters return the slot's object for every property — the struct getter hands back a UClass, the PropertyClass getter a UScriptStruct — 0 / 81 right. **Green, build 3597:** 81 / 81 — the own-kind getter returns the slot's struct or class, the other answers 0. **EVERSPACE 2** (UE 5.6, main menu, 79,829 objects, build 3597, fresh inject): 826 classes, 7,506 distinct properties, the Blueprint metaclasses included — 6 `UserDefinedStruct`, 125 `BlueprintGeneratedClass`, 1,189 `WidgetBlueprintGeneratedClass`. The own-kind getter is right on 7,506 / 7,506; the other-kind getter answers 0 on 7,499 — the 7 are `[FRIEREN-PROBE-OVERRUN]`, a probe that reads past the end of the FProperty, not the kind check — fixed in build 3598 (7,506 / 7,506). Five DQ XI S Blueprint object properties (`BP_UMGManager_C.HudLoading002Ref`, four `WBP_*_modern_C` members) carry no class in 3594, 3595 and 3596 alike — not caused by this change, not investigated. ✅ **Follow-up, build 3597 (review of build 3596, INFO — a regression of build 3595 on give-up sessions):** the kind checks walked the metaclass's SuperStruct chain even for the engine's own metaclasses, and a give-up session never measures USTRUCT_SUPER (its 0x40 default is wrong on 4.11–4.21), so every UserDefinedStruct, Blueprint class and UserDefinedEnum was dropped there where the name-only check kept them. The engine's metaclass names (`ScriptStruct` / `UserDefinedStruct`, `Aura::IsClassLikeMeta`, `Aura::IsListedEnumClass`) now pass first and the chain is walked only for any other subclass; red first: `dll_core_test` KINDNAMES (all three metaclasses with no SuperStruct). ✅ **Second follow-up, build 3597 (review of build 3596):** a sixth reader the row missed — `WalkFunctions`' UProperty-mode parameters named, and WALKED as a struct, any named object in the slot — takes only a struct / a class now; red first: `dll_core_test` UFUNCWALK (a decoy in the slot typed both params `Decoy`), whose Actor / HitResult got their real metaclasses. **Live, build 3597** (`pool_walk_diff.py`, 3596 against 3597, fresh inject each): UE423_Flying, UE427_3rdPerson, DumperTest51, DumperTest58, NEKOPALIVE — identical; DQ XI S 0 changed of 178,444 fields (one widget-Blueprint field present in one capture only); function parameters (every `walk_functions` param of every class) 0 changed on UE 4.23 (11,207) and DQ XI S (56,833). *Original row:* The struct-slot probes (`Ubel` `ReadSubclassTypeName`, `CorrectSubclassOffsets`, `WalkInstance`'s StructProperty probe; `Wirbel` `StructInner`; `Frieren` `UE5_GetFieldStructClass`) accept any object with a printable name. On a DQ XI S-style shifted layout the default slot is a Blueprint-owned property's `PostConstructLinkNext` — a NAMED UProperty — which passes. Check that the candidate's class chain reaches `ScriptStruct`. | `dll/src/Ubel.cpp`, `dll/src/Wirbel.cpp`, `dll/src/Frieren.cpp` |
 | `[STRUCTCACHE-ENUM-UNCHECKED]` | ✅ **FIXED 2026-09-28, build 3595** — unit-proven; no fixture puts a non-enum pointer in the slot (was LOW; review `wf_63e981ac-5e4` (2026-09-27), S4) | ✅ **FIXED**: the three readers that keep a ByteProperty's Enum pointer — `GetCachedStructFields`, the array reader and `WalkInstance` — share one `IsUEnumObject` check (class `Enum` / `UserDefinedEnum`), so the struct-field cache now keeps the pointer only when it is a UEnum. Red first: `dll_core_test` STRUCTENUM (a struct with a ByteProperty whose Enum slot holds a NAMED non-enum object: cached before, 0 now; a real UEnum still cached). *Original row:* `GetCachedStructFields` stores a ByteProperty's enum pointer without the class check its `WalkInstance` twin applies, and the pointer is cached for the session and dereferenced later. Apply the same `Enum` / `UserDefinedEnum` check before caching. | `dll/src/Ubel.cpp` |
 | `[ENUMSLOT-ANY-NAME]` | ✅ **FIXED 2026-09-28, build 3596; no-regression check PASSED on six fixtures** (was LOW + INFO; review of builds 3594–3595, pre-existing); follow-up build 3597; ✅ DataTable live check PASS 2026-09-28 (build 3597; red on 3595) | ✅ **FIXED**: `Ubel::ReadPropertyEnum(prop, typeName)` reads the slot the TYPE has (FByteProperty::Enum or FEnumProperty::Enum, one pointer apart) and returns the UEnum* only if `Ubel::IsUEnumObject` says it is one — now a class-chain test reaching `Enum`, like the struct and class checks, so a UEnum SUBCLASS passes. Every enum-slot reader goes through it: `WalkClassEx`'s field and container-inner enum names (which the SDK and USMAP exports write), the struct-field cache, the array reader, `WalkInstance`, the DataTable row reader and Aura's property-search preview. The DataTable reader also read a TEnumAsByte column's enum at FENUMPROP_ENUM — one pointer past the end of an FByteProperty — and now reads the type's own slot. Red first: `dll_core_test` ENUMSLOT (an EnumProperty, a ByteProperty and an array inner whose slot holds a NAMED Actor instance were named `Decoy`; the struct cache kept that EnumProperty pointer and dropped a ByteProperty's enum whose class is a UEnum subclass). CONTAINERENUM's fixture gave its UEnums no class and now gives them `Enum`. ⚠ The DataTable and Aura call sites are not covered by a unit test. ✅ **DataTable live check PASS 2026-09-28, build 3597:** `FDumperTestTableRow` got the TEnumAsByte column it lacked, `RowLane` (`TEnumAsByte<EDumperTestLane>`: `Lane_Left` / `Lane_Center` / `Lane_Right` = 11 / 33 / 22 by `Index` mod 3, never `Lane_None`), and DumperTest 5.4 was repackaged in all three configs, PDBs included. `tools/verify/enumslot_datatable.py` reads `Table_Small` (8 rows) and `Table_Big`'s first page (64 of 100) and checks each cell's byte and its `enum_name`. **Red, build 3595, Shipping, fresh inject:** 72 / 72 bytes right, 0 / 72 named (no `enum_name` at all). **Green, build 3597, Shipping, fresh inject:** 72 / 72 named right; Development the same as a second opinion. There the pool spells the `Index` column `index` (an FName keeps the casing registered first), so the rig keys columns case-insensitively. **No-regression check PASSED, build 3596** (`tools/verify/pool_walk_diff.py`, every class of every fixture, 3595 against 3596, fresh inject each): UE423_Flying 39,071 fields, UE427_3rdPerson 48,057, DumperTest51 56,387, DumperTest58 92,249, NEKOPALIVE 30,824, DQ XI S 178,445 — **0 changed**, enum names and MetaClass included. No fixture puts a named non-enum in the slot, so the rejection itself is proven by the unit test only. ✅ **Follow-up, build 3597 (review of build 3596, INFO — a regression of build 3595 on give-up sessions):** the kind checks walked the metaclass's SuperStruct chain even for the engine's own metaclasses, and a give-up session never measures USTRUCT_SUPER (its 0x40 default is wrong on 4.11–4.21), so every UserDefinedStruct, Blueprint class and UserDefinedEnum was dropped there where the name-only check kept them. The engine's metaclass names (`ScriptStruct` / `UserDefinedStruct`, `Aura::IsClassLikeMeta`, `Aura::IsListedEnumClass`) now pass first and the chain is walked only for any other subclass; red first: `dll_core_test` KINDNAMES (all three metaclasses with no SuperStruct). *Original finding:* `[STRUCTPROBE-ANY-NAME]` gave the struct and class slots a kind check, and the enum slots kept the old one: the enum-name readers took any printable name, the EnumProperty pointer readers kept any pointer, and `IsUEnumObject` matched the class names `Enum` / `UserDefinedEnum` exactly. | `dll/src/Ubel.cpp`, `dll/src/Aura.cpp` |
-| `[FLY-EXPORT-EXPERIMENTAL]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW, decided by the maintainer) | ✅ **FIXED IN SOURCE 2026-09-26**: `AddActionsToCeAsync` and `SaveCtAsync` add the Fly records only while `ExperimentalEnabled`; the Add status names the groups it actually sent. `FlyExportFollowsExperimentalTests` drives both commands with the switch off and on (red with it off). ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping; the saved file read as text, not in CE, which another session was using): Teleport → **Save .CT…** with Experimental features **on** wrote 34 `<CheatEntry>` (372,936 bytes) with a `--- Fly (4 rows) ---` group (Fly WASD / Numpad / Arrows, Fly Noclip) above Movement (4), Teleport (17) and Time (2); with the System tab's checkbox **off**, the same command wrote 29 entries (286,076 bytes) with **no** Fly group and no Fly description, the other groups unchanged. Status *"Saved: fly_exp_off.CT"*. The switch was turned back on afterwards. **DECIDED by the maintainer, 2026-09-26: the Fly records follow the Experimental features switch** (Add action records and Save .CT export them only while it is ON). **Raised by the Wiki re-translation check, batch 3, 2026-09-26 (confirmed against the source).** Add action records and Save .CT always export the 4 Fly records, even with Experimental features OFF, when the Fly card itself is hidden. Intended (a CE table is a separate surface) or not (it should follow the switch)? Not changed. | `ui/UE5DumpUI/ViewModels/TeleportViewModel.cs` |
 | `[LIVEFUNCS-CAP-ADVICE]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ⚠ **Superseded 2026-10-06** (`a1eab927`, `[EXTPR-539-540-2026-10-02]`): the fetch limit is now a slider (64 to 32768, default 512), and the warning offers a higher Fetch limit when the limit cut the page; the text quoted below is the 2026-09-26 state. ✅ **FIXED IN SOURCE 2026-09-26**: the warning now ends *"Only a shorter recording window brings it back; the filter narrows only the rows already fetched."* (still a C# literal, per `[VM-INLINE-STRINGS]`); `LiveFuncsCapAdviceTests` pins it (red on the old text). **Raised by the Wiki's ja-JP translation pass, 2026-09-26 (confirmed against the source).** Live Funcs' capped-fetch warning (diff mode) ends *"Narrow the window or use the filter before trusting the top rows."* The fetch keeps only the top `FetchLimit` (300) functions by count and the filter runs over those rows (`ApplyFilter` over `_allEntries`), so it cannot bring back a function below the cut; only a shorter recording window can. An existing VM literal: under `[VM-INLINE-STRINGS]` it stays in C#, only the wording is the defect. | `ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs` |
 | `[WIKI-REVIEW-TEXT]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: all seven. Tests extended: the AND-filter test now covers Live Walker's function filter and the Console filter; the gravity test bans `pre-5.4` / `5.4+` case-insensitively and reads `IDumpService.cs` too; the Live Walker test pins the whole-query floor with a behaviour case (`"a b"` is active); Batch Props must name `n/a`; the IP category tip is derived from `PropertyScoringTable.DisplayName`; the Add status must not mention Fly when none was sent (all red on the old text). **Raised by the adversarial review of the Wiki-check fixes, 2026-09-26** (workflow `wf_602420ac-a7a`: 3 area reviewers, one skeptic per finding; 9 of 13 findings skeptic-verified, the other 4 checked by hand). Text the fixes left wrong or half-fixed: (1) Add action records' status still says *movement/time/fly = on/off* when no Fly record was sent; (2) seven `pre-5.4` comments beside the UE5.3+ edits (MovementScriptGenerator, TeleportModels, TeleportViewModel ×4, IDumpService), which the B3 test missed because it looked only for `UE5.4+`; (3) `str.Tip.LiveWalker.FuncFilter` and `str.Tip.Con.Filter` still say *substring* though both AND their terms; (4) Live Walker's search tooltip puts the 2-character floor on each keyword, but `MarkSearchMatches` checks the whole query; (5) `str.Tip.IF.BatchProps` says native functions show 0 — the batch runs the same analysis as Props, and an unanalysed row shows `n/a`; (6) `str.Tip.IP.Category` omits Timing; (7) `Solide.h` still counts *five names* after `UInt8Property` left. | `ui/UE5DumpUI/Resources/Strings/en.axaml`, `ui/UE5DumpUI/ViewModels/TeleportViewModel.cs`, `dll/src/Solide.h` |
 | `[WIKI-REVIEW-TESTS]` | ✅ **FIXED IN SOURCE 2026-09-26** (was LOW) | ✅ **FIXED IN SOURCE 2026-09-26**: the Add-actions tooltip is checked against the records `AddActionsToCeCommand` actually sends (a recording bridge, Experimental on), the .CT tooltip against the four builders `SaveCtAsync` uses; the timeout default comes from `new UiOptionsSettings().ValueSearch.ScanTimeoutSeconds`, and the VM initializer is pinned equal to it. Both were green before and after: they close a gap, not a defect in the text. **Raised by the adversarial review of the Wiki-check fixes, 2026-09-26** (workflow `wf_602420ac-a7a`: 3 area reviewers, one skeptic per finding; 9 of 13 findings skeptic-verified, the other 4 checked by hand). Two tests derive from a proxy: the Add-actions tooltip's counts come from the .CT builders, which `AddActionsToCeAsync` does not use (its lists are hand-written); and the timeout test reads the VM field initializer, while a fresh install's value comes from `ValueSearchUiOptions.ScanTimeoutSeconds`. **Fix:** count what the command actually sends; derive the default from the settings and pin the VM initializer to it. | `ui/UE5DumpUI.Tests/WikiTooltipAccuracyB3Tests.cs`, `ui/UE5DumpUI.Tests/WikiTooltipAccuracyTests.cs` |
@@ -10567,34 +9239,7 @@ reproduce" a real defect. Caught by a unit test pinning the reset literal per ca
 reports **11**, because it counts `Apply*State` SYMBOLS and `ApplyLaneState` drives both
 time lanes. As CARDS it is twelve.
 
-#### ✅ ROUND 2 — 2026-09-10, builds 3527 → 3534. Rows 4, 6, 7, 8: ALL EIGHT DEFECT ROWS CLOSED
-
-| # | row | commit | what shipped |
-|---|---|---|---|
-| **4** | `[POSEATTACH]` 🟠 | `242d48c4` | `parent_relative` on the pose reply — the flag `teleport-spec.md:218-220` asked for in 2026-07 |
-| **7** | `[TPREL-ZEROPOSE]` 🟡 | `5058e971` | a failed landing re-read publishes `landing_unknown`, not `(0,0,0)` |
-| **8** | `[SOLIDE-REFUSAL]` 🟡 | `5058e971` | a refused RE-ARM returns its reason; the erase stays gated on `newlyAdded` |
-| **6** | `[B21-DOCROW]` 🟡 | `5058e971` | the tracker row reads "1 of 3 shipped", with the two live holes named |
-
-⭐ **The two teleport fixes share one rule and it is this assessment's own thesis: never
-publish the WISH as the FACT.** `[TPREL-ZEROPOSE]` deliberately does **not** fall back to
-the requested destination when the landing cannot be read — that would report where we
-*told* the pawn to go as where it *is*, which is the exact shape the whole sweep was about.
-It publishes nothing and says so.
-
-⚠ **`[POSEATTACH]` is a pipe-only flag, and the CE mailbox is knowingly left short.** Adding
-a third value to the mailbox's `[176] source (0=raw, 1=invoke)` byte would change the
-MEANING of a contract field — the change `Mimic.h` states the surface hash cannot see. The
-CE path therefore still cannot tell a degraded parent-relative pose from a healthy one.
-**That is a recorded gap, not an oversight**, and it is the natural next row if the CE
-trainer path matters.
-
-⚠ **One publish run reported `FAILED` while still producing binaries**; the re-run reported
-SUCCESS, and the artifacts were then checked by **size and hash by hand** rather than
-trusting either summary. `UE5DumpUI.exe` 54.8 MB `527F06B6` · `UE5Dumper.dll` 2.8 MB
-`3F48A565` · `UE5CEDumper.CT` 44.8 KB `C1239550`, build 3534. Most likely a file lock from
-the prior run — recorded because a build summary that disagrees with its own output is
-worth not forgetting.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[A4-ASSESS-2026-09-09] fix pass ROUND 2 (rows 4, 6, 7, 8)`. Grep the tag; tags resolve across files.
 
 #### ✅ LIVE VERIFICATION 2026-09-10 — DumperTest **Shipping**, DLL + UI + real Cheat Engine
 
@@ -10917,81 +9562,7 @@ wrong.
   reading — the narrowing would silently stop firing and every untouched slot would read stale
   again. No gate pins it.
 
-## ✅ The SIXTH D4b site, and two more found with it `[D4B-SITE6-2026-09-09]`
-
-⛔ **`[D4B-DELEGATEPAD]`'s enumeration said "five readers" and it was wrong twice.** The first
-correction was the CE exporter (`[D4B-TAIL]`, DLL-only enumeration). This is the second, and it is
-inside the DLL, in a file the sweep had already edited three times.
-
-### `Ubel::ReadDelegateArrayElements` carried ALL THREE of this sweep's shapes at once
-
-`TArray<FScriptDelegate>` — and an array's inner `FDelegateProperty` stores the **standalone**
-`TScriptDelegate<FNotThreadSafeDelegateMode>`, which **is** padded on a checked build, unlike a
-multicast's invocation-list elements. `Grimoire.h`'s ⚠ about two types spelled the same way was
-written for exactly this function, and the function was not checked against it.
-
-| shape | what it did |
-|---|---|
-| ignored parameter | `int32_t /*elemSize*/` — while **both callers already passed `fv.arrayElemSize`**, the engine's own answer. Identical to the defect fixed in `ReadMulticastDelegateArrayElements` hours earlier. |
-| baked stride | computed `8 + sizeof(FName)` locally = the **unpadded** size, so on a checked build element [0] read correctly and every index ≥ 1 drifted 8 bytes further — audit A1's fingerprint. |
-| dropped pair | both `Macht::ReadSafe` returns discarded → a faulted read published the affirmative `"(unbound)"`. The third copy of that pair in this file. |
-
-### ⭐ And the fixture immediately surfaced a SEVENTH
-
-With `Arr_Delegates` in place, element [0] rendered **`(stale)::None`** — an affirmative claim that
-a target *was* bound and has since been collected, over a slot nothing had ever touched. An
-untouched `FScriptDelegate` has `Object = {0,0}` and `FunctionName = NAME_None`, and `ReadFName`
-resolves index 0 to the **string `"None"`** — which is not empty, so the `!funcName.empty()` arm
-claimed staleness. The multicast element loop has an explicit unbound branch; this one did not.
-
-### The fixture — `Arr_Delegates`
-
-`ReadDelegateArrayElements` had **no host at all** on any fixture. `TArray<FDumperTestUnicastSignature>`
-with **[1] bound and [0] empty**, for the reason `Arr_MulticastDelegates` documents: with both
-elements identical, a right stride and a wrong one print the same string and the row cannot fail.
-
-### Verified live, on both configurations and with a real red-before
-
-| | `Arr_Delegates` elem_size | `[0]` | `[1]` |
-|---|---|---|---|
-| **Development** | **24** | `(unbound)` | `DumperTestActor_0::D4b_OnPingProbe` |
-| **Shipping** (control) | **16** | `(unbound)` | identical |
-
-⭐ **The red-before is a live mutation, not an argument.** Reverting the stride to the pre-fix
-unpadded value, rebuilding and re-running on Development gives
-
-```
-Arr_Deleg  : elem_size=24  ['(unbound)', '(unbound)']
-  - Arr_Delegates[1] does not name D4b_OnPingProbe -- got '(unbound)'.
-```
-
-The binding vanishes because [1] is read from inside [0]. `Ubel.cpp` restored byte-identically and
-rebuilt afterwards, and the fixed binary re-run green.
-
-⚠ The `(stale)::None` repair got the same treatment for free: it was *observed* wrong on the live
-fixture first (`['(stale)::None', ...]`) and green after — red-before on the real thing rather than
-on a double.
-
-### ✅ Everything re-run against HEAD's binary, which also un-stales three rows
-
-The reconciliation flagged that D3's live evidence was taken on a build the sweep then rewrote
-twice, and never re-run. All four rigs now ran against the same current DLL:
-
-| rig | result |
-|---|---|
-| `d4b_delegate_pad` | ✅ PASS on Development (pad 8) **and** Shipping (pad 0), 5 shapes each |
-| `d5_lazyguid_unread` | ✅ PASS |
-| `d3_delegate_array_unread` | ✅ PASS — its **first run since the reader was rewritten**, and its baseline now reads `['(0 bindings)', '(1 binding) [...]']` at `elem_size=24`, so it is a D3b check as well as a D3 one |
-| `d1_collision_refusal` | ✅ PASS, both arms still reporting DIFFERENT causes (261 ms → dispatcher refused; 1151 ms → thread unresponsive) |
-
-### ⬜ Still open
-
-* ~~**`Ubel::TMap` geometry** — not verifiable~~ ✅ **CLOSED** by
-  `[TMAPGEOM-2026-09-09]` above: the partial-read condition WAS manufacturable, with a page
-  edge in our own process rather than inside a game.
-* The `(stale)` branch **elsewhere**. Only `ReadDelegateArrayElements` was repaired; the
-  single-field `DelegateProperty` handler and the multicast element loop have their own
-  `funcName.empty()` tests and were not re-examined for the `"None"` case.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/todo-closed-2026-11-20-build-3776.md](archive/todo-closed-2026-11-20-build-3776.md): `[D4B-SITE6-2026-09-09]`. Grep the tag; tags resolve across files.
 
 ## ✅ UE4 — the UProperty path, finally exercised `[D4B-UE4-2026-09-09]`
 
