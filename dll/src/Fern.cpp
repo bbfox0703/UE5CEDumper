@@ -7516,6 +7516,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["running"]     = running;
             data["phase"]       = phase;
             data["status_text"] = SP::GetStatusText();
+            // [MCP-READY-DURING-APPLY] additive: an init or an apply_rescan is settling the pool outside a scan job --
+            // what get_pointers counts then may be a candidate's, not the session's.
+            data["applying"] = !running && g_initInProgress.load(std::memory_order_acquire);
 
             // When complete, include full pointer snapshot — same shape as
             // get_pointers. Single helper guarantees the two paths can't drift.

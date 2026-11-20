@@ -270,6 +270,8 @@ disconnects. A second `watch` of the same address on the same connection replace
 - The job keeps running when the client that started it disconnects, and another client's death no longer cancels
   it; only Stop / shutdown does.
 - `scan_status` sets `scanned: true` only when the scan initialized the engine; a scan Stop cancelled is not scanned.
+  It adds `applying` (additive, [MCP-READY-DURING-APPLY]): true while an init or an `apply_rescan` settles the pool
+  outside a scan job, when `get_pointers`' object count may be a candidate's. The MCP server reads it as still running.
 - `rescan` refuses while a scan or an init is still running, since what it looks for is decided from the pointers that
   scan has not finished publishing.
 - `rescan_status` adds `cancelled` (additive) once the run is over: true when Stop cut the sweep short, so its
