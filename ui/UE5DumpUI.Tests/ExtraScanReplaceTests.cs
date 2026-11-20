@@ -32,11 +32,13 @@ public class ExtraScanReplaceTests
     private static PointerPanelViewModel NewVm() => new(new StubPlatform());
 
     // A supported engine whose GObjects, GNames and GWorld were all found by AOB.
-    private static EngineState Found(int objects, string gnames = "0x7FF600002000", int dll = Constants.RescanReplaceMinDllBuild)
+    private static EngineState Found(int objects, string gnames = "0x7FF600002000", int dll = Constants.RescanReplaceMinDllBuild,
+                                     string gobjectsMethod = "aob")
         => new()
         {
             UEVersion = 503,
             GObjectsAddr = "0x7FF600001000",
+            GObjectsMethod = gobjectsMethod,
             GNamesAddr = gnames,
             GWorldAddr = "0x7FF600003000",
             GWorldMethod = "aob",
@@ -177,6 +179,17 @@ public class ExtraScanReplaceTests
                                        "str.Pointers.Scan.NoneQualified", "str.Pointers.Scan.NotApplied",
                                        "str.Pointers.Scan.Found", "str.Pointers.Scan.FoundGObjects", "str.Pointers.Scan.FoundGWorld" })
             Assert.False(string.IsNullOrEmpty(Res.Get(key)), key);
+    }
+
+    [Fact]
+    public void TheStaticStructRecovery_HasALabel()
+    {
+        // [INIT-RECOVERY-SCANADDR] UE5_Init's static-struct recovery publishes "static_struct_recovery"; the panel showed
+        // the raw word.
+        var vm = NewVm();
+        vm.Update(Found(5000, gobjectsMethod: "static_struct_recovery"));
+        Assert.Equal(Res.Get("str.Pointers.Method.StaticStructRecovery"), vm.GObjectsMethodLabel);
+        Assert.NotEqual("static_struct_recovery", vm.GObjectsMethodLabel);
     }
 
     [Fact]

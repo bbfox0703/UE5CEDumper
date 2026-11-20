@@ -160,6 +160,18 @@ public sealed class RescanReinitSourceTests
     }
 
     [Fact]
+    public void InitsRecoveries_ClearTheDecoysScanAddress()
+    {
+        // [INIT-RECOVERY-SCANADDR] A recovered array is no AOB's: the scan address is the decoy's code site, and the
+        // Pointers panel's Asm / SYM buttons would point at it. apply_rescan's replace clears it too.
+        var init = Between(DllSrc("Frieren.cpp"), "bool UE5_Init() {", "\n}\n");
+        InOrder(init, "g_cachedGObjectsMethod = \"static_struct_recovery\";", "g_cachedGObjectsScanAddr = 0;",
+                "Flamme::UpdateGObjectsMethod(g_cachedPeHash, \"static_struct_recovery\");",
+                "g_cachedGObjectsMethod = \"data_scan_recovery\";", "g_cachedGObjectsScanAddr = 0;",
+                "Flamme::UpdateGObjectsMethod(g_cachedPeHash, \"data_scan_recovery\");");
+    }
+
+    [Fact]
     public void AnEnumTableParsedAcrossAReset_IsNotCached()
     {
         // ResetUEnumNamesDetection rewrites the layout a reader may be parsing with; s_enumCache is never erased.
