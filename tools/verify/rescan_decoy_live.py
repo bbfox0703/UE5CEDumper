@@ -65,7 +65,8 @@ def main() -> int:
             failures.append(name)
 
     logdir = LOGS / a.process
-    init_text = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in sorted(logdir.glob("init-*.log")))
+    # This process's init only: process start rotates init-0.log, and the older generations hold earlier runs' decoys.
+    init_text = (logdir / "init-0.log").read_text(encoding="utf-8", errors="replace")
     staged = re.findall(r"STAGING: init publishes a decoy at (0x[0-9A-Fa-f]+) built from the real GObjects (0x[0-9A-Fa-f]+)",
                         init_text)
     say(f"# {time.strftime('%Y-%m-%d %H:%M:%S')} {a.process}")
