@@ -33,6 +33,9 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const int NamesPage = 20000;
     /// <summary>[LIVEFUNCS-STEP2] Slots a snapshot page asks for; the DLL also ends a page at about 1 MB of JSON.</summary>
     internal const int SnapPage = 4096;
+    /// <summary>[LIVEFUNCS-UI-SNAP-MEMORY] What a load may hold of decoded parameter values (<see cref="SnapCopyKeeper"/>);
+    /// a test narrows it.</summary>
+    internal long SnapDecodedBudgetBytes { get; set; } = (long)Constants.SnapDecodedBudgetMb << 20;
     /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
     /// page), and nothing collects them during a load of hundreds of pages, so the working set climbs with every page.
     /// A collection at least every this many pages -- about 21 MB of records -- keeps them to ~85 MB; it takes
@@ -472,7 +475,9 @@ public partial class CallTraceViewModel : ViewModelBase
         // or a stale answer drops the load, like the records' pages.
         List<SnapArm>? arms = null;
         var rings = new List<SnapRingInfo>();
-        var slots = new List<SnapSlot>();
+        // [LIVEFUNCS-UI-SNAP-MEMORY] Each page's copies go through the keeper as they arrive, so a page's decoded trees
+        // are left to the next collection and only what is new stays.
+        var keeper = new SnapCopyKeeper(SnapDecodedBudgetBytes);
         ulong orphans = 0;
         // [LIVEFUNCS-STEP3] A Start that chose stacks alone allocates the buffer with no parameter ring and no arm:
         // there is nothing to ask the layouts of.
@@ -496,7 +501,7 @@ public partial class CallTraceViewModel : ViewModelBase
                     ct.ThrowIfCancellationRequested();
                     var sp = await _dump.PeSnapGetAsync(info.Gen, ring.Ring, slotFrom, SnapPage, ct);
                     if (sp.Stale || sp.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
-                    slots.AddRange(sp.Items);
+                    foreach (var slot in sp.Items) keeper.Add(slot);
                     orphans += sp.Orphans;
                     if (sp.Next <= slotFrom) break;   // refused or nothing more: what was read stands
                     slotFrom = sp.Next;
@@ -540,10 +545,14 @@ public partial class CallTraceViewModel : ViewModelBase
         var trace = await Task.Run(() =>
         {
             var built = CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs);
-            if (arms != null) built.Snapshots = CallTraceSnapshots.Join(built, arms, rings, slots, orphans);
+            if (arms != null) built.Snapshots = CallTraceSnapshots.Join(built, arms, rings, keeper.Slots, orphans);
             if (stackSlots != null) built.Stacks = CallTraceStacks.Join(built, stackSlots, stackOrphans, info.Stack);
             return built;
         });
+        if (arms != null)
+            _log.Info($"CallTrace: parameter copies -- {keeper.Slots.Count:N0} kept; decoded values about " +
+                      $"{keeper.DecodedBytes >> 20:N0} MB after sharing (budget {keeper.DecodedBudgetBytes >> 20:N0} MB), " +
+                      $"{keeper.Dropped:N0} of them now raw bytes only; raw copies {keeper.RawBytes >> 20:N0} MB after sharing");
         NoteLoadPeak();   // the window and the columns at once: the load's structural peak
         return (trace, null, funcs.Count, objs.Count);
     }
@@ -814,6 +823,8 @@ public partial class CallTraceViewModel : ViewModelBase
             notes.Add(Say("str.CT.Param.RawOnly", arm?.State ?? "", arm?.Why ?? ""));
             return (Array.Empty<ParamRow>(), notes.Distinct().ToList(), hex.ToString(), segments);
         }
+        if (entry?.ValuesDropped == true || after?.ValuesDropped == true)
+            notes.Add(Say("str.CT.Param.ValuesDropped", Constants.SnapDecodedBudgetMb));
         bool hasOutputs = layout.Fields.Any(p => p.Kind is "out" or "in_out" or "return");
         if (after == null && hasOutputs && t.Returned[i]) notes.Add(StringLookup("str.CT.Param.NoAfter"));
         var rows = new List<ParamRow>();

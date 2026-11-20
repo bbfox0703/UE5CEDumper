@@ -248,17 +248,22 @@ public class PointerPanelVersionGateTests
     // DLL accepts every version from its support floor up. The list stopped at 4.18, so a 4.11-4.17
     // title had nothing to pick. The floor is read from the DLL's own header, never typed here.
 
-    private static int DllSupportFloor()
+    private static int GrimoireConstant(string name)
     {
         var d = new DirectoryInfo(AppContext.BaseDirectory);
         while (d != null && !File.Exists(Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
         string grimoire = File.ReadAllText(Path.Combine(
             d?.FullName ?? throw new DirectoryNotFoundException("repo root"), "dll", "src", "Grimoire.h"));
         var m = System.Text.RegularExpressions.Regex.Match(grimoire,
-            @"constexpr\s+uint32_t\s+MIN_SUPPORTED_UE_VERSION\s*=\s*(\d+)\s*;");
-        Assert.True(m.Success, "MIN_SUPPORTED_UE_VERSION not found in Grimoire.h");
+            @"constexpr\s+uint32_t\s+" + name + @"\s*=\s*(\d+)\s*;");
+        Assert.True(m.Success, $"{name} not found in Grimoire.h");
         return int.Parse(m.Groups[1].Value);
     }
+
+    private static int DllSupportFloor() => GrimoireConstant("MIN_SUPPORTED_UE_VERSION");
+
+    /// <summary>The newest UE5 version the DLL reads and accepts as an override, from its own header.</summary>
+    private static int DllUe5Ceiling() => 500 + GrimoireConstant("UE_MAX_UE5_MINOR");
 
     private static List<int> OverrideVersions()
         => PointerPanelViewModel.UeVersionOverrideOptions.Where(o => o != "Auto")
@@ -309,6 +314,17 @@ public class PointerPanelVersionGateTests
         int floor = DllSupportFloor();
         var ue4 = OverrideVersions().Where(v => v < 500).ToList();
         Assert.Equal(Enumerable.Range(floor, 427 - floor + 1), ue4);
+    }
+
+    /// <summary>[VND9-05] The list ends at the newest UE5 version the DLL reads and accepts, and offers every UE5 minor
+    /// up to it. The ceiling is read from the DLL's header, so the next one cannot leave the list behind again.</summary>
+    [Fact]
+    public void OverrideList_EndsAtTheDllsNewestEngineWithEveryUe5Minor()
+    {
+        int ceiling = DllUe5Ceiling();
+        var versions = OverrideVersions();
+        Assert.Equal(ceiling, versions[^1]);
+        for (int v = 500; v <= ceiling; v++) Assert.Contains(v, versions);
     }
 
     [Fact]

@@ -147,8 +147,9 @@
 // controlled A/B where the engine is the only variable.
 //
 // UE 5.8 — THE ONE LAYOUT CHANGE THAT REACHES THIS FILE. 5.8 moved `FUObjectArray::ObjObjects`
-// from +0x10 to +0x00 (cache-locality reorder; `PreAllocatedObjects` went to the end), so on 5.8
-// the FUObjectArray BASE and ObjObjects are the SAME address. Consequence for pattern authoring,
+// from +0x10 to +0x00 and reordered it (cache-locality reorder: NumElements went from +0x14 to
+// +0x08, `PreAllocatedObjects` to the end), so on 5.8 the FUObjectArray BASE and ObjObjects are
+// the SAME address. Consequence for pattern authoring,
 // and only this: the GObjects patterns that carry a version-fixed adjustment encode PRE-5.8
 // arithmetic. THE THREE FAMILIES DO NOT TARGET THE SAME THING, and getting it
 // backwards is how a new pattern gets authored with the wrong adjustment:
@@ -162,12 +163,17 @@
 //   * `+0x0C` on G427_4 — anchor `ObjLastNonGCIndex` at base+0x04, target **ObjObjects** at
 //     base+0x10. Also not base-producing.
 //
-// The 5.8 conclusion differs between them. `-0x10` and `+0x0C` do overshoot on 5.8:
-// both cross the FUObjectArray/ObjObjects boundary that 5.8 moved. `-0x14` does NOT — its anchor
-// and its target are both INSIDE ObjObjects, so the reorder shifts them together and the
-// subtraction still lands on ObjObjects. Where the arithmetic does break it is a
-// MISS, not a wrong answer (ValidateGObjects finds no sane Num/Max at base-0x10), but it means
-// a pattern mined ON 5.8 should anchor the BASE — which is what the 5.8 oracle actually lands on
+// On 5.8 all three overshoot. `-0x10` and `+0x0C` cross the FUObjectArray/ObjObjects boundary
+// that 5.8 moved; `-0x14` stays inside ObjObjects, but its anchor moved within it. What each
+// resolves on a 5.8 array through TryResolveMatch (the adjusted candidate first, then the RIP
+// target itself) is pinned by dll_core_test's UE58-ADJ10 block:
+//   * `-0x10` — base-0x10 is refused (relaxed D's `ue58Early`, [UE58-ADJ10-WRONG-ANCHOR]
+//     2026-11-19), so the target, the base itself, validates: the right answer.
+//   * `-0x14` — base-0x0C misses; the target, NumElements at base+0x08, misses on a
+//     default-config array but validates on a preallocated one: a WRONG answer, open as
+//     [UE58-ADJ14-PREALLOC].
+//   * `+0x0C` — base+0x30 and the target, ObjLastNonGCIndex at base+0x24, both miss.
+// So a pattern mined ON 5.8 should anchor the BASE — which is what the 5.8 oracle actually lands on
 // (GOBJ_ES53_1, adjustment 0). Same reason `sweep.sh`'s 5.8 row carries ONE truth value instead
 // of the usual `base | base+0x10` pair: the alias would score a hit on ObjObjects.NumChunks as
 // correct. Everything else 5.8 changed is NOT this file's business — the FUObjectArray field

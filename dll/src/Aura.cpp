@@ -534,6 +534,10 @@ static const LayoutPreset s_chunkedPresets[] = {
     { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
     { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
     { "UE5.8",       { 0x00, 0x0C, 0x08, 0x14, 0x10 } },  // 5.8 dev: FUObjectArray fields reordered for cache locality, PreAllocatedObjects moved to end
+    // [VND10-A1] Phantom Blade Zero (UE 5.7.4): MaxChunks, NumChunks, Objects, NumElements, MaxElements. Appended last,
+    // so a stock array an earlier row takes never reaches it; this table also runs on base-anchored arrays, and
+    // ValidateChunkedLayout refuses it on each stock shape (dll_core_test's VND10-A1-01 controls).
+    { "PBZ",         { 0x08, 0x14, 0x10, 0x00, 0x04 } },
 };
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
@@ -561,6 +565,9 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
     // Appended after the rows above for the same first-match reason; on a stock UE5-Extended array +0x04 is
     // ObjLastNonGCIndex, which fails ValidateChunkedLayout's maxChunks bound, so it cannot steal one.
     { "UE5.7-Mistfall",    { 0x10, 0x20, 0x24, 0x04, 0x08 } },
+    // [VND10-A1] The s_chunkedPresets "PBZ" row, from the FUObjectArray base. Appended last for the same first-match
+    // reason; ValidateChunkedLayout refuses it on each stock shape (dll_core_test's VND10-A1-01 controls).
+    { "PBZ-Base",          { 0x18, 0x24, 0x20, 0x10, 0x14 } },
 };
 static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
 
@@ -1605,6 +1612,13 @@ void Init(uintptr_t gobjectsAddr) {
              static_cast<unsigned long long>(gobjectsAddr), GetCount(), s_itemSize);
 }
 
+void InitRecoveredStaticArray(uintptr_t base, int itemStride, int itemObjOffset, bool ue58, bool licensee) {
+    if (ue58 || licensee)
+        Init(base);
+    else
+        InitWithExtendedLayout(base, itemObjOffset == 0 ? itemStride : 0);
+}
+
 void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize) {
     s_arrayAddr = gobjectsAddr;
     // UE5 chunked-extended: { Objects@+0x10, MaxElements@+0x20, NumElements@+0x24,
@@ -1652,6 +1666,10 @@ int GetItemSize() {
 
 bool IsFlat() {
     return s_isFlat;
+}
+
+int GetObjectsOffset() {
+    return s_layout.objectsOffset;
 }
 
 // Within-item byte offset of the UObject* for the two DIRECT layouts (0x00 classic,
@@ -7034,10 +7052,11 @@ static const char* ScopeForOpcode(uint8_t op) {
 // (FirstPropertyToInit / Outer / Class are heap objects), so the first offset
 // in range where every sampled UFunction holds a LooksLikeCodePointer IS Func.
 // Detected once on first Path-2 use; 0 = not found → native analysis disabled.
+// The detection and ResetUFunctionFuncDetection share one lock, so a reset never interleaves with a latch.
+static std::mutex s_funcDetectMutex;
 static void EnsureUFunctionFuncOffset() {
     if (DynOff::bUFunctionFuncDetected.load(std::memory_order_acquire)) return;
-    static std::mutex s_detectMutex;
-    std::lock_guard<std::mutex> lk(s_detectMutex);
+    std::lock_guard<std::mutex> lk(s_funcDetectMutex);
     if (DynOff::bUFunctionFuncDetected.load(std::memory_order_relaxed)) return;
 
     constexpr int kWant = 32;
@@ -7073,6 +7092,23 @@ static void EnsureUFunctionFuncOffset() {
              best ? "" : " (NOT FOUND — Path 2 native analysis disabled)");
 }
 
+// A count, so nested scopes (a recovery inside an init, a choice inside an apply) lower it only when the last ends.
+static std::atomic<int> s_poolInFlux{0};
+bool PoolInFlux() { return s_poolInFlux.load(std::memory_order_acquire) > 0; }
+PoolInFluxScope::PoolInFluxScope(bool on) : on_(on) {
+    if (on_) s_poolInFlux.fetch_add(1, std::memory_order_acq_rel);
+}
+void PoolInFluxScope::End() {
+    if (on_) s_poolInFlux.fetch_sub(1, std::memory_order_acq_rel);
+    on_ = false;
+}
+
+void ResetUFunctionFuncDetection() {
+    std::lock_guard<std::mutex> lk(s_funcDetectMutex);
+    DynOff::UFUNCTION_FUNC = 0;
+    DynOff::bUFunctionFuncDetected.store(false, std::memory_order_release);
+}
+
 // Read UFunction::FunctionFlags via the version-aware offset (mirrors the
 // probe in Ubel::WalkFunctions): primary by UE version, then a fallback sweep.
 static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
@@ -7089,7 +7125,7 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
     const int primary = DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
                                                         DynOff::USTRUCT_PROPSSIZE,
                                                         DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                                        DynOff::bUseFProperty);
+                                                        DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, flags) && flags != 0) return flags;
     for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
         if (tryOff == primary) continue;

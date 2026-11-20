@@ -1618,6 +1618,222 @@ static void Test_Stark_NarrowedFlagTests() {
            Stark::NarrowedFlagTestsFunctionFlags(otherReg.data(), otherReg.size(), 0x400) == -1);
 }
 
+// [VND10-A1] Phantom Blade Zero's FunctionFlags sits at +0x100, so its dword tests carry a disp32 of 00 01 00 00, which
+// the first pass's patterns (disp32 bytes 1-3 pinned to 0) and the byte-narrowed pass cannot match.
+static void Test_Stark_WideFlagTests() {
+    const uint8_t w1[] = { 0xF7, 0x82, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // test dword [rdx+0x100], 0x400
+    const uint8_t w2[] = { 0xF7, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };   // test dword [rbx+0x100], 0x400000
+    std::vector<uint8_t> pbz(0x2000, 0x90);
+    memcpy(pbz.data() + 0x2E, w1, sizeof(w1));
+    memcpy(pbz.data() + 0xDD1, w2, sizeof(w2));
+    EXPECT("WIDE ⭐: PBZ's pair implies FunctionFlags +0x100",
+           Stark::WideFlagTestsFunctionFlags(pbz.data(), pbz.size(), 0x400) == 0x100);
+    EXPECT("WIDE: the byte-narrowed pass does not see PBZ's dword tests",
+           Stark::NarrowedFlagTestsFunctionFlags(pbz.data(), pbz.size(), 0x400) == -1);
+
+    std::vector<uint8_t> sib(0x2000, 0x90);
+    const uint8_t s1[] = { 0x41, 0xF7, 0x84, 0x24, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // [r12+0x100]
+    memcpy(sib.data() + 0x40, s1, sizeof(s1));
+    memcpy(sib.data() + 0x300, w2, sizeof(w2));
+    EXPECT("WIDE: a SIB-form FUNC_Native test pairs too",
+           Stark::WideFlagTestsFunctionFlags(sib.data(), sib.size(), 0x400) == 0x100);
+
+    // A stock body (+0xB0) agrees as well: the pass is stricter than the first, not different. Frieren reaches it only
+    // after the first passes failed on every vtable, which a stock body never lets happen.
+    std::vector<uint8_t> stock(0x2000, 0x90);
+    const uint8_t b1[] = { 0xF7, 0x82, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
+    const uint8_t b2[] = { 0xF7, 0x83, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00 };
+    memcpy(stock.data() + 0x2E, b1, sizeof(b1));
+    memcpy(stock.data() + 0xDD1, b2, sizeof(b2));
+    EXPECT("WIDE control: a stock pair at +0xB0 reads +0xB0",
+           Stark::WideFlagTestsFunctionFlags(stock.data(), stock.size(), 0x400) == 0xB0);
+
+    // CONTROLS: what must not count.
+    std::vector<uint8_t> lone(0x2000, 0x90);
+    memcpy(lone.data() + 0x2E, w1, sizeof(w1));
+    EXPECT("WIDE control: a lone FUNC_Native test is not enough",
+           Stark::WideFlagTestsFunctionFlags(lone.data(), lone.size(), 0x400) == -1);
+    std::vector<uint8_t> apart(0x2000, 0x90);
+    memcpy(apart.data() + 0x2E, w1, sizeof(w1));
+    memcpy(apart.data() + 0xDD1, b2, sizeof(b2));
+    EXPECT("WIDE control: the two tests must name the same field",
+           Stark::WideFlagTestsFunctionFlags(apart.data(), apart.size(), 0x400) == -1);
+    std::vector<uint8_t> late(0x2000, 0x90);
+    memcpy(late.data() + 0x500, w1, sizeof(w1));
+    memcpy(late.data() + 0x900, w2, sizeof(w2));
+    EXPECT("WIDE control: the FUNC_Native test must sit in the prologue window",
+           Stark::WideFlagTestsFunctionFlags(late.data(), late.size(), 0x400) == -1);
+    std::vector<uint8_t> huge(0x2000, 0x90);
+    const uint8_t f1[] = { 0xF7, 0x82, 0x00, 0x01, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00 };   // disp 0x10100
+    const uint8_t f2[] = { 0xF7, 0x83, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x40, 0x00 };
+    memcpy(huge.data() + 0x2E, f1, sizeof(f1));
+    memcpy(huge.data() + 0xDD1, f2, sizeof(f2));
+    EXPECT("WIDE control: a disp at or past 0x10000 is no UFunction field",
+           Stark::WideFlagTestsFunctionFlags(huge.data(), huge.size(), 0x400) == -1);
+    std::vector<uint8_t> notTest(0x2000, 0x90);
+    const uint8_t n1[] = { 0xF7, 0x8A, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };   // ModRM reg=001: not TEST
+    memcpy(notTest.data() + 0x2E, n1, sizeof(n1));
+    memcpy(notTest.data() + 0xDD1, w2, sizeof(w2));
+    EXPECT("WIDE control: F7 with ModRM.reg != 0 is not a TEST",
+           Stark::WideFlagTestsFunctionFlags(notTest.data(), notTest.size(), 0x400) == -1);
+}
+
+// [VND10-A1] The pass order Frieren's DetectProcessEventVTableOffset runs: the first passes over every candidate vtable,
+// then the wide pass. Vtables are stand-in ids; each pass answers from a table.
+static void Test_Stark_PickProcessEventSlot() {
+    using Answers = std::vector<std::pair<uintptr_t, int>>;
+    auto from = [](const Answers& a) {
+        return [a](uintptr_t vt) { for (const auto& [v, off] : a) if (v == vt) return off; return -1; };
+    };
+    const std::vector<uintptr_t> vts = { 1, 2, 3 };
+    size_t idx = 99;
+    bool wide = true;
+
+    // An Actor-like vtable first (its ProcessEvent override hides the high-flag test from the first passes) on which the
+    // wide pass WOULD match an earlier slot, then the stock base vtable the first passes answer: the stock answer stands.
+    int slot = Stark::PickProcessEventSlot(vts, from({ { 2, 0x220 } }), from({ { 1, 0x1F8 }, { 2, 0x220 } }), &idx, &wide);
+    EXPECT("PESLOT ⭐: the first passes on a later vtable beat the wide pass on an earlier one",
+           slot == 0x220 && idx == 1 && !wide);
+
+    // Phantom Blade Zero: no first-pass answer anywhere; the wide pass answers.
+    slot = Stark::PickProcessEventSlot(vts, from({}), from({ { 2, 0x260 } }), &idx, &wide);
+    EXPECT("PESLOT ⭐: with no first-pass answer anywhere, the wide pass answers", slot == 0x260 && idx == 1 && wide);
+
+    // Neither: -1, and the caller falls to the version table.
+    slot = Stark::PickProcessEventSlot(vts, from({}), from({}), &idx, &wide);
+    EXPECT("PESLOT: nothing anywhere -> -1", slot == -1 && !wide);
+
+    // The first vtable the first passes answer on wins among them, as before.
+    slot = Stark::PickProcessEventSlot(vts, from({ { 2, 0x220 }, { 3, 0x228 } }), from({}), &idx, &wide);
+    EXPECT("PESLOT control: among first-pass answers the earliest vtable wins", slot == 0x220 && idx == 1);
+
+    // The wide pass is never asked while the first passes answer somewhere.
+    bool wideAsked = false;
+    slot = Stark::PickProcessEventSlot(vts, from({ { 3, 0x220 } }),
+                                       [&](uintptr_t) { wideAsked = true; return 0x1F8; }, &idx, &wide);
+    EXPECT("PESLOT control: the wide pass is not consulted when a first pass answers", slot == 0x220 && !wideAsked);
+}
+
+// [RESCAN-DECOY-REINIT] What Extra Scan looks for: a GObjects of 0 as before (the first hit); a published one that reads
+// no objects is replaced when GNames is up; GWorld only over a pool that reads objects.
+static void Test_Genau_PlanRescan() {
+    constexpr uintptr_t G = 0x7FF600001000, N = 0x7FF600002000, W = 0x7FF600003000;
+    Genau::RescanPlan p = Genau::PlanRescan(G, N, W, 0);
+    EXPECT("RESCANPLAN ⭐: a published GObjects that reads no objects is sought, to be replaced",
+           p.seekGObjects && p.replace);
+    EXPECT("RESCANPLAN ⭐: ...the sweep never offers it back", p.avoid == G);
+    EXPECT("RESCANPLAN ⭐: ...and collects candidates instead of stopping at the first",
+           p.maxCandidates == Genau::kRescanMaxCandidates);
+    EXPECT("RESCANPLAN ⭐: a negative count is no objects either", Genau::PlanRescan(G, N, W, -1).replace);
+    p = Genau::PlanRescan(G, N, 0, 0);
+    EXPECT("RESCANPLAN ⭐: GWorld is not sought over a pool that reads no objects (ExtraScanGWorld finds nothing there)",
+           p.seekGObjects && p.replace && !p.seekGWorld);
+    p = Genau::PlanRescan(G, 0, W, 0);
+    EXPECT("RESCANPLAN: without GNames no candidate can be judged by its names -- nothing is sought",
+           !p.seekGObjects && !p.replace && p.avoid == 0 && !p.seekGWorld);
+
+    // Stock: a pool that reads objects is never replaced, and the rest is as before.
+    p = Genau::PlanRescan(G, N, W, 153466);
+    EXPECT("RESCANPLAN control: a published GObjects that reads objects is not sought",
+           !p.seekGObjects && !p.replace && p.avoid == 0 && p.maxCandidates == 0 && !p.seekGWorld);
+    p = Genau::PlanRescan(G, N, 0, 153466);
+    EXPECT("RESCANPLAN control: ...and a missing GWorld over it is sought, as before",
+           !p.seekGObjects && p.seekGWorld);
+    p = Genau::PlanRescan(0, N, 0, 0);
+    EXPECT("RESCANPLAN control: a GObjects of 0 is sought by the first hit, avoiding nothing, as before",
+           p.seekGObjects && !p.replace && p.avoid == 0 && p.maxCandidates == 1 && !p.seekGWorld);
+    p = Genau::PlanRescan(0, 0, 0, 0);
+    EXPECT("RESCANPLAN control: ...without GNames too", p.seekGObjects && p.maxCandidates == 1 && !p.seekGWorld);
+    p = Genau::PlanRescan(G, 0, 0, 153466);
+    EXPECT("RESCANPLAN control: GWorld needs GNames, as before", !p.seekGObjects && !p.seekGWorld);
+}
+
+// [RESCAN-DECOY-REINIT] What apply_rescan does with a finished job.
+static void Test_Genau_PlanRescanApply() {
+    using A = Genau::RescanApply;
+    constexpr uintptr_t D = 0x7FF600001000, N = 0x7FF600002000, Other = 0x7FF600009000;
+    EXPECT("RESCANAPPLY ⭐: the decoy the job avoided, still reading no objects, is replaced",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, false, false) == A::Replace);
+    EXPECT("RESCANAPPLY ⭐: ...not twice: a second apply of the same job finds it consumed",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, false, true) == A::AlreadyApplied);
+    EXPECT("RESCANAPPLY ⭐: ...nor from a list Stop cut short",
+           Genau::PlanRescanApply(D, 0, N, true, D, 3, true, false) == A::Cancelled);
+    EXPECT("RESCANAPPLY ⭐: a GObjects that moved since the job looked is left alone",
+           Genau::PlanRescanApply(Other, 0, N, true, D, 3, false, false) == A::Changed);
+    EXPECT("RESCANAPPLY ⭐: ...and so is one that reads objects now",
+           Genau::PlanRescanApply(D, 5000, N, true, D, 3, false, false) == A::Changed);
+    EXPECT("RESCANAPPLY: no candidates -> nothing to apply",
+           Genau::PlanRescanApply(D, 0, N, true, D, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: a job that looked only for GWorld replaces nothing",
+           Genau::PlanRescanApply(D, 0, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: without GNames nothing is replaced",
+           Genau::PlanRescanApply(D, 0, 0, true, D, 3, false, false) == A::Changed);
+
+    // Stock: a GObjects of 0 is filled from the first hit, as before -- even from a cut-short list, whose first hit is
+    // still a hit -- and a pool that reads objects is never touched.
+    EXPECT("RESCANAPPLY control: a GObjects of 0 is filled from the job's first hit, as before",
+           Genau::PlanRescanApply(0, 0, N, false, 0, 1, false, false) == A::Fill);
+    EXPECT("RESCANAPPLY control: ...a cancelled sweep's hit included",
+           Genau::PlanRescanApply(0, 0, 0, false, 0, 1, true, false) == A::Fill);
+    EXPECT("RESCANAPPLY control: ...and nothing found is nothing applied",
+           Genau::PlanRescanApply(0, 0, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY control: a published GObjects that reads objects is never replaced",
+           Genau::PlanRescanApply(D, 153466, N, false, 0, 0, false, false) == A::NotSought);
+    EXPECT("RESCANAPPLY: the outcome words the pipe sends",
+           std::string(Genau::RescanApplyName(A::Fill)) == "filled"
+           && std::string(Genau::RescanApplyName(A::AlreadyApplied)) == "already_applied"
+           && std::string(Genau::RescanApplyName(A::Changed)) == "changed"
+           && std::string(Genau::RescanApplyName(A::Cancelled)) == "cancelled"
+           && std::string(Genau::RescanApplyName(A::NotSought)) == "not_sought");
+    using O = Genau::ReplaceOutcome;
+    EXPECT("RESCANAPPLY: ...and for a replace's outcome",
+           std::string(Genau::ReplaceOutcomeName(O::Replaced)) == "replaced"
+           && std::string(Genau::ReplaceOutcomeName(O::ReinitInPlace)) == "reinit_in_place"
+           && std::string(Genau::ReplaceOutcomeName(O::NoneQualified)) == "none_qualified"
+           && std::string(Genau::ReplaceOutcomeName(O::Aborted)) == "aborted");
+}
+
+// [RESCAN-DECOY-REINIT] apply_rescan samples names in NameSampleOrder and stops at the first candidate that qualifies;
+// that must be the candidate UE5_Init's heap-fallback rule (PickLargestNamedCandidate) keeps, on every input.
+static void Test_Genau_NameSampleOrder() {
+    using S = Genau::GObjectsCandidateScore;
+    auto firstQualifying = [](const std::vector<S>& s) {
+        std::vector<int32_t> counts;
+        for (const S& c : s) counts.push_back(c.count);
+        for (size_t i : Genau::NameSampleOrder(counts.data(), counts.size()))
+            if (Genau::PickLargestNamedCandidate(&s[i], 1) == 0) return static_cast<int>(i);
+        return -1;
+    };
+    const std::vector<std::vector<S>> cases = {
+        { { 1, 0, 0 }, { 2, 0x1000, 8 }, { 3, 0x14000, 8 } },          // the master after a partial list
+        { { 1, 0x14000, 1 }, { 2, 0x1000, 8 } },                        // the larger reads no names: the partial
+        { { 1, 0x5000, 8 }, { 2, 0x5000, 8 }, { 3, 0x5000, 0 } },       // equal counts: the first in scan order
+        { { 1, 0x5000, 0 }, { 2, 0x5000, 8 } },                         // equal counts, the first unnamed
+        { { 1, -1, 8 }, { 2, 0, 8 } },                                  // nothing reads objects
+        {},
+        { { 1, 0x40, 2 } },                                             // exactly kMinResolvedNames
+        { { 1, 524312, 8, 1009 }, { 2, 0x4000, 8, 8 } },                // a sparse head's larger count (DumperTest)
+    };
+    for (size_t k = 0; k < cases.size(); ++k) {
+        const std::vector<S>& c = cases[k];
+        const int pick = Genau::PickLargestNamedCandidate(c.data(), c.size());
+        EXPECT(("NAMEORDER ⭐: sampling largest-first keeps the heap fallback's pick, case " + std::to_string(k)).c_str(),
+               firstQualifying(c) == pick);
+    }
+    EXPECT("NAMEORDER: the master wins over a partial list", Genau::PickLargestNamedCandidate(cases[0].data(), 3) == 2);
+    EXPECT("NAMEORDER: equal counts keep the first", Genau::PickLargestNamedCandidate(cases[2].data(), 3) == 0);
+    EXPECT("NAMEORDER: one name is not an array",
+           Genau::PickLargestNamedCandidate(cases[1].data(), 1) == -1);
+    EXPECT("NAMEORDER ⭐: a head that names 8 objects in 1,009 slots is no object array",
+           Genau::PickLargestNamedCandidate(cases[7].data(), 2) == 1);
+    const Genau::GObjectsCandidateScore exact{ 1, 3, 3, 6 };
+    EXPECT("NAMEORDER: two slots read per name resolved is dense enough", Genau::PickLargestNamedCandidate(&exact, 1) == 0);
+    const int32_t counts[] = { 5, 0, 9, -3, 9, 1 };
+    const std::vector<size_t> order = Genau::NameSampleOrder(counts, 6);
+    EXPECT("NAMEORDER: only arrays that read objects, largest first, equal counts in scan order",
+           order == std::vector<size_t>({ 2, 4, 0, 5 }));
+}
+
 // [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
 // first decides, and the other learns it lost.
 static void Test_Stark_ClaimRequest() {
@@ -4011,6 +4227,9 @@ static void Test_IsEnginePackage() {
     EXPECT("engine: //Script/Paper2D/PaperFlipbook",      IsEnginePackage("//Script/Paper2D/PaperFlipbook"));
     EXPECT("engine: //Script/CinematicCamera/CineCameraComponent",
            IsEnginePackage("//Script/CinematicCamera/CineCameraComponent"));
+    // [VND9-05] UE 5.9 moves Cascade into a plugin that is on by default.
+    EXPECT("engine: //Script/CascadeRuntime/ParticleSystemComponent (5.9)",
+           IsEnginePackage("//Script/CascadeRuntime/ParticleSystemComponent"));
 
     // Canonical single-slash + '.'-separator format also matches.
     EXPECT("engine: /Script/Engine.Actor (canonical)", IsEnginePackage("/Script/Engine.Actor"));
@@ -7446,6 +7665,38 @@ static void Test_VersionNeedleScan_GateStillGates() {
     EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
 }
 
+// [VND9-05] UE 5.9 reads as 509 at every string tier, and as the newest row it outranks a 5.8 string beside it.
+// Without the row, a 5.9 title whose PE version resource does not answer read as 508 through the structural ladder:
+// right offsets, but the logs and the UI said 5.8.
+static void Test_VersionNeedle_UE59() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    {
+        auto b = fresh(4096); Plant(b, 1500, "++UE5+Release-5.9");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("VND9-05: Tier 1 ascii ++UE5+Release-5.9 reads 509", GatedValue(g) == 509 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096);
+        const char* tag = "++UE5+Release-5.9";
+        for (size_t i = 0; tag[i]; ++i) { b[1500 + i * 2] = (uint8_t)tag[i]; b[1500 + i * 2 + 1] = 0; }
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("VND9-05: Tier 1 utf16 ++UE5+Release-5.9 reads 509", GatedValue(g) == 509 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096); Plant(b, 900, "Unreal"); Plant(b, 1000, "Release-5.9.0");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+        EXPECT("VND9-05: Tier 2 Release-5.9.0 reads 509", GatedValue(g) == 509 && g.tier == 2);
+        ExpectEquivalent23("VND9-05: Tier 2 5.9 matches the naive reference", b);
+    }
+    {
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal"); Plant(b, 1000, "Release-5.8.4");
+        Plant(b, 2900, "Unreal"); Plant(b, 3000, "Release-5.9.0");
+        Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+        EXPECT("VND9-05: 5.9 at a higher address than 5.8 still wins by table order", GatedValue(g) == 509);
+    }
+}
+
 // ── the Tier 2/3 rules: the context window and Tier 3 retirement ─────────────
 //
 // These assert ABSOLUTE answers, not just naive/gated agreement — the equivalence oracle
@@ -7882,6 +8133,18 @@ static void Test_FunctionFlagsOffset() {
            DynOff::FunctionFlagsPrimaryFor(427, true, 0x58, false, true) == 0xB8);
     EXPECT("VND583-01: a nonsense PropertiesSize (0) is not trusted even if 'validated'",
            DynOff::FunctionFlagsPrimaryFor(425, false, 0, true, true) == 0xB0);
+    // [VND10-A1] Phantom Blade Zero: PropertiesSize 0xA8, found past ChildProperties + 8, gives FunctionFlags 0x100.
+    EXPECT("VND10-A1: a licensee PropertiesSize 0xA8 gives FunctionFlags 0x100",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, true, true, true) == 0x100);
+    EXPECT("VND10-A1: ...but 0xA8 without the licensee measurement keeps the table, as before",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, true, true) == 0xB0);
+    EXPECT("VND10-A1: ...and an unmeasured run keeps the table even with it",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0xA8, false, true, true) == 0xB0);
+    EXPECT("VND10-A1: a stock 0x58 answers the same with or without the licensee flag",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0x58, true, true, true) == 0xB0
+           && DynOff::FunctionFlagsPrimaryFor(507, false, 0x58, true, true) == 0xB0);
+    EXPECT("VND10-A1: the licensee ceiling still refuses a PropertiesSize past it",
+           DynOff::FunctionFlagsPrimaryFor(507, false, 0x108, true, true, true) == 0xB0);
 
     // The vote's per-sample rule: at the right offset, NumParms equals the function's own
     // CPF_Parm count and ParmsSize covers the last parameter (rounded up by at most 16).
@@ -8342,6 +8605,80 @@ static void Test_EnumPackageProbe() {
                asked == (std::vector<std::pair<std::string, int>>{ { "Enum", DynOff::kLadderEnumSample } }));
         EXPECT("EnumPkg ⭐: ...samples every enum it is handed that has names, against its package's NamePrivate",
                t.sampled == 6 && t.at55 == 6 && t.at51 == 0 && EnumPackageProves55(t));
+    }
+}
+
+// [VND10-A1] UStruct::PropertiesSize, found on Guid: ChildProperties + 8 answers whenever it fits, and a licensee
+// insert behind it is found only when it does not.
+static void Test_PropertiesSizeProbe() {
+    std::printf("\n--- VND10-A1: DynOff::PickPropertiesSizeOffset ---\n");
+    struct Obj {
+        alignas(8) uint8_t b[0x180] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v)   { std::memcpy(b + off, &v, sizeof v); }
+        void u16(int off, uint16_t v)  { std::memcpy(b + off, &v, sizeof v); }
+        void ptr(int off, uintptr_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    const uintptr_t head = 0x0000020012345670ull;   // the ChildProperties head; never dereferenced here
+    // A Guid tail at `ps`: size 16, alignment 4 (int16 + StructStateFlags 1 on 5.6+, int32 before), PropertyLink 0x18 on.
+    auto tail = [&](Obj& o, int ps, bool int16Align) {
+        o.i32(ps, 16);
+        if (int16Align) { o.u16(ps + 4, 4); o.u16(ps + 6, 1); } else o.i32(ps + 4, 4);
+        o.ptr(ps + 0x18, head);
+    };
+    auto pick = [&](Obj& o, int cp) { return DynOff::PickPropertiesSizeOffset(o.at(), head, cp, read); };
+
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true);
+        EXPECT("PropsSize: stock 5.6+ answers ChildProperties + 8", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, false);
+        EXPECT("PropsSize: stock 5.5 (an int32 MinAlignment) answers +8 too", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x58, head); tail(o, 0x60, false);
+        EXPECT("PropsSize: case-preserving 4.27 (ChildProperties 0x58) answers 0x60", pick(o, 0x58) == 0x60);
+    }
+    {
+        Obj o; o.ptr(0x50, head);
+        o.i32(0x88, 16); o.i32(0x8C, 4);           // a size-and-alignment look-alike inside the insert, no PropertyLink
+        tail(o, 0xA8, true);
+        EXPECT("PropsSize ⭐: Phantom Blade Zero's 0x50 insert -> 0xA8", pick(o, 0x50) == 0xA8);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true); tail(o, 0xA8, true);
+        EXPECT("PropsSize ⭐: a fitting stock offset wins over a PBZ-shaped one behind it", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head);
+        EXPECT("PropsSize: nothing fits -> ChildProperties + 8, today's answer", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); o.i32(0x88, 16); o.i32(0x8C, 4);
+        EXPECT("PropsSize: size and alignment without PropertyLink is not a fit", pick(o, 0x50) == 0x58);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58, true);
+        o.i32(0x58, 0x2C);                          // not a Guid's size: an ordinary struct's
+        tail(o, 0xA8, true);
+        EXPECT("PropsSize: a stock slot with the wrong size lets the search run", pick(o, 0x50) == 0xA8);
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0xA8, true);
+        refuse = o.at(0xAC);                        // MinAlignment unreadable
+        EXPECT("PropsSize: an unreadable MinAlignment is not a fit", pick(o, 0x50) == 0x58);
+        refuse = 0;
+    }
+    {
+        Obj o; o.ptr(0x50, head); tail(o, 0x58 + DynOff::kPropsSizeLicenseeSpan + 8, true);
+        EXPECT("PropsSize: a fit past the span is not searched", pick(o, 0x50) == 0x58);
     }
 }
 
@@ -8899,10 +9236,11 @@ static void Test_ProcessEventVTableSlot() {
     }
 
     // --- unmeasured versions return 0 so the caller can say "extrapolated" instead of
-    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 is unreleased. ---
+    //     quietly inventing an offset. 4.07-4.10 are below our floor; 5.9 has a preview, but no
+    //     VTableLayout template or fixture PDB has measured it. ---
     EXPECT("A2: 4.10 (below the 4.11 floor) has no measurement",
            DynOff::ProcessEventVTableSlotFor(410) == 0);
-    EXPECT("A2: 5.9 (unreleased) has no measurement",
+    EXPECT("A2: 5.9 (a preview, unmeasured) has no measurement",
            DynOff::ProcessEventVTableSlotFor(509) == 0);
     EXPECT("A2: 550 -- the value the dead arm tested for -- has no measurement",
            DynOff::ProcessEventVTableSlotFor(550) == 0);
@@ -11449,6 +11787,8 @@ static void Test_VersionMarkers() {
     // never latched, but assert it cannot raise in case that ever changes.
     EXPECT("A4: a failed probe (-1) does not raise", !IsVirtualDtorFFieldClass58(-1));
     EXPECT("A4: no other offset raises", !IsVirtualDtorFFieldClass58(0x10));
+    // [VND10-A1] A licensee Name at +0x30 (Phantom Blade Zero, a 5.7) carries no 5.8 vfptr.
+    EXPECT("A4: the licensee +0x30 does not raise", !IsVirtualDtorFFieldClass58(0x30));
 
     // --- the two markers are INDEPENDENT: a 5.8 binary satisfies BOTH, which is exactly
     //     why 507 alone is not enough to stop at the right version. ---
@@ -11506,6 +11846,33 @@ static void Test_FFieldClassName_Probe() {
             return off == 0x08 ? "PropertyBag" : std::string();
         });
         EXPECT("0x08 arm requires the SUFFIX", r == -1);
+    }
+
+    // [VND10-A1] The stock picker never reads a licensee offset: a class whose name only +0x30 holds is no answer.
+    {
+        bool readLicensee = false;
+        auto r = DynOff::PickFFieldClassNameOffset([&](int off) -> std::string {
+            if (off == 0x30) readLicensee = true;
+            return off == 0x30 ? "IntProperty" : std::string();
+        });
+        EXPECT("stock picker: a name at +0x30 alone -> -1", r == -1);
+        EXPECT("stock picker: +0x30 is never consulted", !readLicensee);
+    }
+    // The licensee picker reads +0x30 only, by suffix.
+    {
+        bool readStock = false;
+        auto r = DynOff::PickFFieldClassNameOffsetLicensee([&](int off) -> std::string {
+            if (off == 0x00 || off == 0x08) readStock = true;
+            return off == 0x30 ? "BoolProperty" : "IntProperty";
+        });
+        EXPECT("licensee picker: Phantom Blade Zero's +0x30", r == 0x30);
+        EXPECT("licensee picker: +0x00 / +0x08 are never consulted", !readStock);
+        auto bag = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string("PropertyBag"); });
+        EXPECT("licensee picker: requires the SUFFIX", bag == -1);
+        auto bare = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string("Property"); });
+        EXPECT("licensee picker: bare 'Property' -> -1", bare == -1);
+        auto none = DynOff::PickFFieldClassNameOffsetLicensee([](int) { return std::string(); });
+        EXPECT("licensee picker: nothing -> -1", none == -1);
     }
 
     EXPECT("suffix: IntProperty",   DynOff::LooksLikeFieldClassName("IntProperty"));
@@ -12426,6 +12793,105 @@ static void Test_Renge_CeModuleRelative_NeverTruncates() {
     EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
 }
 
+// [CEPTR-OBJECTS-2026-11-19] get_ce_pointer_info's chain, resolved the way Cheat Engine resolves a pointer record
+// (MemoryRecordUnit.pas, TMemoryRecord.GetRealAddress): [base] is read before the first offset is added, then one more
+// read per offset but offsets[0], which is only added. Each layout row's fake FUObjectArray holds its chunk table at
+// that row's Objects offset and a decoy table, of the same shape, in every other qword: a chain that starts from the
+// wrong field lands on a decoy object or leaves the fake memory, never on the right object by accident.
+namespace {
+
+struct CeFakeMemory {
+    std::vector<std::pair<uintptr_t, size_t>> regions;
+    void Add(const void* p, size_t n) { regions.emplace_back(reinterpret_cast<uintptr_t>(p), n); }
+    bool ReadPtr(uintptr_t addr, uintptr_t& out) const {
+        for (const auto& [start, size] : regions) {
+            if (addr >= start && size >= sizeof(uintptr_t) && addr - start <= size - sizeof(uintptr_t)) {
+                std::memcpy(&out, reinterpret_cast<const void*>(addr), sizeof(out));
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+// The address CE shows for the record; 0 when one of its reads leaves the fake memory.
+uintptr_t CeResolve(const CeFakeMemory& mem, uintptr_t base, const std::vector<int>& offsets) {
+    uintptr_t addr = base;
+    for (size_t i = offsets.size(); i-- > 0;) {
+        uintptr_t value = 0;
+        if (!mem.ReadPtr(addr, value)) return 0;
+        addr = value + static_cast<uintptr_t>(static_cast<intptr_t>(offsets[i]));
+    }
+    return addr;
+}
+
+}  // namespace
+
+static void Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt() {
+    struct Row { const char* name; int objectsOffset; int itemSize; int itemObjOffset; };
+    // Each Objects offset a preset row latches, with the item geometries Aura detects.
+    const Row rows[] = {
+        { "Default (ObjObjects)",                    0x00, 16, 0x00 },
+        { "UE5-Extended (base)",                     0x10, 24, 0x00 },
+        { "UE5-Extended (base), 5.7+ unpacked item", 0x10, 24, 0x08 },
+        { "MindsEye (ObjObjects)",                   0x18, 32, 0x10 },
+        { "MindsEye-Extended (base)",                0x28, 32, 0x10 },
+        { "PBZ (ObjObjects)",                        0x08, 24, 0x00 },
+        { "PBZ-Base (base)",                         0x18, 24, 0x00 },
+    };
+    constexpr int kPerChunk = Grimoire::OBJECTS_PER_CHUNK;
+    const int32_t indices[] = { 0, 5, kPerChunk + 77, 2 * kPerChunk + 127 };
+    constexpr int kChunks = 3, kItemsUsed = 128, kObjBytes = 0x80;
+    auto addrOf = [](const void* p) { return reinterpret_cast<uintptr_t>(p); };
+
+    for (const Row& r : rows) {
+        CeFakeMemory mem;
+        // [0] the real table, [1] the decoy.
+        std::vector<uint8_t> objs[2];
+        std::vector<std::vector<uint8_t>> chunks[2];
+        std::vector<uintptr_t> tables[2];
+        for (int t = 0; t < 2; ++t) {
+            objs[t].assign(std::size(indices) * kObjBytes, 0);
+            chunks[t].assign(kChunks, std::vector<uint8_t>(static_cast<size_t>(kItemsUsed) * r.itemSize, 0));
+            tables[t].resize(kChunks);
+            for (int c = 0; c < kChunks; ++c) {
+                tables[t][c] = addrOf(chunks[t][c].data());
+                mem.Add(chunks[t][c].data(), chunks[t][c].size());
+            }
+            mem.Add(tables[t].data(), tables[t].size() * sizeof(uintptr_t));
+            mem.Add(objs[t].data(), objs[t].size());
+            for (size_t k = 0; k < std::size(indices); ++k) {
+                const int32_t i = indices[k];
+                const uintptr_t obj = addrOf(objs[t].data() + k * kObjBytes);
+                std::memcpy(chunks[t][i / kPerChunk].data() + static_cast<size_t>(i % kPerChunk) * r.itemSize
+                                + r.itemObjOffset, &obj, sizeof(obj));
+            }
+        }
+        alignas(8) uint8_t array[0x40] = {};
+        for (int q = 0; q < static_cast<int>(sizeof(array)); q += 8) {
+            const uintptr_t tbl = addrOf(tables[q == r.objectsOffset ? 0 : 1].data());
+            std::memcpy(array + q, &tbl, sizeof(tbl));
+        }
+        mem.Add(array, sizeof(array));
+        const uintptr_t anchor = addrOf(array);
+
+        for (size_t k = 0; k < std::size(indices); ++k) {
+            const int32_t i = indices[k];
+            for (int field : { 0x00, 0x44 }) {
+                const Aura::CeChunkedChain chain =
+                    Aura::BuildCeChunkedChain(anchor, r.objectsOffset, i, r.itemSize, r.itemObjOffset, field);
+                char lbl[192];
+                std::snprintf(lbl, sizeof lbl, "[CEPTR-OBJECTS] %s: CE resolves slot %d +0x%X onto that object's field",
+                              r.name, i, field);
+                EXPECT_EQ_U64(lbl, CeResolve(mem, chain.base, chain.offsets),
+                              addrOf(objs[0].data() + k * kObjBytes) + static_cast<uintptr_t>(field));
+                std::snprintf(lbl, sizeof lbl, "[CEPTR-OBJECTS] %s: slot %d's chunk and place in it", r.name, i);
+                EXPECT(lbl, chain.chunkIndex == i / kPerChunk && chain.withinChunk == i % kPerChunk);
+            }
+        }
+    }
+}
+
 // [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrows the long path with WC_NO_BEST_FIT_CHARS and
 // falls back to the 8.3 alias -- which must be narrowed under the same check. On a volume without 8.3 names
 // GetShortPathNameW returns the long path, so a re-narrowing with flags 0 and no used-default check would send a
@@ -12914,6 +13380,7 @@ int main() {
 #endif
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
+    RUN(Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt);
     RUN(Test_Methode_NarrowForAnsiLoad);
     RUN(Test_Methode_FolderAliasOf);
     RUN(Test_Methode_MaintainersShapes);
@@ -12944,6 +13411,11 @@ int main() {
     RUN(Test_Stark_CutInvokeWait);
     RUN(Test_Stark_WaitQueuedInvoke);
     RUN(Test_Stark_NarrowedFlagTests);
+    RUN(Test_Stark_WideFlagTests);
+    RUN(Test_Stark_PickProcessEventSlot);
+    RUN(Test_Genau_PlanRescan);
+    RUN(Test_Genau_PlanRescanApply);
+    RUN(Test_Genau_NameSampleOrder);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
@@ -13117,6 +13589,7 @@ int main() {
     RUN(Test_ShouldPublishEnumTable);
     RUN(Test_VersionNeedleScan_Equivalence);
     RUN(Test_VersionNeedleScan_GateStillGates);
+    RUN(Test_VersionNeedle_UE59);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_VersionBranchName);
@@ -13132,6 +13605,7 @@ int main() {
     RUN(Test_CmcMarkerVersion);
     RUN(Test_EnumPackageProbe);      // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
     RUN(Test_StructStateProbe);      // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
+    RUN(Test_PropertiesSizeProbe);   // [VND10-A1] PropertiesSize past a licensee insert
     RUN(Test_VersionLadder);        // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits

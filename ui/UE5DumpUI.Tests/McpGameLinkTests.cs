@@ -671,6 +671,21 @@ public sealed class McpGameLinkTests
     }
 
     [Fact]
+    public void StateFrom_AnApplySettlingThePool_IsRunning_NotReady()
+    {
+        // [MCP-READY-DURING-APPLY] While apply_rescan chooses, get_pointers' count is a candidate's; Ready is kept for the
+        // connection, so latching it then could hold a pool the apply sets back to the decoy.
+        var status = new JsonObject { ["running"] = false, ["phase"] = 7, ["applying"] = true };
+        var pointers = new JsonObject { ["object_count"] = 524312, ["gobjects_method"] = "aob" };
+        Assert.Equal(McpScanState.Running, McpGameLink.StateFrom(status, pointers));
+        // A DLL that predates the key, or one not applying, reads as before.
+        status.Remove("applying");
+        Assert.Equal(McpScanState.Ready, McpGameLink.StateFrom(status, pointers));
+        status["applying"] = false;
+        Assert.Equal(McpScanState.Ready, McpGameLink.StateFrom(status, pointers));
+    }
+
+    [Fact]
     public void TheGameList_MarksTheConnectedGame()
     {
         var rig = new Rig(100, 200);

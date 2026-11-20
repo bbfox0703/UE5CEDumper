@@ -111,6 +111,12 @@ Phase 1 makes the game fully usable; Phase 2 only improves init time and robustn
    - If the line `UE5_Init: Recovery SUCCESS — GObjects 0x... -> 0x... (Count=...)` appears, Phase 1 fired and worked.
    - UI shows a populated object tree / non-zero object count; Instance Finder / Property Search return results.
 6. If any launch still shows `Objects=0` with **no** recovery-success line, capture that launch's `scan-*.log` + `offsets-*.log` — we need to see why no candidate passed the name gate.
+7. **When both recoveries missed** (`Objects=0` and `Recovery failed — no candidate qualified`), the Pointers panel
+   offers **Extra Scan** ([RESCAN-DECOY-REINIT], DLL build 3775 and later). It sweeps the game's whole .data for
+   candidates, keeps the largest array whose first slots resolve names densely (the heap fallback's rule, plus at
+   most two non-null slots read per name, since the sweep meets more structures than the heap fallback) and re-runs the
+   offsets probe and the version ladder over it. Its lines are in `scan-*.log` (`Rescan: candidate ...`,
+   `Rescan: GObjects 0x... -> 0x...`) and `init-*.log` (`apply_rescan: GObjects=0x... (data_heuristic) Objects=...`).
 
 ---
 

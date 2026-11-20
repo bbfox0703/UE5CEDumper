@@ -14,6 +14,7 @@
 #include "Himmel.h"
 #include "Aura.h"
 #include "Serie.h"
+#include "Ubel.h"    // the FunctionFlags vote and the validated layout probes a GObjects replacement resets
 #include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded
 #include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby
@@ -240,7 +241,10 @@ static bool ValidateGObjects(uintptr_t addr) {
     // Includes chunk consistency checks and decryption support.
     // maxCOff/numCOff = -1 means "flat" layout (no chunk indirection).
     // Flat arrays: Objects* points directly to FUObjectItem[], not FUObjectItem*[].
-    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; } presets[] = {
+    // `wholeChunks`: the row also needs MaxElements == MaxChunks * 64K and NumChunks == NumElements / 64K + 1, the shape
+    // FUObjectArray::AllocateObjectPool leaves; a licensee row carries it because it is weaker evidence than a stock one.
+    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; bool wholeChunks = false; }
+        presets[] = {
         { 0x00, 0x10, 0x14, 0x18, 0x1C, "Default" },
         { 0x10, 0x00, 0x04, 0x08, 0x0C, "Back4Blood" },
         { 0x18, 0x10, 0x00, 0x14, 0x20, "Multiversus" },
@@ -280,6 +284,12 @@ static bool ValidateGObjects(uintptr_t addr) {
         // [VND584-03] Dumper-7's UE 5.7 "Mistfall Hunter" variant (a508058): MaxChunks +0x04, NumChunks +0x08,
         // Objects +0x10, MaxElements +0x20, NumElements +0x24, from the FUObjectArray base. Aura carries the same row.
         { 0x10, 0x20, 0x24, 0x04, 0x08, "UE5.7-Mistfall" },
+        // [VND10-A1] Phantom Blade Zero (UE 5.7.4, RE-UE4SS's MemberVariableLayout.ini): ObjObjects reordered to
+        // MaxChunks, NumChunks, Objects, NumElements, MaxElements, PreAllocatedObjects; at ObjObjects, then at the base.
+        // Appended last, so an address an earlier row takes never reaches them, and held to whole chunks, which pointer
+        // halves and GC counters do not form (dll_core_test's VND10-A1-01 controls).
+        { 0x08, 0x14, 0x10, 0x00, 0x04, "PBZ",      true },
+        { 0x18, 0x24, 0x20, 0x10, 0x14, "PBZ-Base", true },
     };
 
     for (auto& P : presets) {
@@ -295,6 +305,10 @@ static bool ValidateGObjects(uintptr_t addr) {
             if (!Macht::ReadSafe(addr + P.numCOff, numC)) continue;
             if (!Macht::ReadSafe(addr + P.maxCOff, maxC)) continue;
             if (numC < 1 || maxC < 1 || numC > maxC) continue;
+            if (P.wholeChunks
+                && (static_cast<int64_t>(max) != static_cast<int64_t>(maxC) * Grimoire::OBJECTS_PER_CHUNK
+                    || numC != num / Grimoire::OBJECTS_PER_CHUNK + 1))
+                continue;
         }
 
         uintptr_t objPtr = 0;
@@ -335,12 +349,21 @@ static bool ValidateGObjects(uintptr_t addr) {
     // isFlat: objPtr is FUObjectItem[] directly (no chunk indirection).
     // maxOff/maxCOff/numCOff mirror the corresponding Tier 1 preset above (A/C<-Default,
     // B<-Back4Blood, D<-UE4-Extended, E<-UE5-Extended, F<-UE5.8, Flat<-Flat). maxOff feeds
-    // an upper-bound sanity check only — see kRelaxedMaxCeiling below.
-    struct { int numOff; int maxOff; int objOff; int maxCOff; int numCOff; bool isFlat; const char* name; } relaxed[] = {
+    // an upper-bound sanity check (see kRelaxedMaxCeiling below) and the `ue58Early` guard.
+    //
+    // ue58Early: [UE58-ADJ10-WRONG-ANCHOR] 2026-11-19. Read 0x10 below a UE 5.8 FUObjectArray, D's slots hold
+    // that array's ObjObjects with each count pair swapped: Objects at +0x10, NumElements / MaxElements at +0x18 /
+    // +0x1C, NumChunks / MaxChunks at +0x20 / +0x24. That is the address a GObjects row with adjustment -0x10
+    // offers first on 5.8. Its tell is a count above its max that is exactly the +0x24 dword's whole chunks, as
+    // FUObjectArray::AllocateObjectPool leaves MaxElements. A genuine D array never has its count above its max, so
+    // the guard refuses none; and it asks for the whole chunks, not only the order, because D also reads the halves
+    // of a pre-5.8 PreAllocatedObjects above 16 TB in these slots, and validates that base when no other row does.
+    struct { int numOff; int maxOff; int objOff; int maxCOff; int numCOff; bool isFlat; const char* name;
+             bool ue58Early = false; } relaxed[] = {
         { 0x14, 0x10, 0x00, 0x18, 0x1C, false, "A/C" },
         { 0x04, 0x00, 0x10, 0x08, 0x0C, false, "B"   },
         { 0x1C, 0x18, 0x10,   -1,   -1, true,  "D-Flat" },  // flat twin of D — see "Flat-Base" above
-        { 0x1C, 0x18, 0x10, 0x20, 0x24, false, "D"   },
+        { 0x1C, 0x18, 0x10, 0x20, 0x24, false, "D", true },
         { 0x24, 0x20, 0x10, 0x28, 0x2C, false, "E"   },    // UE5-Extended: GC prefix + PreAllocatedObjects
         { 0x08, 0x0C, 0x00, 0x14, 0x10, false, "F"   },    // UE5.8: cache-locality reorder
         { 0x0C, 0x08, 0x00,   -1,   -1, true,  "Flat" },   // FFixedUObjectArray: no chunks (OT / early UE4)
@@ -370,13 +393,23 @@ static bool ValidateGObjects(uintptr_t addr) {
             // happens to fall in range is still betrayed by its "max" slot: in an ICU-like
             // locale blob, for one, that dword can be the low half of a module pointer and read
             // in the hundreds of millions. Deliberately WEAKER than Tier 1 (which also
-            // rejects `max < num`): we apply a loose ceiling only, and skip the check entirely
-            // if the read fails. A title that raises gc.MaxObjectsInGame past our strict cap —
-            // or whose max field is not where this row assumes — therefore still reaches the
-            // relaxed accept path.
+            // rejects `max < num`): a loose ceiling, plus `ue58Early` where a row carries it, and
+            // no check at all if the read fails. A title that raises gc.MaxObjectsInGame past our
+            // strict cap — or whose max field is not where this row assumes — therefore still
+            // reaches the relaxed accept path.
             int32_t maxElements = 0;
-            if (Macht::ReadSafe(addr + L.maxOff, maxElements) &&
-                static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
+            const bool maxRead = Macht::ReadSafe(addr + L.maxOff, maxElements);
+            if (maxRead && static_cast<uint32_t>(maxElements) > kRelaxedMaxCeiling) continue;
+
+            // ue58Early (see the table): a count above its max that is the +0x24 dword's whole chunks is a UE 5.8
+            // ObjObjects read 0x10 early, so this address is not the array's.
+            if (L.ue58Early && maxRead && numElements > maxElements) {
+                int32_t maxChunks58 = 0;
+                if (Macht::ReadSafe(addr + 0x24, maxChunks58)
+                    && static_cast<int64_t>(numElements)
+                           == static_cast<int64_t>(maxChunks58) * Grimoire::OBJECTS_PER_CHUNK)
+                    continue;
+            }
 
             // Pass 1 only: chunk consistency, mirroring Tier 1. A row whose chunk slots are
             // unreadable or structurally impossible (no chunks, or more live than allocated)
@@ -727,10 +760,16 @@ static bool IsCleanAsciiName(const std::string& s) {
 // and the 5.8 MaxChunks at +0x24 as "NumElements" -- as many clean names as there are chunks, and
 // a pool that holds only that many objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
 // and Num <= NumChunks * OBJECTS_PER_CHUNK, as a real array's counts always are.
-struct StaticArrayGeometry { int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; };
+// [VND10-A1] `licensee`: a game's own geometry, which Aura::Init reads by detection (its row is in Aura's presets). It is
+// listed last, held to whole chunks (MaxElements == MaxChunks * 64K, NumChunks == NumElements / 64K + 1), and loses a
+// tie to a stock geometry, so a stock array scores as it did.
+struct StaticArrayGeometry {
+    int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; bool licensee = false;
+};
 static const StaticArrayGeometry kStaticGeometries[] = {
     { 0x10, 0x24, 0x20, 0x2C, 0x28, false },   // UE 5.0-5.7: four GC int32s, then {Objects, PreAllocated, Max, Num, MaxChunks, NumChunks}
     { 0x00, 0x08, 0x0C, 0x10, 0x14, true  },   // UE 5.8: ObjObjects FIRST; {Objects, Num, Max, NumChunks, MaxChunks, PreAllocated}
+    { 0x18, 0x20, 0x24, 0x14, 0x10, false, true },   // Phantom Blade Zero: four GC int32s, then {MaxChunks, NumChunks, Objects, Num, Max, PreAllocated}
 };
 // 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
 // pair.
@@ -738,10 +777,11 @@ static const int kStaticStrides[] = { 0x14, 0x18, 0x10, 0x20, 0x28 };
 // The UObject* inside the item: +0x00 classic, +0x08 on UE 5.7+'s reordered item (FlagsAndRefCount first).
 static const int kStaticObjOffs[]  = { 0x00, 0x08 };
 
-static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr) {
+static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr,
+                                   bool* outLicensee = nullptr) {
     const int kProbe = 64;
     int bestClean = 0, bestStride = 0, bestObjOff = 0;
-    bool bestUE58 = false;
+    bool bestUE58 = false, bestLicensee = false;
     for (const StaticArrayGeometry& g : kStaticGeometries) {
         uintptr_t chunkTable = 0;
         if (!Macht::ReadSafe(base + g.objectsOff, chunkTable)) continue;     // ObjObjects.Objects
@@ -754,6 +794,8 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
             || !Macht::ReadSafe(base + g.maxChunksOff, maxC)) continue;
         if (num > maxE || numC < 1 || numC > maxC
             || static_cast<int64_t>(num) > static_cast<int64_t>(numC) * Grimoire::OBJECTS_PER_CHUNK) continue;
+        if (g.licensee && (static_cast<int64_t>(maxE) != static_cast<int64_t>(maxC) * Grimoire::OBJECTS_PER_CHUNK
+                           || numC != num / Grimoire::OBJECTS_PER_CHUNK + 1)) continue;
         uintptr_t chunk0 = 0;
         if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) continue;
 
@@ -778,6 +820,7 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
                     bestStride = stride;
                     bestObjOff = objOff;
                     bestUE58 = g.ue58;
+                    bestLicensee = g.licensee;
                 }
             }
         }
@@ -785,13 +828,16 @@ static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOf
     if (outStride) *outStride = bestStride;
     if (outObjOff) *outObjOff = bestObjOff;
     if (outUE58) *outUE58 = bestUE58;
+    if (outLicensee) *outLicensee = bestLicensee;
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array,
+                                   bool* outLicenseeArray) {
     if (outItemStride) *outItemStride = 0;
     if (outItemObjOffset) *outItemObjOffset = 0;
     if (outUE58Array) *outUE58Array = false;
+    if (outLicenseeArray) *outLicenseeArray = false;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
     uintptr_t modBase = Macht::GetModuleBase(nullptr);
@@ -850,26 +896,30 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* 
     // member of the struct, so step back up to ObjAvailableList (+0x58) to find the base.
     uintptr_t bestBase = 0;
     int bestScore = 0, bestStride = 0, bestObjOff = 0;
-    bool bestUE58 = false;
+    bool bestUE58 = false, bestLicensee = false;
     auto publish = [&]() {
         if (outItemStride) *outItemStride = bestStride;
         if (outItemObjOffset) *outItemObjOffset = bestObjOff;
         if (outUE58Array) *outUE58Array = bestUE58;
+        if (outLicenseeArray) *outLicenseeArray = bestLicensee;
         Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d, "
                    "item object @+0x%02X, %s array)", static_cast<unsigned long long>(bestBase), bestScore,
-                   bestStride, bestObjOff, bestUE58 ? "UE5.8" : "UE5.0-5.7");
+                   bestStride, bestObjOff, bestLicensee ? "licensee" : bestUE58 ? "UE5.8" : "UE5.0-5.7");
     };
     for (uintptr_t tgt : targets) {
         for (int off = -0x58; off <= 0x10; off += 8) {
             int stride = 0, objOff = 0;
-            bool ue58 = false;
-            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58);
-            if (score > bestScore) {
+            bool ue58 = false, licensee = false;
+            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58, &licensee);
+            // [VND10-A1] A stock geometry also takes a tie from a licensee one, so where both read the same objects
+            // the stock reading stands.
+            if (score > bestScore || (score > 0 && score == bestScore && bestLicensee && !licensee)) {
                 bestScore = score;
                 bestBase = tgt + off;
                 bestStride = stride;
                 bestObjOff = objOff;
                 bestUE58 = ue58;
+                bestLicensee = licensee;
             }
         }
         // [VND583-10] Unambiguous: a dense run of clean core objects -- but decided only once this
@@ -3900,6 +3950,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // Step 2.5: Set version-based defaults BEFORE probing (so if probing fails, we have sane values)
     // These serve as the fallback if Guid/Vector structs can't be found.
     DynOff::UPROPERTY_SUBCLASS_START = 0;   // none derived yet: a re-run must not keep the last run's
+    DynOff::bPropsSizeLicensee = false;     // likewise: only this run's PropertiesSize measurement may set it
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
             // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
@@ -4356,6 +4407,42 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         }
     }
 
+    if (!childProps && DynOff::bUseFProperty) {
+        // [VND10-A1] A licensee FFieldClass layout, read only where every stock reading above found nothing, so a stock
+        // engine never gets here with an answer to lose. A licensee offset is weaker evidence than a stock one, so a
+        // second field of the chain must read as a *Property at the same offset: Next is untagged at whichever slot
+        // holds it, and a tagged Owner (LSB set) is skipped.
+        auto licenseeNameOff = [](uintptr_t field) -> int {
+            uintptr_t fc = 0;
+            if (!Macht::ReadSafe(field + DynOff::FFIELD_CLASS, fc) || !fc || !Grimoire::IsUserspacePointer(fc)) return -1;
+            return DynOff::PickFFieldClassNameOffsetLicensee([&](int o) -> std::string {
+                uint32_t idx = 0;
+                if (!Macht::ReadSafe(fc + o, idx)) return std::string();
+                return Serie::GetString(idx);
+            });
+        };
+        for (int off = 0x38; off <= 0x80 && !childProps; off += 8) {
+            uintptr_t ptr = 0;
+            if (!Macht::ReadSafe(testStruct + off, ptr) || !ptr || !Grimoire::IsUserspacePointer(ptr)) continue;
+            const int fcNameOff = licenseeNameOff(ptr);
+            if (fcNameOff < 0) continue;
+            int agreeingNext = -1;
+            for (int nextOff : { 0x10, 0x18, 0x20 }) {
+                uintptr_t second = 0;
+                if (!Macht::ReadSafe(ptr + nextOff, second) || !second || (second & 1)) continue;
+                if (!Grimoire::IsUserspacePointer(second) || second == ptr) continue;
+                if (licenseeNameOff(second) == fcNameOff) { agreeingNext = nextOff; break; }
+            }
+            if (agreeingNext < 0) continue;
+            DynOff::FFIELDCLASS_NAME = fcNameOff;
+            childProps = ptr;
+            childPropsOff = off;
+            Sein::Info("DYNO", "ValidateAndFixOffsets: ChildProperties found at struct+0x%02X -> 0x%llX with a licensee "
+                     "FFieldClass::Name at +0x%02X (a second field at FField+0x%02X agrees)",
+                     off, (unsigned long long)ptr, fcNameOff, agreeingNext);
+        }
+    }
+
     if (!childProps) {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
         return PublishOffsetsGiveUp("childprops-probe-failed");
@@ -4693,7 +4780,17 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // UStruct offsets derived from ChildProperties position
     if (DynOff::bUseFProperty) {
-        DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
+        // [VND10-A1] PropertiesSize is found on Guid, whose size and alignment are fixed; Vector's vary with LWC, so a
+        // Vector-only run keeps ChildProperties + 8.
+        DynOff::USTRUCT_PROPSSIZE = guidStruct
+            ? DynOff::PickPropertiesSizeOffset(guidStruct, childProps, childPropsOff,
+                                               [](uintptr_t a, void* d, size_t n) { return Macht::ReadBytesSafe(a, d, n); })
+            : childPropsOff + 8;
+        DynOff::bPropsSizeLicensee = DynOff::USTRUCT_PROPSSIZE != childPropsOff + 8;
+        if (DynOff::bPropsSizeLicensee)
+            Sein::Info("DYNO", "ValidateAndFixOffsets: UStruct::PropertiesSize at +0x%02X, past ChildProperties + 8 "
+                       "(a licensee insert of 0x%02X bytes)", DynOff::USTRUCT_PROPSSIZE,
+                       DynOff::USTRUCT_PROPSSIZE - (childPropsOff + 8));
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
         // [VND583-02] UField::Next is only used by function walks here, and the steps above
@@ -4880,22 +4977,20 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid, s
 //   1. Inline:  the FUObjectArray struct lives at &addr itself
 //   2. Pointer: addr holds a pointer to the FUObjectArray struct on the heap
 //
-// Thread-safe: reads game memory only, no global state mutation.
+// Reads game memory only; the one shared state it touches is the validators' log throttle (g_validationDbgCount).
 // ============================================================
-uintptr_t ExtraScanGObjects() {
-    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan...");
 
+// The module's writable, non-executable sections (.data, .bss, ...): what the sweep searches. Empty when the module
+// headers do not read.
+static std::vector<ScanRange> WritableDataSections() {
+    std::vector<ScanRange> dataSections;
     uintptr_t base = Macht::GetModuleBase(nullptr);
-    if (!base) return 0;
+    if (!base) return dataSections;
 
     auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return dataSections;
     auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<DWORD>(dos->e_lfanew));
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
-
-    // Collect ALL writable, non-exec sections (.data, .bss, etc.)
-    struct SectionRange { uintptr_t start; uintptr_t end; };
-    std::vector<SectionRange> dataSections;
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return dataSections;
 
     const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
@@ -4907,16 +5002,29 @@ uintptr_t ExtraScanGObjects() {
                                      base + section->VirtualAddress + section->Misc.VirtualSize });
         }
     }
+    return dataSections;
+}
 
-    if (dataSections.empty()) {
-        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
-        return 0;
-    }
-
+size_t CollectExtraScanCandidates(const std::vector<ScanRange>& ranges, uintptr_t avoid, size_t max,
+                                  std::vector<uintptr_t>& out, bool* outCancelled) {
+    if (outCancelled) *outCancelled = false;
+    const size_t before = out.size();
+    if (max == 0) return 0;
     int candidatesTested = 0;
     g_validationDbgCount = 0;  // Reset throttle for validators
 
-    for (auto& sec : dataSections) {
+    // A hit already collected (several .data slots can point at one struct) is not offered or logged twice.
+    auto seen = [&](uintptr_t a) {
+        return std::find(out.begin() + static_cast<std::ptrdiff_t>(before), out.end(), a) != out.end();
+    };
+    // Collect a new hit; true once `max` are collected.
+    auto take = [&](uintptr_t a) {
+        out.push_back(a);
+        return out.size() - before >= max;
+    };
+    auto collected = [&] { return out.size() - before; };
+
+    for (const ScanRange& sec : ranges) {
         Sein::Debug("SCAN:GObj", "ExtraScanGObjects: Scanning [0x%llX-0x%llX] (%zu bytes)",
                   (unsigned long long)sec.start, (unsigned long long)sec.end,
                   (size_t)(sec.end - sec.start));
@@ -4925,22 +5033,33 @@ uintptr_t ExtraScanGObjects() {
             if ((addr & 0xFFF) == 0 && Tot::Requested()) {
                 Sein::Warn("SCAN:GObj", "ExtraScanGObjects: cancelled (%d candidates tested)",
                            candidatesTested);
-                return 0;
+                if (outCancelled) *outCancelled = true;
+                return collected();
             }
             // Mode 1: Inline — the FUObjectArray struct starts at addr
-            if (ValidateGObjects(addr)) {
+            if (addr != avoid && !seen(addr) && ValidateGObjects(addr)) {
                 Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found inline FUObjectArray at 0x%llX (%d candidates tested)",
                          (unsigned long long)addr, candidatesTested);
-                return addr;
+                if (take(addr)) {
+                    if (max > 1)
+                        Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected the cap of %zu candidate(s) -- the rest of "
+                                   ".data is not searched (%d candidates tested)", max, candidatesTested);
+                    return collected();
+                }
             }
 
             // Mode 2: Pointer — addr holds a pointer to FUObjectArray
             uintptr_t ptrVal = 0;
-            if (Macht::ReadSafe(addr, ptrVal) && ptrVal && LooksLikeDataPtr(ptrVal)) {
+            if (Macht::ReadSafe(addr, ptrVal) && ptrVal && ptrVal != avoid && !seen(ptrVal) && LooksLikeDataPtr(ptrVal)) {
                 if (ValidateGObjects(ptrVal)) {
                     Sein::Info("SCAN:GObj", "ExtraScanGObjects: Found pointed FUObjectArray at 0x%llX (ptr@0x%llX, %d candidates tested)",
                              (unsigned long long)ptrVal, (unsigned long long)addr, candidatesTested);
-                    return ptrVal;
+                    if (take(ptrVal)) {
+                        if (max > 1)
+                            Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected the cap of %zu candidate(s) -- the "
+                                       "rest of .data is not searched (%d candidates tested)", max, candidatesTested);
+                        return collected();
+                    }
                 }
             }
 
@@ -4951,8 +5070,188 @@ uintptr_t ExtraScanGObjects() {
         }
     }
 
-    Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
-    return 0;
+    if (collected() == 0)
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
+    else
+        Sein::Info("SCAN:GObj", "ExtraScanGObjects: collected %zu candidate(s) (%d candidates tested)", collected(),
+                   candidatesTested);
+    return collected();
+}
+
+size_t ExtraScanGObjectsCandidates(uintptr_t avoid, size_t max, std::vector<uintptr_t>& out, bool* outCancelled) {
+    if (outCancelled) *outCancelled = false;
+    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan (collecting up to %zu, avoiding 0x%llX)...",
+               max, (unsigned long long)avoid);
+    const std::vector<ScanRange> dataSections = WritableDataSections();
+    if (dataSections.empty()) {
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
+        return 0;
+    }
+    return CollectExtraScanCandidates(dataSections, avoid, max, out, outCancelled);
+}
+
+uintptr_t ExtraScanGObjects() {
+    Sein::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan...");
+
+    const std::vector<ScanRange> dataSections = WritableDataSections();
+    if (dataSections.empty()) {
+        Sein::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
+        return 0;
+    }
+    std::vector<uintptr_t> found;
+    CollectExtraScanCandidates(dataSections, 0, 1, found);
+    return found.empty() ? 0 : found.front();
+}
+
+// ============================================================
+// [RESCAN-DECOY-REINIT] Choosing among Extra Scan's candidates, and the re-init a replacement needs
+// ============================================================
+
+GObjectsCandidateScore ScoreGObjectsCandidate(uintptr_t addr, int maxSlots) {
+    GObjectsCandidateScore s;
+    s.addr = addr;
+    Aura::Init(addr);
+    s.count = Aura::GetCount();
+    if (s.count <= 0) return s;
+    // The head: a real array's permanent core objects (CoreUObject classes and packages), densely named. A sample spread
+    // over the whole array would miss them on a huge, sparse master and let a small dense list win.
+    const int limit = s.count < maxSlots ? s.count : maxSlots;
+    for (int i = 0; i < limit && s.resolved < 8; ++i) {
+        const uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        ++s.scanned;
+        uint32_t nameIdx = 0;
+        if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) {
+            const std::string nm = Serie::GetString(nameIdx);
+            if (!nm.empty() && nm != "None") ++s.resolved;
+        }
+    }
+    return s;
+}
+
+GObjectsCandidateScore ChooseGObjectsCandidate(uintptr_t published, const std::vector<uintptr_t>& candidates,
+                                               int nameSampleSlots, size_t* outSampled, bool* outAborted) {
+    if (outSampled) *outSampled = 0;
+    if (outAborted) *outAborted = false;
+    std::vector<uintptr_t> cands;
+    if (published) cands.push_back(published);
+    for (uintptr_t c : candidates)
+        if (c && std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c);
+    auto abort = [&] {
+        Aura::Init(published);
+        if (outAborted) *outAborted = true;
+        return GObjectsCandidateScore{};
+    };
+
+    // What Aura reads from each: its layout and item size, no object reads past their probes.
+    std::vector<int32_t> counts(cands.size(), 0);
+    for (size_t i = 0; i < cands.size(); ++i) {
+        if (Tot::Requested()) return abort();
+        Aura::Init(cands[i]);
+        counts[i] = Aura::GetCount();
+    }
+    // Names, largest first: the first that qualifies is PickLargestNamedCandidate's answer.
+    for (size_t i : NameSampleOrder(counts.data(), counts.size())) {
+        if (Tot::Requested()) return abort();
+        const GObjectsCandidateScore s = ScoreGObjectsCandidate(cands[i], nameSampleSlots);
+        if (outSampled) ++*outSampled;
+        Sein::Info("SCAN:GObj", "Rescan: candidate 0x%llX%s Count=%d, names %d resolved (scanned %d of the first %d)",
+                   (unsigned long long)s.addr, s.addr == published ? " (published)" : "", s.count, s.resolved,
+                   s.scanned, s.count < nameSampleSlots ? s.count : nameSampleSlots);
+        if (QualifiesAsObjectArray(s)) return s;   // Aura is on it
+    }
+    Aura::Init(published);
+    return {};
+}
+
+ReplaceResult ReplaceGObjectsAndReprobe(const ReplaceInput& in, const ReplaceHooks& hooks) {
+    // Begun, it finishes: a caller whose connection drops must not leave a replaced GObjects over a probe its walks cut
+    // short. Shutdown still aborts.
+    const Tot::CancelContextScope immune{Tot::CancelContext{nullptr, true}};
+    auto step = [&](ReplaceStep s) { if (hooks.onStep) hooks.onStep(s); };
+    ReplaceResult r;
+    bool aborted = false;
+    // Until Aura sits on the winner it reads one candidate after another (Aura::PoolInFlux).
+    Aura::PoolInFluxScope choosing(true);
+    r.winner = ChooseGObjectsCandidate(in.published, in.candidates, in.nameSampleSlots, &r.scored, &aborted);
+    if (aborted) {
+        r.outcome = ReplaceOutcome::Aborted;
+        Sein::Warn("SCAN:GObj", "Rescan: the choice was cut short by shutdown -- GObjects stays 0x%llX",
+                   (unsigned long long)in.published);
+        return r;
+    }
+    if (!r.winner.addr) {
+        r.outcome = ReplaceOutcome::NoneQualified;
+        Sein::Warn("SCAN:GObj", "Rescan: none of %zu candidate(s) reads objects whose head resolves names -- GObjects "
+                   "stays 0x%llX", in.candidates.size(), (unsigned long long)in.published);
+        return r;
+    }
+    const bool inPlace = r.winner.addr == in.published;
+    Sein::Info("SCAN:GObj", "Rescan: GObjects 0x%llX -> 0x%llX%s (Count=%d, %d names resolved in the first %d slots)",
+               (unsigned long long)in.published, (unsigned long long)r.winner.addr, inPlace ? " (in place)" : "",
+               r.winner.count, r.winner.resolved, r.winner.scanned);
+    step(ReplaceStep::Chosen);
+
+    // The decoy's verdict says the probe ran, so what waits on it (the FunctionFlags vote, the GEngine second pass, an
+    // override's tail check) would act on unmeasured offsets. The vote goes with it, to be taken again where UE5_Init
+    // takes it: after this probe, under the pre-ladder version.
+    DynOff::ResetOffsetsVerdict();
+    Ubel::ResetFunctionFlagsVote();
+    step(ReplaceStep::VerdictReset);
+
+    Aura::Init(r.winner.addr);
+    SetModuleAnchor(r.winner.addr);
+    choosing.End();
+    step(ReplaceStep::AuraOnWinner);
+
+    // The probe and everything after it read the session's version; the decoy's ladder may have raised it from the
+    // decoy's item layout, and the ladder only raises.
+    g_cachedUEVersion = in.preLadderVersion;
+    if (hooks.publish) hooks.publish(r.winner.addr, inPlace);
+    step(ReplaceStep::Published);
+
+    // Offset-independent, or gated on the validated verdict just reset: safe before the probe.
+    Aura::ResetUFunctionFuncDetection();
+    Ubel::ResetValidatedLayoutProbes();
+    step(ReplaceStep::LatchesReset);
+
+    ValidateAndFixOffsets(in.preLadderVersion);
+    step(ReplaceStep::Probed);
+    if (hooks.resolveGEngine) hooks.resolveGEngine();
+    step(ReplaceStep::GEngine);
+    // After the probe re-measured the FName width DetectUEnumNames reads, before the ladder's EnumPackage rung asks it.
+    ResetUEnumNamesDetection();
+    step(ReplaceStep::UEnumReset);
+    if (hooks.climbVersion) hooks.climbVersion();
+    step(ReplaceStep::Climbed);
+
+    // The version may have moved, and what walks cached between the probe's own retire and the climb took the old one.
+    // The envelopes are version-derived (set_ue_version_override drops them for the same reason); compact sets and the
+    // Interfaces search latch from walks under the offsets the probe has just replaced.
+    DynOff::RetireFamilyEpoch();
+    DynOff::bCompactSets.store(false, std::memory_order_release);
+    DynOff::SOFTPTR_PATH = -1;
+    DynOff::LAZYPTR_GUID = -1;
+    DynOff::UCLASS_INTERFACES.store(0, std::memory_order_release);
+    step(ReplaceStep::WalkLatchesReset);
+
+    r.outcome = inPlace ? ReplaceOutcome::ReinitInPlace : ReplaceOutcome::Replaced;
+    return r;
+}
+
+// One lock for DetectUEnumNames and its reset, so a reset never interleaves with a latch.
+static std::mutex s_enumNamesMutex;
+
+void ResetUEnumNamesDetection() {
+    std::lock_guard<std::mutex> lk(s_enumNamesMutex);
+    DynOff::bUEnumNamesDetected.store(false, std::memory_order_release);
+    DynOff::bUEnumNamesFailed.store(false, std::memory_order_release);
+    DynOff::UENUM_NAMES = 0x40;
+    DynOff::UENUM_VALUE_SIZE = 8;
+    DynOff::UENUM_PAIR_STRIDE = 0;
+    DynOff::bEnumNamesNewContainer = false;
+    // After the layout, so a reader that sees the new generation also sees the defaults it replaced.
+    DynOff::UENUM_DETECT_GEN.fetch_add(1, std::memory_order_acq_rel);
 }
 
 // ============================================================
@@ -5907,6 +6206,11 @@ bool DetectUEnumNames(bool latchFailure) {
     // Already detected?
     if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         return true;
+    // [RESCAN-DECOY-REINIT] One search at a time, and never across ResetUEnumNamesDetection: a search that began on the
+    // pool a GObjects replacement retired latches before the reset clears it, or starts after on the new pool.
+    std::lock_guard<std::mutex> enumLock(s_enumNamesMutex);
+    if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return true;
 
     Sein::Info("DYNO:Enum", "DetectUEnumNames: Searching for known enums in GObjects...");
 
@@ -6031,6 +6335,7 @@ bool DetectUEnumNames(bool latchFailure) {
                 DynOff::bEnumNamesNewContainer = !legacy;
                 DynOff::UENUM_VALUE_SIZE  = legacy ? layout.valueSize : 8;
                 DynOff::UENUM_PAIR_STRIDE = legacy ? layout.legacyStride : 0;
+                DynOff::bUEnumNamesFailed.store(false, std::memory_order_release);
                 DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
 
                 Sein::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "

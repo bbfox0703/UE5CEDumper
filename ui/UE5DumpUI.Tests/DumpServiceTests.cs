@@ -3999,8 +3999,8 @@ public class DumpServiceTests
         {
             ["ok"] = true,
             ["packed_layout"] = false,
-            ["ce_base"] = "\"Game.exe\"+1BA1820",
-            ["ce_offsets"] = new JsonArray { 0x40, 0x108, 0x18, 0 },  // field, item+objOff, chunk, deref
+            ["ce_base"] = "\"Game.exe\"+1BA1830",                     // the Objects field [CEPTR-OBJECTS-2026-11-19]
+            ["ce_offsets"] = new JsonArray { 0x40, 0x108, 0x18 },     // field, item+objOff, chunk in the table
         });
 
         var svc = CreateService();
@@ -4008,7 +4008,8 @@ public class DumpServiceTests
 
         Assert.False(info.PackedLayout);
         Assert.Equal("", info.Warning);
-        Assert.Equal(4, info.CeOffsets.Length);   // full GObjects→chunk→item→field chain
+        Assert.Equal("\"Game.exe\"+1BA1830", info.CeBase);
+        Assert.Equal([0x40, 0x108, 0x18], info.CeOffsets);   // Objects field → chunk → item → field, as sent
     }
 
     [Fact]

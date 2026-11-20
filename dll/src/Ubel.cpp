@@ -209,6 +209,8 @@ static bool ParseEnumTable(uintptr_t enumAddr, std::vector<std::pair<int64_t, st
 // ============================================================
 static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     if (!enumAddr) return "";
+    // [RESCAN-DECOY-REINIT] Taken before the layout is read: a reset during the parse moves it (see the publish below).
+    const uint32_t gen = DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire);
 
     // Lazy init: trigger DetectUEnumNames on first call.
     // bUEnumNamesFailed prevents a retry storm.
@@ -256,7 +258,9 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         // integers — in the Live Walker, the Property Grid and every CE export, for
         // the rest of the process, with no retry. Leaving it uncached costs a re-read
         // per lookup and lets the next one recover.
-        if (!tableComplete) {
+        // [RESCAN-DECOY-REINIT] So is a table parsed across Genau::ResetUEnumNamesDetection, which may have read the
+        // reset's default layout halfway through.
+        if (!tableComplete || DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire) != gen) {
             for (const auto& [v, n] : entries)
                 if (v == value) return n;
             return "";
@@ -881,7 +885,7 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
         return "Unknown";
     }
 
-    // FFieldClass has Name (FName) at offset 0x00
+    // FFieldClass::Name, at the offset Genau's joint probe latched
     std::string name = ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
     // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY:
     // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object
@@ -1289,8 +1293,8 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
 
     // A FAULT here means uclassAddr is not mapped at all, which is a different fact
     // from "the value looks wrong": USTRUCT_PROPSSIZE is a small in-object offset
-    // (childPropsOff + 8), so even a mis-derived one still lands inside a mapped
-    // object. Only an unmapped page faults — and that verdict is offset-independent,
+    // (Genau measures it at or past ChildProperties + 8), so even a mis-derived one still
+    // lands inside a mapped object. Only an unmapped page faults — and that verdict is offset-independent,
     // which is why bailing on it is safe on a forked layout where the value test
     // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
     // FField chain. Falls through to the same un-memoized exit as the value gate.
@@ -1411,9 +1415,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // class FIRST and only then applies IsPlausiblePropertiesSize to decide the address is
     // recycled, and UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its
     // is-this-an-instance probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
-    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
-    // Genau), never independently probed, so on a forked layout a pre-walk bail would
-    // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
+    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is checked against Guid alone and
+    // derived as ChildProperties + 8 when only Vector is found, so on a forked layout a
+    // pre-walk bail would turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClass");
@@ -2092,7 +2096,7 @@ std::vector<int> FunctionFlagsCandidates(unsigned ver) {
     const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
     std::vector<int> cands{ DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
                                                             DynOff::USTRUCT_PROPSSIZE, measured,
-                                                            DynOff::bUseFProperty) };
+                                                            DynOff::bUseFProperty, DynOff::bPropsSizeLicensee) };
     auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
     addCand(DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName));
     for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
@@ -2139,6 +2143,9 @@ static void EnsureFunctionFlagsOffset() {
     if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
     if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_relaxed)) return;
+    // [RESCAN-DECOY-REINIT] Again under the lock: a GObjects replacement resets the verdict, then this vote under the same
+    // lock, and a caller that passed the check above before the reset must not vote over the new pool's unmeasured offsets.
+    if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
 
     const unsigned ver = g_cachedUEVersion;
     const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
@@ -2205,6 +2212,26 @@ int FunctionFlagsOffset() {
     return DynOff::UFUNCTION_FLAGS;
 }
 
+void ResetFunctionFlagsVote() {
+    std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
+    DynOff::UFUNCTION_FLAGS = 0;
+    DynOff::UFUNCTION_TAIL_EXTRA = 0;
+    DynOff::UFUNCTION_TAIL_MEASURED.store(-1, std::memory_order_relaxed);
+    DynOff::bUFunctionFlagsDetected.store(false, std::memory_order_release);
+}
+
+void ResetValidatedLayoutProbes() {
+    DynOff::FNAME_SIZE_MEASURED.store(0, std::memory_order_release);
+    DynOff::bFNameSizeProbed.store(false, std::memory_order_release);
+    DynOff::FNAME_ALIGN_MEASURED.store(0, std::memory_order_release);
+    DynOff::bFNameAlignProbed.store(false, std::memory_order_release);
+    DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(-1, std::memory_order_release);
+    DynOff::SOFTPATH_SIZE_MEASURED.store(0, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_OFFSET.store(-1, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_WIDTH.store(-1, std::memory_order_release);
+    DynOff::bSoftPathProbed.store(false, std::memory_order_release);
+}
+
 // Where FunctionFlags sits when `ver` is judged: a decided offset stays latched across an override; undecided, it starts
 // from `ver`'s own primary (ReadFuncFlagsAndParams). One rule for the override's refusal and for the published
 // contradiction, so they cannot judge the same version differently.
@@ -2212,7 +2239,7 @@ static int TailFlagsOffFor(unsigned ver, int decided) {
     return decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
 }
 
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
@@ -2269,7 +2296,7 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
         : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
                                           DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
 
     if (decided > 0) {
         Macht::ReadSafe<uint32_t>(funcAddr + decided, funcFlags);
@@ -2398,7 +2425,7 @@ FunctionCaptureSetup PrepareFunctionCapture() {
     const int primary = decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
-                                          DynOff::bUseFProperty);
+                                          DynOff::bUseFProperty, DynOff::bPropsSizeLicensee);
     if (primary > 0) {
         s.flagsOffset = primary;
         s.tailOffset  = DynOff::FunctionTailReadBase(g_cachedUEVersion, primary,

@@ -315,9 +315,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // already held before the load is not the trace's cost.
     internal const double TraceUiPeakFactor = 2.25;
     internal const int    TraceUiPageMb     = 45;
+    // [LIVEFUNCS-UI-SNAP-MEMORY] The parameter copies a load keeps (SnapCopyKeeper): their raw bytes, the snapshot
+    // buffer at most, and their decoded values, which for a large struct weigh some 27 times the raw bytes, up to the
+    // decoded budget. Sharing what recurs usually keeps them far below this; the line states the bound.
+    internal const int SnapDecodedPerRaw = 27;
+    public int TraceUiSnapMb => AnySnapshotChoice
+        ? SnapshotBufferMb + Math.Min(Constants.SnapDecodedBudgetMb, SnapDecodedPerRaw * SnapshotBufferMb)
+        : 0;
     public int TraceGameMb   => TraceBufferMb + (AnySnapshotChoice ? SnapshotBufferMb : 0);
-    public int TraceUiPeakMb => (int)(TraceBufferMb * TraceUiPeakFactor) + TraceUiPageMb;
-    public int TraceUiHeldMb => TraceBufferMb;
+    public int TraceUiPeakMb => (int)(TraceBufferMb * TraceUiPeakFactor) + TraceUiPageMb + TraceUiSnapMb;
+    public int TraceUiHeldMb => TraceBufferMb + TraceUiSnapMb;
     /// <summary>Physical memory free when last asked (MB); long.MaxValue when unknown.</summary>
     private long _availableMb = long.MaxValue;
     /// <summary>Above the memory free now, the estimate is a warning; Start still runs.</summary>

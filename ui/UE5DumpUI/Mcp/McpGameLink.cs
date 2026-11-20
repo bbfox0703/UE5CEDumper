@@ -216,11 +216,14 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     }
 
     /// <summary>The scan's state from scan_status and get_pointers. A running scan is Running whatever the pointers
-    /// say: they are published before the offsets are validated. A finished one (phase 7, in proxy and injected mode
+    /// say: they are published before the offsets are validated. So is an apply_rescan settling the pool
+    /// (<c>applying</c>), whose object count may be a candidate's. A finished one (phase 7, in proxy and injected mode
     /// alike) is Ready when it found objects. Anything else never ran, or Stop cancelled it.</summary>
     internal static McpScanState StateFrom(JsonObject scanStatus, JsonObject pointers)
     {
         if (scanStatus["running"] is JsonValue r && r.TryGetValue<bool>(out bool running) && running)
+            return McpScanState.Running;
+        if (scanStatus["applying"] is JsonValue a && a.TryGetValue<bool>(out bool applying) && applying)
             return McpScanState.Running;
         bool finished = McpJson.TryGetLong(scanStatus["phase"], out long phase) && phase >= 7;
         if (!finished) return McpScanState.NotStarted;

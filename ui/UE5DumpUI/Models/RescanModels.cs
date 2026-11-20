@@ -41,3 +41,16 @@ public sealed class RescanStatusResult
     /// <summary>Scan method used for GWorld (e.g. "instance_scan").</summary>
     public string GWorldMethod { get; init; } = "";
 }
+
+/// <summary>
+/// Result from the "apply_rescan" command: the refreshed pointers, and what happened to GObjects.
+/// </summary>
+public sealed class ApplyRescanResult
+{
+    /// <summary>The pointers and object count after the apply (the reply carries no methods or offsets).</summary>
+    public EngineState State { get; init; } = new();
+
+    /// <summary>[RESCAN-DECOY-REINIT] The DLL's <c>gobjects_outcome</c> (the <c>Constants.RescanOutcome*</c> words);
+    /// empty from a DLL that predates the key, whose apply only ever filled a GObjects of 0.</summary>
+    public string GObjectsOutcome { get; init; } = "";
+}

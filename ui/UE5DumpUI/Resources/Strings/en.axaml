@@ -481,13 +481,15 @@
     <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>
     <sys:String x:Key="str.Pointers.AobAllFailed">&#x1F534; All AOB patterns failed</sys:String>
     <sys:String x:Key="str.Pointers.ExtraScan">Extra Scan</sys:String>
-    <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found. Try aggressive scanning techniques (5-20 seconds).</sys:String>
+    <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found, or GObjects reads no objects. Try aggressive scanning techniques (5-20 seconds).</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHex">HEX</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
     <!-- [AOBM-SYSTAB-ASM-SILENT] What the ASM status line calls the address it moved to ({0} = the pointer, e.g. GObjects). -->
     <sys:String x:Key="str.Pointers.ScanHitLabel">{0} AOB scan hit</sys:String>
+    <!-- The GObjects method a Count == 0 recovery publishes: UE5_Init's static-struct recovery found a static array no AOB matched. -->
+    <sys:String x:Key="str.Pointers.Method.StaticStructRecovery">static struct recovery</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbol">SYM</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin). When the DLL found GWorld through the game's export rather than an AOB (modular builds such as Satisfactory), the symbol is defined from that export, which Cheat Engine resolves by name.</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGEngineSymbolTip">Create CE AA Script that registers the &amp;GEngine SLOT as 'gengine_addr' symbol — the slot is restart-stable, so a GameEngine-rooted record auto-follows engine recreation (via AOBMaker CE Plugin). When the DLL found &amp;GEngine through the game's export rather than an AOB (modular builds such as Satisfactory), the symbol is defined from that export, which Cheat Engine resolves by name.</sys:String>
@@ -507,6 +509,16 @@
     <sys:String x:Key="str.Pointers.Scan.NoResults">No additional pointers found.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.CompleteNoResults">Scan complete — no results.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.Error">Scan error: {0}</sys:String>
+    <!-- [RESCAN-DECOY-REINIT] The result line after apply_rescan ({0} = an address; FoundGObjects / FoundGWorld are joined
+         by ", " into Found's {0}). Replaced / ReinitInPlace: {0} = the GObjects in force after the apply, {1} = its object
+         count. NotApplied: {0} = the DLL's gobjects_outcome word, shown as sent. -->
+    <sys:String x:Key="str.Pointers.Scan.Found">Found: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.FoundGObjects">GObjects: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.FoundGWorld">GWorld: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Replaced">GObjects replaced: {0} ({1:N0} objects). The offsets probe and the version check ran again.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.ReinitInPlace">GObjects reads objects now: {0} ({1:N0} objects). The offsets probe and the version check ran again.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NoneQualified">No candidate reads objects whose names resolve — GObjects is unchanged.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NotApplied">GObjects was not replaced ({0}).</sys:String>
 
     <!-- Pointer Panel: Test Extra Scan status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.TestScan.Starting">Starting test scan...</sys:String>
@@ -1269,6 +1281,7 @@
     <sys:String x:Key="str.CT.Param.Lone">Recorded alone, for what it was chosen for: it was called outside every ticked scope, and opened none.</sys:String>
     <sys:String x:Key="str.CT.Param.Excluded">A per-frame function the trace leaves out, recorded here for what it was chosen for.</sys:String>
     <sys:String x:Key="str.CT.Param.Budget">Over the snapshot budget: this call was recorded without its parameters.</sys:String>
+    <sys:String x:Key="str.CT.Param.ValuesDropped">Its decoded values were not kept: past the {0} MB this UI holds of decoded parameters, the earliest calls keep only their raw copy (below, and on the Bytes tab).</sys:String>
     <sys:String x:Key="str.CT.Param.Overwritten">Its parameters were taken, but the snapshot ring has written over them since (it keeps the last calls).</sys:String>
     <sys:String x:Key="str.CT.Param.RawOnly">This load of the function has no layout ({0}{1}): only the raw bytes below.</sys:String>
     <sys:String x:Key="str.CT.Param.NullParams">The call had no parameter block.</sys:String>
@@ -2220,7 +2233,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <!-- Tooltips: Pointer Panel -->
     <sys:String x:Key="str.Tip.Pointers.Copy">Copy address to clipboard</sys:String>
     <sys:String x:Key="str.Tip.Pointers.CopyScan">Copy AOB scan hit address to clipboard</sys:String>
-    <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers, or for a GObjects that reads no objects</sys:String>
     <sys:String x:Key="str.Tip.Pointers.TestExtraScan">Simulate scan progress UI (dev testing only)</sys:String>
     <sys:String x:Key="str.Tip.Pointers.ClearGameCache">Remove cached scan hints for the current game (next scan will try all patterns)</sys:String>
     <sys:String x:Key="str.Tip.Pointers.ResetAllCache">Rename the entire cache file with a numbered backup (.001-.010) and start fresh</sys:String>

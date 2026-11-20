@@ -50,8 +50,8 @@ def tier0(path):
 BRANCH_ASCII = re.compile(rb"(?=(\+\+[Uu][Ee][45]\+[\x20-\x7e]{0,90}?\x00))")
 BRANCH_UTF16 = re.compile(rb"(?=(\+\x00\+\x00[Uu]\x00[Ee]\x00[45]\x00\+\x00(?:[\x20-\x7e]\x00){0,90}?\x00\x00))")
 # kVersionNeedles' rows without the trailing dot, in the table's order.
-BARE = ["5.8", "5.7", "5.6", "5.5", "5.4", "5.3", "5.2", "5.1", "5.0", "4.27", "4.26", "4.25", "4.24", "4.23", "4.22",
-        "4.21", "4.20", "4.19", "4.18"]
+BARE = ["5.9", "5.8", "5.7", "5.6", "5.5", "5.4", "5.3", "5.2", "5.1", "5.0", "4.27", "4.26", "4.25", "4.24", "4.23",
+        "4.22", "4.21", "4.20", "4.19", "4.18"]
 TABLE = {tuple(int(x) for x in b.split(".")) for b in BARE}
 TIER1_PREFIXES = ("++UE5+Release-", "++UE4+Release-")
 

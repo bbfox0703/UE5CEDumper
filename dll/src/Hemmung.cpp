@@ -277,8 +277,7 @@ void FillDilLocked(int32_t target, DilationInfo& info) {
 // ---- re-assert worker (identical discipline to Laufen) ----
 
 void WorkerLoop() {
-    // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop. Only the tick is ours.
+    // The loop's discipline lives in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("Time", Grimoire::TIME_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);

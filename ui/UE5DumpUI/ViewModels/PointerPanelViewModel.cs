@@ -404,7 +404,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         "UE 4.18", "UE 4.19", "UE 4.20", "UE 4.21", "UE 4.22", "UE 4.23",
         "UE 4.24", "UE 4.25", "UE 4.26", "UE 4.27",
         "UE 5.0", "UE 5.1", "UE 5.2", "UE 5.3", "UE 5.4",
-        "UE 5.5", "UE 5.6", "UE 5.7", "UE 5.8",
+        "UE 5.5", "UE 5.6", "UE 5.7", "UE 5.8", "UE 5.9",
     };
 
     // A REFUSED engine (IsVersionTooOld) silences every per-pointer failure line below. Nothing
@@ -509,14 +509,24 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool IsGEngineNotFound => HasData && !IsVersionTooOld && GEngineMethod == "not_found";
 
     /// <summary>
-    /// True when Extra Scan button should be visible:
-    /// connected, not already scanning, and some pointer is missing.
+    /// True when Extra Scan can run: <see cref="ExtraScanOffered"/>, and no scan is running.
     /// Never on a refused engine — Extra Scan probes the same UE4/UE5 presets and the same
     /// hardcoded UObject::Class chain, so it is a guaranteed no-op there, and offering it would
     /// contradict the banner that says it cannot help. The DLL refuses the command too.
     /// </summary>
-    public bool CanExtraScan => HasData && !IsScanning && !IsVersionTooOld
-        && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
+    public bool CanExtraScan => ExtraScanOffered && !IsScanning;
+
+    /// <summary>Extra Scan has something to look for (<see cref="CanExtraScan"/> without the running scan):
+    /// a missing pointer, or [RESCAN-DECOY-REINIT] a published GObjects that reads no objects, which the DLL replaces
+    /// when GNames is up (it judges the candidates by the names their heads resolve) and it is new enough.</summary>
+    public bool ExtraScanOffered => HasData && !IsVersionTooOld
+        && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found"
+            || (IsNonZeroAddr(GObjectsAddress) && IsNonZeroAddr(GNamesAddress) && TotalObjects <= 0
+                && DllBuildNumber >= Constants.RescanReplaceMinDllBuild));
+
+    /// <summary>The Extra Scan section: offered, running, or showing the result of the scan that just ran -- which the
+    /// refresh after a successful apply would otherwise hide with the button.</summary>
+    public bool ShowExtraScanSection => ExtraScanOffered || IsScanning || ScanComplete;
 
     // --- AOBMaker button enable state ---
     /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data), or
@@ -584,6 +594,16 @@ public partial class PointerPanelViewModel : ViewModelBase
                                 ILogCompressionService? logCompression = null,
                                 IAobMakerUiClient? aobMakerUi = null)
     {
+        // [RESCAN-DECOY-REINIT] The section's visibility follows the offer and the scan's own state, wherever those are
+        // raised from.
+        PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(CanExtraScan) or nameof(ScanComplete) or nameof(IsScanning))
+            {
+                OnPropertyChanged(nameof(ExtraScanOffered));
+                OnPropertyChanged(nameof(ShowExtraScanSection));
+            }
+        };
         _platform = platform;
         _dump = dump;
         _log = log;
@@ -1009,6 +1029,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         "instance_scan" => "instance scan",
         "instance_scan_recovery" => "instance scan recovery",
         "engine_recovery" => "engine recovery",
+        "static_struct_recovery" => Res.Get("str.Pointers.Method.StaticStructRecovery"),
         "string_ref" => "string ref",
         "pointer_scan" => "pointer scan",
         "not_found" => "not found",
@@ -1071,17 +1092,18 @@ public partial class PointerPanelViewModel : ViewModelBase
                     if (status.FoundGObjects || status.FoundGWorld)
                     {
                         ScanStatusText = Res.Get("str.Pointers.Scan.Applying");
-                        var newState = await _dump.ApplyRescanAsync();
+                        var applied = await _dump.ApplyRescanAsync();
 
-                        var parts = new List<string>();
-                        if (status.FoundGObjects) parts.Add($"GObjects: {status.GObjectsAddr}");
-                        if (status.FoundGWorld) parts.Add($"GWorld: {status.GWorldAddr}");
-                        ScanResultText = $"Found: {string.Join(", ", parts)}";
-                        ScanStatusText = Res.Get("str.Pointers.Scan.Applied");
+                        var report = ExtraScanReport.Describe(status, applied);
+                        ScanResultText = report.ResultText;
+                        ScanStatusText = report.StatusText;
 
-                        _log?.Info(Constants.LogCatInit, $"Extra Scan complete: {ScanResultText}");
+                        _log?.Info(Constants.LogCatInit,
+                            $"Extra Scan complete: {ScanResultText} (gobjects_outcome '{applied.GObjectsOutcome}')");
 
-                        // Notify MainWindowVM to refresh all panels
+                        // Notify MainWindowVM to refresh all panels -- after every apply: one that published nothing
+                        // can still find the DLL moved under the panel (the pool reads objects now, another
+                        // client applied), and the refresh is one get_pointers.
                         RescanApplied?.Invoke();
                     }
                     else

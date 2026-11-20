@@ -357,6 +357,33 @@ public class CallTraceViewModelTests
         Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(t.FindBySeq(0)).Notes);
     }
 
+    [Fact]
+    public async Task A_call_whose_decoded_values_the_budget_let_go_says_so_and_keeps_its_bytes()
+    {
+        var dump = DumpForParams();
+        var (vm, _) = MakeVm(dump);
+        vm.StringLookup = k => k;
+        vm.SnapDecodedBudgetBytes = 1;   // no decoded copy fits
+        await vm.LoadCommand.ExecuteAsync(null);
+        var b = vm.Params(vm.Trace!.FindBySeq(1));
+        Assert.Contains("str.CT.Param.ValuesDropped", b.Notes);
+        Assert.Contains("str.CT.Param.HexAt", b.Hex, StringComparison.Ordinal);
+        Assert.Equal(new[] { "X", "Out", "ReturnValue" }, b.Rows.Select(r => r.Name));
+        Assert.All(b.Rows, r => Assert.Equal("", r.AtCall));
+    }
+
+    [Fact]
+    public async Task Within_the_budget_a_call_keeps_its_values_and_gets_no_such_note()
+    {
+        var dump = DumpForParams();
+        var (vm, _) = MakeVm(dump);
+        vm.StringLookup = k => k;
+        await vm.LoadCommand.ExecuteAsync(null);
+        var b = vm.Params(vm.Trace!.FindBySeq(1));
+        Assert.DoesNotContain("str.CT.Param.ValuesDropped", b.Notes);
+        Assert.Equal("7", b.Rows[0].AtCall);
+    }
+
     private static int Cell(string column) => Array.IndexOf(UE5DumpUI.Helpers.ParamBytesTable.Columns, column);
 
     [Fact]
@@ -1485,7 +1512,12 @@ public class CallTraceViewModelTests
     {
         var doc = PanelAxaml();
         var row = RowTemplate(doc);
-        var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
+        // The Parameters tab has no column that drags: its heading and rows share one Grid layout, which the headless
+        // CallTraceColumnsTests lays out and checks. The rule below is the list's.
+        var paramsTab = doc.Descendants(Av + "TabItem")
+            .Single(e => (string?)e.Attribute("Header") == "{StaticResource str.CT.Tab.Params}");
+        var outside = doc.Descendants()
+            .Where(e => !e.Ancestors().Contains(row) && e != row && !e.Ancestors().Contains(paramsTab)).ToList();
         Assert.DoesNotContain(outside, e => e.Attribute("ColumnDefinitions") != null);
         foreach (var width in new[] { "ShownTimeColWidth", "ShownDurationColWidth", "ShownThreadColWidth", "ShownObjectColWidth" })
         {

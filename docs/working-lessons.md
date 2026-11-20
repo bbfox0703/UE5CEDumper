@@ -4158,7 +4158,8 @@ release notes -- v3649's "Hold @0" linked to someone's account -- so such text g
 counts too: it folds in commit messages, and v3654's draft listed an account named 0 among its Contributors, from
 the very commit that recorded this rule, until the prepared notes replaced it. Check each claim against its row
 before writing it, name a game only where the fix was measured on it, and say so when the previous
-release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
+release shipped a regression. **Support added for a game nobody here owns** (2026-11-19, Phantom Blade Zero) is
+named all the same, and the same sentence says it is not tested on the game. Neither the merge nor the release run wakes the session; the maintainer
 says when CI is done.
 
 **2. Keep agent fan-out small.** (2026-09-24)
@@ -4190,6 +4191,26 @@ match exactly is a same-source rebuild, not an older build, and is left alone (Â
 
 *Why.* An old proxy owns the pipe at game start, so the row measures the old binary; asking first only
 cost a round trip.
+
+**5. A licensee layout never breaks the stock structure logic.** (2026-11-19)
+
+A game's custom layout (a reordered `TUObjectArray`, a moved `FFieldClass::Name`, fields shifted after
+`ChildProperties`) joins the detection as a candidate appended after the stock ones, so every stock engine
+(UE 4.18 to 5.8) latches exactly what it latched before. A game nobody here owns is covered by tests alone: a
+synthetic shape built from the layout's source (for Phantom Blade Zero, RE-UE4SS's `MemberVariableLayout.ini`),
+red first, and **in the same tests** the stock shapes, asserting that each still detects as before the change.
+
+*Why.* Every target shares the stock logic; a game-specific change that moved it would break games that work today
+to support one that nobody can check here.
+
+**6. A file outside every test target is no reason to leave a change untested.** (2026-11-19)
+
+That a `.cpp` reaches no test target only means nobody has needed it there yet. When a change in it needs a test, add
+the file to a target (an existing one or a new one), or move the decision into a header a target compiles and have the
+`.cpp` call it. "It is in no test target, so the DLL build is the check" is not an answer.
+
+*Why.* CLAUDE.md lists which files the test targets compile so that a green run is not mistaken for coverage of the
+rest, not to mark the rest as untestable.
 
 ## 8. Writing code comments
 

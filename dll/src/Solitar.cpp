@@ -63,8 +63,8 @@ std::atomic<bool> s_workerStop{false};
 
 // Generic scan: cached protection-bool targets for the current pawn class —
 // bCanBeDamaged + every reflected invincibility bool matched by
-// MatchProtectionBool. Rebuilt only when the resolved pawn class changes (the
-// offsets/masks are class-stable, so the worker reuses them across ticks).
+// MatchProtectionBool. Rebuilt when the resolved pawn class or the property family's
+// epoch changes (s_targetsKey); between those the worker reuses them across ticks.
 // Guarded by s_mutex (only touched inside ApplyGodNowLocked).
 struct BoolTarget {
     int32_t     fieldOffset = 0;        // Offset_Internal of the property in the object
@@ -74,7 +74,10 @@ struct BoolTarget {
     std::string name;
 };
 std::vector<BoolTarget> s_targets;
-uintptr_t               s_targetsClass = 0;
+// [RESCAN-DECOY-REINIT] The pawn class the targets were read from, under the property family's epoch
+// (DynOff::FamilyCacheKey): an offsets probe retires the epoch, so targets read under the offsets it replaced are read
+// again -- after a GObjects replacement, say, whose decoy session read them under defaults.
+uintptr_t               s_targetsKey = 0;
 
 // ---- low-level reads (copied from Wirbel; public APIs only) ----
 
@@ -205,11 +208,10 @@ std::string ToLower(const std::string& s) {
 // Generic scan: walk the pawn class (incl. inherited fields) for damage /
 // invincibility FBoolProperty fields and cache them as protection targets.
 // Universal keyword table (MatchProtectionBool) — no per-game config. Rebuilt
-// only when the pawn class changes. Logs the discovered flags when verbose
+// when s_targetsKey changes (ApplyGodNowLocked). Logs the discovered flags when verbose
 // (so the user sees exactly what generic analysis found on their game).
 void BuildTargets(uintptr_t pawnClass, bool verbose) {
     s_targets.clear();
-    s_targetsClass = pawnClass;
     if (!pawnClass) return;
     const ClassInfo& ci = Ubel::WalkClassEx(pawnClass);
     for (const auto& f : ci.Fields) {
@@ -254,9 +256,13 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
     int32_t rc = ResolvePawnRef(p);
     if (rc != PR_OK) return rc;
 
-    // Rebuild the protection-target set when the pawn class changes.
-    if (p.pawnClass != s_targetsClass)
+    // Rebuild the protection-target set when the pawn class changes, or the offsets it was read under do. The key is
+    // taken before the walk: a family move during it leaves the old epoch on the set, so the next call reads it again.
+    const uintptr_t targetsKey = DynOff::FamilyCacheKey(p.pawnClass);
+    if (targetsKey != s_targetsKey) {
         BuildTargets(p.pawnClass, verbose);
+        s_targetsKey = targetsKey;
+    }
     if (s_targets.empty())
         return PR_ERR_REFLECT;   // not even bCanBeDamaged resolved
 
@@ -294,8 +300,7 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
 // ---- re-assert worker ----
 
 void WorkerLoop() {
-    // Sliced sleep, cancel-immunity, per-tick exception guard and the shutdown break
-    // all live in Routine::ReassertLoop. Only the tick is ours.
+    // The loop's discipline lives in Routine::ReassertLoop. Only the tick is ours.
     int driftCount = 0;
     Routine::ReassertLoop("GodMode", Grimoire::PROTECT_REASSERT_MS, s_workerStop, [&] {
         std::lock_guard<std::mutex> lk(s_mutex);

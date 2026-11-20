@@ -1,0 +1,24 @@
+{
+ "name": "rescan-decoy-reinit",
+ "why": "[RESCAN-DECOY-REINIT] live: UE5_Init publishes a decoy built from DumperTest's real FUObjectArray (its Objects field, NumElements and MaxElements, laid out as the dll_core_test decoy: Genau-shaped, Aura reads 0) and skips both Count == 0 recoveries, so the session is the one Extra Scan's replace exists for. tools/verify/rescan_decoy_live.py drives it.",
+ "subs": [
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "    if (ptrs.GObjects) {\n        Aura::Init(ptrs.GObjects);\n    }\n",
+   "new": "    if (ptrs.GObjects) {   /* STAGING RESCAN-DECOY-REINIT: publish a decoy built from the real array */\n        static uint8_t s_stagedDecoy[0x80] = {};\n        uintptr_t tbl = 0; int32_t num = 0, maxE = 0;\n        Macht::ReadSafe(ptrs.GObjects + 0x10, tbl); Macht::ReadSafe(ptrs.GObjects + 0x20, maxE);\n        Macht::ReadSafe(ptrs.GObjects + 0x24, num);\n        memcpy(s_stagedDecoy + 0x00, &tbl, 8); memcpy(s_stagedDecoy + 0x08, &num, 4); memcpy(s_stagedDecoy + 0x0C, &maxE, 4);\n        const uint64_t all = ~0ull; const int32_t m1 = -1, spin = 4000;\n        memcpy(s_stagedDecoy + 0x18, &all, 8); memcpy(s_stagedDecoy + 0x20, &m1, 4); memcpy(s_stagedDecoy + 0x38, &spin, 4);\n        LOG_WARN(\"STAGING: init publishes a decoy at 0x%llX built from the real GObjects 0x%llX\",\n                 (unsigned long long)reinterpret_cast<uintptr_t>(s_stagedDecoy), (unsigned long long)ptrs.GObjects);\n        ptrs.GObjects = reinterpret_cast<uintptr_t>(s_stagedDecoy);\n        g_cachedGObjects = ptrs.GObjects;\n        Aura::Init(ptrs.GObjects);\n    }\n",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "        if (Aura::GetCount() == 0) {\n            LOG_WARN(\"UE5_Init: GObjects=0x%llX produced 0 objects",
+   "new": "        if (false && Aura::GetCount() == 0) {   /* STAGING: no static recovery */\n            LOG_WARN(\"UE5_Init: GObjects=0x%llX produced 0 objects",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "        if (Aura::GetCount() == 0) {\n            std::vector<uintptr_t> candidates;",
+   "new": "        if (false && Aura::GetCount() == 0) {   /* STAGING: no heap recovery */\n            std::vector<uintptr_t> candidates;",
+   "count": 1
+  }
+ ]
+}

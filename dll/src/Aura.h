@@ -80,6 +80,12 @@ void Init(uintptr_t gobjectsAddr);
 // stride auto-detection can mis-read as 24. 0 = auto-detect the stride.
 void InitWithExtendedLayout(uintptr_t gobjectsAddr, int forcedItemSize = 0);
 
+// Initialize from the static FUObjectArray Genau::FindGObjectsStaticStruct found, with what it reported about it.
+// A UE 5.8 array (ObjObjects first) and a licensee one ([VND10-A1]) go through Init, whose presets carry their rows;
+// a 5.0-5.7 one goes through InitWithExtendedLayout, its stride forced only for a classic item (UObject* @+0x00) --
+// a 5.7+ item is left to the item auto-detection, which knows that shape.
+void InitRecoveredStaticArray(uintptr_t base, int itemStride, int itemObjOffset, bool ue58, bool licensee);
+
 // Get total number of allocated objects
 int32_t GetCount();
 
@@ -264,6 +270,35 @@ void SetPackedConsts(int alignBits, uint64_t ptrMaskBits, bool force, int serial
 // Whether the GObjects array is a flat (non-chunked) FFixedUObjectArray.
 // Flat arrays were used in UE4.11-4.20; chunked arrays in UE4.21+ and all UE5.
 bool IsFlat();
+
+// Byte offset of the Objects field (the FUObjectItem** every chunk or item read starts from) from the address Init was
+// given. 0x00 only for a stock array published at ObjObjects; an array published at the FUObjectArray base, or a fork
+// that reorders ObjObjects, puts it further in.
+int GetObjectsOffset();
+
+// [CEPTR-OBJECTS-2026-11-19] The Cheat Engine pointer get_ce_pointer_info hands out for byte `fieldOffset` of the
+// object in slot `internalIndex` of a CHUNKED array whose items store the UObject* directly (`itemSize`-byte items,
+// the pointer at `itemObjOffset`), the array published at `arrayAddr` with its Objects field `objectsOffset` in.
+// CE reads [base] before it adds its first offset -- N offsets are N reads (CE's MemoryRecordUnit.pas,
+// TMemoryRecord.GetRealAddress) -- so no offset can stand in for objectsOffset: the base is the Objects field itself.
+// Its read gives the chunk table; the offsets then lead to the chunk, to the UObject*, and to the field, which is
+// only added. `offsets` is in CE's order: offsets[0] is added last.
+struct CeChunkedChain {
+    uintptr_t        base = 0;          // the Objects field
+    int32_t          chunkIndex = 0;
+    int32_t          withinChunk = 0;
+    std::vector<int> offsets;           // the field, the UObject* in the chunk, the chunk in the table
+};
+inline CeChunkedChain BuildCeChunkedChain(uintptr_t arrayAddr, int objectsOffset, int32_t internalIndex,
+                                          int itemSize, int itemObjOffset, int fieldOffset) {
+    CeChunkedChain c;
+    c.base        = arrayAddr + static_cast<uintptr_t>(objectsOffset);
+    c.chunkIndex  = internalIndex / Grimoire::OBJECTS_PER_CHUNK;
+    c.withinChunk = internalIndex % Grimoire::OBJECTS_PER_CHUNK;
+    c.offsets     = { fieldOffset, c.withinChunk * itemSize + itemObjOffset,
+                      c.chunkIndex * static_cast<int>(sizeof(uintptr_t)) };
+    return c;
+}
 
 // [W4-STRIDE-TENTATIVE] How the FUObjectItem stride was arrived at -- ORTHOGONAL to the layout mode (a guessed
 // stride is still classed classic / unpacked57 / packed57, which is why this is not a fourth mode):
@@ -1090,6 +1125,7 @@ inline bool IsEnginePackage(const std::string& rawPath) {
         "/Script/GameplayTasks", "/Script/GameplayAbilities", "/Script/PacketHandler",
         "/Script/PropertyAccess", "/Script/DeveloperSettings", "/Script/AssetRegistry",
         "/Script/MediaAssets", "/Script/HeadMountedDisplay",
+        "/Script/CascadeRuntime",   // Cascade's plugin from UE 5.9, on by default
     };
 
     // GetFullName emits engine paths as "//Script/Engine/Class" — a DOUBLE
@@ -1523,6 +1559,26 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
 // interpreter, not its own code), if the Func offset isn't detected yet, or if
 // the slot isn't a code pointer. See Aura.cpp.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
+
+// [RESCAN-DECOY-REINIT] Forget the UFunction::Func detection under the lock it takes, so the next use samples the pool
+// Aura reads now. An empty pool latches "not found" for the process.
+void ResetUFunctionFuncDetection();
+
+// [RESCAN-DECOY-REINIT] True while a recovery moves Aura from candidate array to candidate array (UE5_Init's Count == 0
+// recoveries, apply_rescan's choice): what Aura reads then is a candidate, not the session's pool, and a one-shot
+// detection must not take it for one.
+bool PoolInFlux();
+// Raises PoolInFlux for its life, or until End(), when constructed with `on`; nests.
+class PoolInFluxScope {
+public:
+    explicit PoolInFluxScope(bool on);
+    ~PoolInFluxScope() { End(); }
+    void End();
+    PoolInFluxScope(const PoolInFluxScope&) = delete;
+    PoolInFluxScope& operator=(const PoolInFluxScope&) = delete;
+private:
+    bool on_;
+};
 
 // [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
 // interpreter. A zero is flags not found, which is no verdict either way. Pure.

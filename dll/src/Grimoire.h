@@ -340,7 +340,7 @@ inline std::atomic<bool> bUFunctionFuncDetected{false};
 // === FField — defaults for UE5.0-5.2 (FFieldVariant=0x10) ===   [R7-A-03]
 // UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
-inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
+inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner, variable size; a licensee layout swaps it with Next
 inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
 inline int FFIELD_NAME        = 0x28;  // FName
 
@@ -361,7 +361,8 @@ inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 // `FName Name` IS the first declared member, but UE 5.8 made ~FFieldClass() virtual
 // (Field.h:101 @5.8.0-release; non-virtual at 5.7.4-release:100). FFieldClass has no
 // base class, so the vfptr lands at +0x00 and EVERY member shifts +8 — Name is +0x00
-// up to UE 5.7 and +0x08 from UE 5.8.
+// up to UE 5.7 and +0x08 from UE 5.8. A licensee layout can put it elsewhere
+// (kFFieldClassNameLicenseeProbes).
 //
 // When it is wrong the damage is total but silent: the ChildProperties probe identifies a candidate by
 // resolving this name, so it matches nothing at ANY offset (-> "keeping defaults"),
@@ -397,6 +398,19 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
         if (off == 0x00) { if (n.find("Property") != std::string::npos) return off; }
         else             { if (LooksLikeFieldClassName(n))              return off; }
     }
+    return -1;
+}
+
+// [VND10-A1] Licensee FFieldClass layouts: Phantom Blade Zero keeps ConstructFn at +0x00, ClassFlags at +0x08 and Name at
+// +0x30. A separate list with its own picker, not a third stock candidate: Genau consults it only after every stock
+// reading and the UProperty retry found no ChildProperties, so a stock engine those readings measure never reads these
+// offsets. Suffix test only, the stronger one.
+inline constexpr int kFFieldClassNameLicenseeProbes[] = { 0x30 };
+
+template <class Resolve>
+inline int PickFFieldClassNameOffsetLicensee(Resolve&& resolve) {
+    for (int off : kFFieldClassNameLicenseeProbes)
+        if (LooksLikeFieldClassName(resolve(off))) return off;
     return -1;
 }
 
@@ -547,7 +561,8 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // for our target — but do not "extend" it to an editor process.
 //
 // Returns 0 for a version we have no measurement for (4.07-4.10 sit below the 4.11
-// floor; 5.9+ does not exist yet). The caller decides what to do with that.
+// floor; 5.9 has a preview but no VTableLayout template or fixture PDB to measure it). The
+// caller decides what to do with that.
 //
 // ⭐ MACHINE-CHECKED — `tools/check_processevent_slots.py`, in `check_all`, re-derives every
 // row from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`:
@@ -676,14 +691,48 @@ constexpr int FunctionFlagsFromPropsSize(int propsSizeOff, bool fproperty) {
     return propsSizeOff + (fproperty ? 0x58 : 0x48);
 }
 
+// [VND10-A1] How far past ChildProperties + 8 a licensee's UStruct insert is looked for, and the highest PropertiesSize
+// the FunctionFlags relation is trusted for when that search found it (Phantom Blade Zero: 0x50 inserted, PropertiesSize
+// 0xA8, FunctionFlags 0x100).
+inline constexpr int kPropsSizeLicenseeSpan    = 0xB0;
+inline constexpr int kPropsSizeLicenseeCeiling = 0x100;
+
+// True when PickPropertiesSizeOffset found PropertiesSize past ChildProperties + 8, i.e. on a licensee layout. A stock
+// engine never sets it, so whatever it gates is unreachable there.
+inline bool bPropsSizeLicensee = false;
+
 // The primary a reader starts from before -- or without -- the vote in Ubel: the measured
-// relation when the offsets probe VALIDATED (PropertiesSize is ChildProperties + 8, measured)
-// and the value is plausible, else the version table. `measured` is DynOff::bOffsetsValidated.
+// relation when the offsets probe VALIDATED and the value is plausible, else the version table.
+// `measured` is DynOff::bOffsetsValidated; `licensee` is bPropsSizeLicensee, which alone lets a
+// PropertiesSize above the stock window through.
 constexpr int FunctionFlagsPrimaryFor(unsigned ueVersion, bool casePreservingName, int propsSizeOff,
-                                      bool measured, bool fproperty) {
-    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= 0x80)
+                                      bool measured, bool fproperty, bool licensee = false) {
+    const int ceiling = licensee ? kPropsSizeLicenseeCeiling : 0x80;
+    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= ceiling)
         return FunctionFlagsFromPropsSize(propsSizeOff, fproperty);
     return FunctionFlagsOffsetFor(ueVersion, casePreservingName);
+}
+
+// [VND10-A1] UStruct::PropertiesSize, found on Guid in FProperty mode. A Guid reads PropertiesSize 16 (sizeof FGuid),
+// MinAlignment 4 (compared as int16: 5.6+ keeps StructStateFlags right after it), and PropertyLink 0x18 later, which for
+// a struct with no super heads the same chain as ChildProperties. ChildProperties + 8 is tried first and, when it fits,
+// answers, so a stock engine keeps its stock offset; only when it does not fit is the span behind it searched. When
+// nothing fits the answer is ChildProperties + 8 all the same. `read(addr, dst, n)` returns false on a fault.
+template <class ReadMem>
+inline int PickPropertiesSizeOffset(uintptr_t guid, uintptr_t childPropsHead, int childPropsOff, ReadMem&& read) {
+    auto fits = [&](int off) {
+        int32_t size = 0;
+        int16_t align = 0;
+        uintptr_t link = 0;
+        return read(guid + off, &size, sizeof size) && size == 16
+            && read(guid + off + 4, &align, sizeof align) && align == 4
+            && read(guid + off + 0x18, &link, sizeof link) && link == childPropsHead;
+    };
+    const int stock = childPropsOff + 8;
+    if (fits(stock)) return stock;
+    for (int off = stock + 8; off <= stock + kPropsSizeLicenseeSpan; off += 8)
+        if (fits(off)) return off;
+    return stock;
 }
 
 // The vote's per-sample rule (Ubel::EnsureFunctionFlagsOffset). At the right offset, NumParms
@@ -1505,6 +1554,9 @@ inline std::atomic<bool> bUEnumNamesDetected{false};
 // Set when detection was attempted but FAILED — prevents retry storm and
 // skips enum resolution entirely (raw int values shown instead).
 inline std::atomic<bool> bUEnumNamesFailed{false};
+// [RESCAN-DECOY-REINIT] Bumped by Genau::ResetUEnumNamesDetection after it rewrites the layout above. An enum table
+// parsed across a reset may have read the reset's defaults, so the reader caches it only when this did not move.
+inline std::atomic<uint32_t> UENUM_DETECT_GEN{0};
 
 // === Detection state ===
 // ⛔ sizeof(FName) under CasePreservingName is 0xC, NOT 0x10: three int32

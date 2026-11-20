@@ -48,7 +48,7 @@ struct VersionNeedle {
 // Table order is significant: selection prefers the EARLIEST entry, not the lowest
 // address (see ScanVersionTier23). Newest engine first.
 inline constexpr VersionNeedle kVersionNeedles[] = {
-    { "5.8.", 508 }, { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
+    { "5.9.", 509 }, { "5.8.", 508 }, { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
     { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
     { "5.1.", 501 }, { "5.0.", 500 },
     { "4.27.", 427 }, { "4.26.", 426 }, { "4.25.", 425 },
@@ -62,7 +62,7 @@ inline constexpr size_t kVersionNeedleCount =
 
 // The gate's contract, enforced at compile time. If one of these fires you have added a
 // needle the first-byte walk does not visit, and detection would silently stop finding it.
-static_assert(kVersionNeedleCount == 19, "needle table changed — re-check the gate below");
+static_assert(kVersionNeedleCount == 20, "needle table changed — re-check the gate below");
 namespace detail {
 constexpr bool AllNeedlesGateable() {
     for (size_t i = 0; i < kVersionNeedleCount; ++i) {

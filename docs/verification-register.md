@@ -1151,6 +1151,74 @@ and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Ini
     `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
     row 1's proxy-mode `trigger_scan`.
 
+### ⬜ Phantom Blade Zero's layout (build 3773) — `[VND10-A1]`
+
+The layout is RE-UE4SS's `MemberVariableLayout.ini` for the game, which nobody here owns: every part is tested on
+synthetic shapes only (dll_core_test `VND10-A1-01` / `-02` / `-03`, dll_helpers_test), each beside the stock shapes it
+must not move, and the release notes say it is untested.
+
+1. ⬜ **The first run on Phantom Blade Zero** (a user's log, or the game installed here). Acceptance: GObjects read
+   whole, through a `PBZ` / `PBZ-Base` preset or `Recovery SUCCESS (static struct scan)` after a `licensee array` line,
+   with an object count in the hundred thousands; `ChildProperties found ... licensee FFieldClass::Name at +0x30`;
+   `FField::Next at FField+0x10`; `UStruct::PropertiesSize at +0xA8`; the FunctionFlags vote at `+0x100`;
+   `DetectProcessEvent (pattern, FunctionFlags past +0xFF)`; a class walk with typed properties; an invoke that returns.
+   A line that differs names the part to reopen.
+2. ⬜ **The property family past FStructProperty** (map, set, enum, byte, class, soft-object, interface, delegate
+   properties). The ini checks FProperty, FObjectPropertyBase, FStructProperty, FBoolProperty and FArrayProperty only;
+   the rest are derived from sizeof(FProperty) as on stock. Acceptance: a map, a set and an enum field read right in
+   the Live Walker.
+
+### ⬜ A GObjects CE pointer resolves in Cheat Engine (built 2026-11-19, ships in the next build) — `[CEPTR-OBJECTS-2026-11-19]`
+
+`get_ce_pointer_info` (the MCP tool `read_ce_pointer`) on a chunked direct-layout array: `ce_base` is the latched
+row's Objects field (`gobjects_rva` + `objects_offset`), then three offsets `[field, item, chunk*8]`, because CE reads
+`[base]` before its first offset. Unit tests: dll_helpers_test `Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt`
+(CE's algorithm over fake memory, seven rows and item shapes); dll_core_test VND10-A1-01's `CEPTR-OBJECTS` checks (the
+chain for each row Aura latches on a fake array reaches `Aura::GetByIndex`). No CE record built from the reply has been
+opened on a running game.
+
+1. ⬜ **A base-anchored array** (DumperTest Shipping, where GOBJ_ES53_1 publishes the FUObjectArray base; the scan log
+   latches UE5-Extended). Acceptance, both sides: the pipe reply for a live object (one in chunk 1 or later if the
+   count reaches it, else any) carries `objects_offset: 16`, a `ce_base` 0x10 past `gobjects_rva` and three offsets;
+   a CE pointer record made of exactly `ce_base` + `ce_offsets` shows the address `addr + field_offset`, and its value
+   equals what `read_instance` reports for that field.
+2. ⬜ **An array published at ObjObjects** (a title whose scan log latches the Default row, `objects_offset: 0`).
+   Same acceptance. A PBZ or MindsEye array is not installed here; dll_core_test holds those rows.
+
+### ⬜ Extra Scan replaces a GObjects that reads no objects (build 3775) — `[RESCAN-DECOY-REINIT]`
+
+A published GObjects that Aura reads no objects from, after both UE5_Init recoveries missed: Extra Scan sweeps the
+game's .data for candidates, apply_rescan keeps the largest array whose head resolves names densely and re-runs the
+offsets probe, the GEngine pass and the version ladder over it. Unit tests: dll_core_test `RESCAN-DECOY-REINIT`
+(the sweep, the choice over every stock shape and a sparse structure, the re-init's order and resets),
+dll_helpers_test `RESCANPLAN` / `RESCANAPPLY` / `NAMEORDER`, `RescanReinitSourceTests`, `ExtraScanReplaceTests`;
+12 mutations caught. No shipped title is known to reach it.
+
+1. ✅ **Staged on DumperTest Shipping** (2026-11-20; `tools/verify/staging/rescan-decoy-reinit.json`, staged DLL sha
+   `c9a925745206904a` from `6eb08999`; `py tools/verify/rescan_decoy_live.py --process DumperTest-Win64-Shipping`).
+   Init published a decoy built from the real FUObjectArray (`Objects=0`, probe `no-guid-or-vector-struct`); rescan
+   replaced, 13 candidates in 13.5 s; apply `replaced` with the real array `0x7FF634EEA450`, 24,530 objects, offsets
+   validated, UE 504, exactly one more `ValidateAndFixOffsets: Starting`, the scan log's `Rescan: GObjects` line; a
+   second apply `already_applied`, a second rescan "All scannable pointers already found". `RESULT: PASS`. The first
+   run, before the density rule, kept a heap structure read as 524,312 objects with 8 names in 1,009 head slots and
+   the probe gave up again; that is what `QualifiesAsObjectArray` came from.
+2. ⬜ **A real title whose GObjects reads no objects after both recoveries** (a user's log). Acceptance: the Pointers
+   panel offers Extra Scan; `scan-*.log` shows `Rescan: candidate ...` lines and `Rescan: GObjects 0x... -> 0x...`;
+   `init-*.log` `apply_rescan: GObjects=0x... (data_heuristic) Objects=<large>, ... offsets measured`; the object tree
+   fills. A `none_qualified` answer with the log's candidate lines is the case to reopen.
+
+### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
+
+A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
+(dll_helpers_test, dll_core_test, PointerPanelVersionGateTests, DumpAllServiceTests) and swept over 174 exes (84 read a version
+string at some tier) with no reading changed. No 5.9 title exists, and no 5.9 engine is installed here to package a fixture.
+
+1. ⬜ **The first 5.9 title or fixture** (a DumperTest packaged with a 5.9 preview engine). Acceptance: the scan log
+   reads UE 509 at the tier that answers (the PE version resource first; a stripped one through a version string);
+   the ProcessEvent line says EXTRAPOLATED with slot `0x250` (no 5.9 row is measured) and the hook works; a
+   `ParticleSystemComponent` class is left out of a GameOnly Dump All; the AOB no-regression run includes `GWLD_SF_2`,
+   whose anchor's source changes in 5.9.
+
 ### 🟡 The scan log's linker and Wine lines (build 3770) — `[SCAN-LINKER-LOG-2026-11-19]`
 
 `FindAll` logs `main module linker = <msvc|lld|lld*|unknown> (...)` beside the PE hash, `running under Wine <version>
@@ -1280,6 +1348,19 @@ reached:
    Filed as `[LIVEFUNCS-UI-SNAP-MEMORY]` in todo.md. *Was:* **The UI's memory while it loads snapshots.** The D3 line
    counts the snapshot buffer in the game's figure only. Acceptance: a full 32 MB snapshot buffer loaded in the Call
    Trace tab, and the load's memory log line.
+   ✅ **CLOSED 2026-11-19 on 3771 `[LIVEFUNCS-UI-SNAP-MEMORY]`** (DumperTest58 Shipping, injected DLL 3771, AOT
+   UE5DumpUI 3771): the same run -- 10 s plain, then `BlueprintModifyCamera` (7 parameters, 116 B) and
+   `BlueprintModifyPostProcess` (3, 1,984 B) chosen with the 32 MB buffer, recorded 162 s. The panel's line, with both
+   chosen, read "the game 96 MB from Start; this UI up to 477 MB while it loads the trace, about 352 MB after". The
+   status read "31184 copies kept" (as on 3733); Call Trace loaded 19,444 calls, "15592 calls with a copy". ui-view-0.log:
+   `CallTrace: parameter copies -- 31,184 kept; decoded values about 0 MB after sharing (budget 256 MB), 0 of them now
+   raw bytes only; raw copies 0 MB after sharing`, then `at the load's start heap 53 MB, working set 240 MB; working
+   set at its peak 340 MB, ...; after it heap 122->110 MB, working set 340->241 MB` -- against 1,381 MB at the peak and
+   900 MB heap / 1,035 MB working set after on 3733. A late `BlueprintModifyCamera` call decoded DeltaTime 0.0335,
+   ViewLocation {X=-400, Y=0, Z=302.0126}, ViewRotation and FOV 90 with the out values before and after; a late
+   `BlueprintModifyPostProcess` call's settings summary wrapped inside "At the call" and inside "After the call", neither
+   running into the other. The game and the UI were closed afterwards. Not covered: a recording whose copies differ
+   from call to call, where the budget would bite (the unit tests hold that case).
 4. ✅ **CLOSED 2026-11-17 on 3732 `[LIVEFUNCS-STEP2-UE423]`** (UE423_Flying Shipping, UE 4.23's UProperty model;
    `livefuncs_snap_live.py --label ue423 --choose "" --plain-s 20 --record-s 30`, 6/6 with 3 not run,
    `out/livefuncs-snap/ue423.json`): the 10 busiest functions with parameters chosen by name, the Start accepted with
@@ -1429,7 +1510,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

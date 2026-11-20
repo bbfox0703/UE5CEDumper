@@ -561,6 +561,10 @@ int main() {
               dBranch.version == 427 && dBranch.tier == 1, gb);
         // Ghostwire is cached as the 504 default under rev 10, and the cache-reuse branch would restore that for ever.
         check("GWT-BRANCH: the detection logic rev was bumped (10 -> 11)", Genau::kVersionDetectLogicRev >= 11);
+        // [VND9-05] A "5.9." needle changes what a 5.9 title without a readable version resource reads (509, not the
+        // ladder's 508); a rev-11 cache would keep 508.
+        check("VND9-05: the detection logic rev was bumped for the 5.9 needle (11 -> 12)",
+              Genau::kVersionDetectLogicRev >= 12);
 
         // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
         // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.
@@ -8445,6 +8449,323 @@ int main() {
         g_cachedUEVersion = svVer;
     }
 
+    // -- VND10-A1-02 -- a licensee FFieldClass::Name is measured where the stock probes give up, never before ---------
+    //
+    // ⛔ POOL-FAKING (own GObjects, own name table; it restores every DynOff Genau writes).
+    // [VND10-A1] Phantom Blade Zero's FFieldClass holds ConstructFn at +0x00, ClassFlags at +0x08 and Name at +0x30, and
+    // its FField puts Next at +0x10 and Owner at +0x18. The shapes come from RE-UE4SS's MemberVariableLayout.ini for the
+    // game; nobody here owns it, so this block is its only test. Every stock shape runs in the same block and must latch
+    // what it latched before (working-lessons §7.3 #5).
+    {
+        blk("VND10-A1-02 - a licensee FFieldClass::Name is measured where the stock probes give up, never before");
+
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svOuter = DynOff::UOBJECT_OUTER;
+        const auto svFProp = DynOff::bUseFProperty;       const auto svUNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svChildProps = DynOff::USTRUCT_CHILDPROPS;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE; const auto svScript = DynOff::USTRUCT_SCRIPT;
+        const auto svFcName = DynOff::FFIELDCLASS_NAME;   const auto svFNext = DynOff::FFIELD_NEXT;
+        const auto svFName = DynOff::FFIELD_NAME;         const auto svTagged = DynOff::bTaggedFFieldVariant;
+        const auto svPOff = DynOff::FPROPERTY_OFFSET;     const auto svPElem = DynOff::FPROPERTY_ELEMSIZE;
+        const auto svPFlags = DynOff::FPROPERTY_FLAGS;    const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const auto svFNum = DynOff::FNAME_NUMBER;         const auto svLicensee = DynOff::bPropsSizeLicensee;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        // A whole first chunk and every chunk slot, zeroed: the probes resolve pointer halves as name indices, and an
+        // index into a short table would read whatever static memory follows it.
+        static uint8_t lfEntry[10][0x40] = {};
+        const char* lfNames[10] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D", "Class", "Function" };
+        static uintptr_t lfChunk[0x4000] = {};
+        for (int i = 1; i < 10; ++i) {
+            memcpy(lfEntry[i] + 0x10, lfNames[i], strlen(lfNames[i]) + 1);
+            lfChunk[i] = A(lfEntry[i]);
+        }
+        static uintptr_t lfChunks[257] = {};
+        lfChunks[0] = A(reinterpret_cast<uint8_t*>(lfChunk));
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lfChunks), 0x10);
+
+        static uint8_t lfScriptStructCls[0x100] = {}, lfField[4][0x100] = {}, lfFc[0x80] = {}, lfZero[0x100] = {};
+        static uint8_t lfDecoy[0x100] = {}, lfDecoy2[0x100] = {}, lfDecoyFc[0x80] = {};
+        // One Guid per run, so each run's struct stays as that run built it.
+        static uint8_t lfGuid[7][0x200] = {};
+        constexpr uintptr_t kCodeLike = 0x00007FF6C166C147ull;   // a code address: its low dword is no name index
+
+        enum class Shape { Pbz, Stock57, Stock58, Stock50 };
+        auto put16 = [](uint8_t* b, int off, uint16_t v) { memcpy(b + off, &v, sizeof(v)); };
+        // The UStruct tail behind ChildProperties: PropertiesSize 16 (sizeof FGuid), MinAlignment 4, then PropertyLink
+        // 0x18 on, which for a struct with no super heads the same chain as ChildProperties.
+        auto putTail = [&](uint8_t* guid, int ps, bool int16Align) {
+            put32(guid, ps, 16);
+            if (int16Align) { put16(guid, ps + 4, 4); put16(guid, ps + 6, 1); }   // 5.6+: StructStateFlags beside it
+            else            put32(guid, ps + 4, 4);
+            putP(guid, ps + 0x18, A(lfField[0]));
+        };
+        // The Guid (a ScriptStruct) holds ChildProperties at +0x50 heading A -> B -> C -> D, four IntProperty fields.
+        // `tail` false leaves the UStruct tail zero, so no PropertiesSize reading fits.
+        auto build = [&](uint8_t* guid, Shape s, bool tail = true) {
+            memset(guid, 0, 0x200);
+            memset(lfFc, 0, sizeof(lfFc));
+            for (auto& f : lfField) memset(f, 0, sizeof(f));
+            put32(lfScriptStructCls, Grimoire::OFF_UOBJECT_NAME, 1);
+            putP(guid, Grimoire::OFF_UOBJECT_CLASS, A(lfScriptStructCls));
+            put32(guid, Grimoire::OFF_UOBJECT_NAME, 2);
+            putP(guid, 0x50, A(lfField[0]));
+            int next = 0x18, owner = 0x10, name = 0x20, dim = 0x30, off = 0x44;
+            bool taggedOwner = true;
+            switch (s) {
+                case Shape::Pbz:      // ConstructFn, ClassFlags 0, CastFlags, Id, then Name at +0x30
+                    putP(lfFc, 0x00, kCodeLike); putP(lfFc, 0x10, 0x8); putP(lfFc, 0x18, 0x10); put32(lfFc, 0x30, 3);
+                    next = 0x10; owner = 0x18;
+                    break;
+                case Shape::Stock57:  // Name at +0x00, then the 64-bit Id
+                    put32(lfFc, 0x00, 3); putP(lfFc, 0x08, 0x2);
+                    break;
+                case Shape::Stock58:  // the virtual destructor's vfptr at +0x00, Name at +0x08
+                    putP(lfFc, 0x00, kCodeLike); put32(lfFc, 0x08, 3);
+                    break;
+                case Shape::Stock50:  // 5.0-5.2: a 16-byte FFieldVariant (pointer + bIsUObject), so all shifts +8
+                    put32(lfFc, 0x00, 3);
+                    next = 0x20; name = 0x28; dim = 0x38; off = 0x4C; taggedOwner = false;
+                    break;
+            }
+            for (int i = 0; i < 4; ++i) {
+                uint8_t* f = lfField[i];
+                putP(f, DynOff::FFIELD_CLASS, A(lfFc));
+                if (i < 3) putP(f, next, A(lfField[i + 1]));
+                putP(f, owner, taggedOwner ? (A(guid) | 1) : A(guid));
+                if (!taggedOwner) f[owner + 8] = 1;       // bIsUObject
+                put32(f, name, 4 + i);
+                put32(f, dim, 1);                          // ArrayDim
+                put32(f, dim + 4, 4);                      // ElementSize
+                put32(f, off, i * 4);                      // Offset_Internal
+            }
+            if (!tail) return;
+            if (s == Shape::Pbz) {
+                // PBZ inserts 0x50 bytes after ChildProperties (a hash map; empty here, so its Data pointer at +0x58 is
+                // null). Inside it, a size-and-alignment look-alike at +0x88 whose PropertyLink slot holds nothing.
+                putP(guid, 0x60, 0x0000000300000005ull);
+                put32(guid, 0x88, 16); put32(guid, 0x8C, 4);
+                putTail(guid, 0xA8, true);
+            } else {
+                putTail(guid, 0x58, s != Shape::Stock50);
+            }
+        };
+
+        FakePool lfPool;
+        lfPool.Build(2);
+        auto pool2 = [&](uint8_t* guid) {
+            const uintptr_t objs[2] = { A(lfZero), A(guid) };
+            for (int i = 0; i < 2; ++i)
+                memcpy(lfPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &objs[i],
+                       sizeof(uintptr_t));
+            Aura::InitWithExtendedLayout(lfPool.Addr(), FakePool::kItemSize);
+        };
+        // Each run starts from the load-time FField defaults, as a fresh process would.
+        auto run = [&](uint8_t* guid, uint32_t ver) {
+            pool2(guid);
+            DynOff::FFIELDCLASS_NAME = 0x00; DynOff::FFIELD_NEXT = 0x20; DynOff::FFIELD_NAME = 0x28;
+            DynOff::FPROPERTY_ELEMSIZE = 0x3C; DynOff::FPROPERTY_FLAGS = 0x40; DynOff::FPROPERTY_OFFSET = 0x4C;
+            DynOff::bTaggedFFieldVariant = false;
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+            return Genau::ValidateAndFixOffsets(ver);
+        };
+        auto got = [] {
+            char b[160];
+            snprintf(b, sizeof b, "reason='%s' fcName=%02X next=%02X name=%02X cp=%02X off=%02X elem=%02X tagged=%d",
+                     DynOff::g_offsetsFallbackReason, DynOff::FFIELDCLASS_NAME, DynOff::FFIELD_NEXT,
+                     DynOff::FFIELD_NAME, DynOff::USTRUCT_CHILDPROPS, DynOff::FPROPERTY_OFFSET,
+                     DynOff::FPROPERTY_ELEMSIZE, DynOff::bTaggedFFieldVariant ? 1 : 0);
+            return std::string(b);
+        };
+        auto clean = [] { return std::string(DynOff::g_offsetsFallbackReason).empty(); };
+
+        auto ustruct = [] {
+            char b[64];
+            snprintf(b, sizeof b, "propsSize=%02X script=%02X", DynOff::USTRUCT_PROPSSIZE, DynOff::USTRUCT_SCRIPT);
+            return std::string(b);
+        };
+        auto stockTail = [] { return DynOff::USTRUCT_PROPSSIZE == 0x58 && DynOff::USTRUCT_SCRIPT == 0x60; };
+
+        // [VND10-A1] -03: the FunctionFlags vote over ten built UFunctions, one to three 4-byte FProperty parameters
+        // each, FunctionFlags at `flagsOff`, NumParms / ParmsSize behind it. A pointer sits where PBZ keeps
+        // UStruct::Script (+0xB0), the slot a stock relation would read flags from.
+        enum : int32_t { nClass = 8, nFunction = 9 };
+        constexpr int kLfFns = 10;
+        static uint8_t lfMeta[0x100] = {}, lfFnCls[0x100] = {}, lfFn[kLfFns][0x200] = {}, lfParm[kLfFns][3][0x100] = {};
+        FakePool lfFnPool;
+        lfFnPool.Build(3 + kLfFns);
+        auto vote = [&](int flagsOff, int nextOff) {
+            memset(lfFn, 0, sizeof(lfFn)); memset(lfParm, 0, sizeof(lfParm));
+            putP(lfMeta, Grimoire::OFF_UOBJECT_CLASS, A(lfMeta));   put32(lfMeta, Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(lfFnCls, Grimoire::OFF_UOBJECT_CLASS, A(lfMeta));  put32(lfFnCls, Grimoire::OFF_UOBJECT_NAME, nFunction);
+            for (int i = 0; i < kLfFns; ++i) {
+                uint8_t* f = lfFn[i];
+                const int count = i % 3 + 1;
+                putP(f, Grimoire::OFF_UOBJECT_CLASS, A(lfFnCls));
+                if (flagsOff != 0xB0) putP(f, 0xB0, A(lfZero));
+                put32(f, flagsOff, 0x00080401);                         // FunctionFlags
+                f[flagsOff + 4] = static_cast<uint8_t>(count);         // NumParms
+                put16(f, flagsOff + 6, static_cast<uint16_t>(4 * count)); // ParmsSize
+                put16(f, flagsOff + 8, 0xFFFF);                        // ReturnValueOffset: none
+                putP(f, 0x50, A(lfParm[i][0]));                        // ChildProperties
+                for (int j = 0; j < count; ++j) {
+                    uint8_t* p = lfParm[i][j];
+                    putP(p, DynOff::FFIELD_CLASS, A(lfFc));
+                    if (j + 1 < count) putP(p, nextOff, A(lfParm[i][j + 1]));
+                    put32(p, DynOff::FFIELD_NAME, 4 + j);
+                    const uint64_t parm = 0x0080;                       // CPF_Parm
+                    memcpy(p + DynOff::FPROPERTY_FLAGS, &parm, sizeof(parm));
+                    put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+                    put32(p, DynOff::FPROPERTY_ELEMSIZE, 4);
+                    put32(p, DynOff::FPROPERTY_OFFSET, 4 * j);
+                }
+            }
+            const uintptr_t head[3] = { A(lfZero), A(lfMeta), A(lfFnCls) };
+            for (int i = 0; i < 3 + kLfFns; ++i) {
+                const uintptr_t o = i < 3 ? head[i] : A(lfFn[i - 3]);
+                memcpy(lfFnPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+            }
+            Aura::InitWithExtendedLayout(lfFnPool.Addr(), FakePool::kItemSize);
+            DynOff::bUFunctionFlagsDetected.store(false);
+            DynOff::UFUNCTION_FLAGS = 0; DynOff::UFUNCTION_TAIL_EXTRA = 0; DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+            return Ubel::FunctionFlagsOffset();
+        };
+        auto readsThree = [&](std::string& why) {
+            FunctionInfo fi{};
+            const bool ok = Ubel::ResolveFunctionInfo(A(lfFn[2]), fi);
+            why = "ok " + std::to_string(ok) + " numParms " + std::to_string(fi.numParms) + " parmsSize "
+                + std::to_string(fi.parmsSize);
+            return ok && fi.numParms == 3 && fi.parmsSize == 12 && fi.returnValueOffset == 0xFFFF;
+        };
+        const bool svFnDet = DynOff::bUFunctionFlagsDetected.load();
+        const int svFnFlags = DynOff::UFUNCTION_FLAGS, svFnExtra = DynOff::UFUNCTION_TAIL_EXTRA;
+        const int svFnMeas = DynOff::UFUNCTION_TAIL_MEASURED.load();
+
+        // Stock shapes first: each latches exactly the stock answer.
+        build(lfGuid[0], Shape::Stock57, false);
+        const bool r57 = run(lfGuid[0], 507);
+        check("VND10-A1-02 control: stock 5.7 -- FFieldClass::Name +0x00, Next +0x18, measured",
+              r57 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x18
+              && DynOff::FFIELD_NAME == 0x20 && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FPROPERTY_OFFSET == 0x44,
+              got().c_str());
+        check("VND10-A1-03 control: a stock 5.7 Guid whose tail fits nowhere keeps ChildProperties + 8", stockTail(),
+              ustruct().c_str());
+        {
+            const int voted = vote(0xB0, 0x18);
+            std::string why;
+            check("VND10-A1-03 control: the stock 5.7 vote keeps FunctionFlags +0xB0",
+                  voted == 0xB0 && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0xB0 && readsThree(why),
+                  (std::to_string(voted) + " " + why).c_str());
+        }
+        build(lfGuid[1], Shape::Stock58);
+        const bool r58 = run(lfGuid[1], 508);
+        check("VND10-A1-02 control: stock 5.8 -- FFieldClass::Name +0x08, Next +0x18, measured",
+              r58 && clean() && DynOff::FFIELDCLASS_NAME == 0x08 && DynOff::FFIELD_NEXT == 0x18
+              && DynOff::USTRUCT_CHILDPROPS == 0x50, got().c_str());
+        check("VND10-A1-03 control: stock 5.8 -- PropertiesSize +0x58, Script +0x60", stockTail(), ustruct().c_str());
+        build(lfGuid[2], Shape::Stock50);
+        const bool r50 = run(lfGuid[2], 502);
+        check("VND10-A1-02 control: stock 5.0-5.2 -- Name +0x00, Next +0x20, FField::Name +0x28, untagged",
+              r50 && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x20
+              && DynOff::FFIELD_NAME == 0x28 && DynOff::FPROPERTY_OFFSET == 0x4C && !DynOff::bTaggedFFieldVariant,
+              got().c_str());
+        check("VND10-A1-03 control: stock 5.0-5.2 (an int32 MinAlignment) -- PropertiesSize +0x58", stockTail(),
+              ustruct().c_str());
+
+        // The ordering decoy: a stock 5.7 Guid whose earlier slot (+0x38, where a case-preserving build keeps its
+        // StructBaseChainArray) points at a two-field chain whose class names a *Property at +0x30 only -- a licensee
+        // reading it corroborates. A licensee reading run before the stock one, or per pointer, latches +0x38 / +0x30
+        // there, before the real ChildProperties. Its tail also carries a PBZ-shaped PropertiesSize at +0xA8 behind the
+        // stock one.
+        build(lfGuid[3], Shape::Stock57);
+        putP(lfDecoy, DynOff::FFIELD_CLASS, A(lfDecoyFc));
+        putP(lfDecoy, 0x18, A(lfDecoy2));
+        putP(lfDecoy2, DynOff::FFIELD_CLASS, A(lfDecoyFc));
+        put32(lfDecoyFc, 0x00, 0x7FFFFFF0); put32(lfDecoyFc, 0x08, 0x00F00000); put32(lfDecoyFc, 0x30, 3);
+        putP(lfGuid[3], 0x38, A(lfDecoy));
+        putTail(lfGuid[3], 0xA8, true);
+        const bool rDecoy = run(lfGuid[3], 507);
+        check("VND10-A1-02 control ⭐: a stock 5.7 Guid with a *Property at +0x30 behind an earlier slot keeps +0x50 / +0x00",
+              rDecoy && clean() && DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
+        check("VND10-A1-03 control ⭐: a fitting stock PropertiesSize wins over a PBZ-shaped one behind it", stockTail(),
+              ustruct().c_str());
+
+        // A stock 5.7 FFieldClass whose +0x30 also names a *Property: the stock reading at +0x00 answers first.
+        build(lfGuid[6], Shape::Stock57);
+        put32(lfFc, 0x30, 3);
+        const bool rBoth = run(lfGuid[6], 507);
+        check("VND10-A1-02 control ⭐: a stock class that names a *Property at +0x30 as well keeps +0x00",
+              rBoth && clean() && DynOff::FFIELDCLASS_NAME == 0x00 && DynOff::FFIELD_NEXT == 0x18, got().c_str());
+
+        // Phantom Blade Zero.
+        build(lfGuid[4], Shape::Pbz);
+        const bool rPbz = run(lfGuid[4], 507);
+        check("VND10-A1-02 ⭐: PBZ is measured, not given up", rPbz && clean(), got().c_str());
+        check("VND10-A1-02 ⭐: PBZ latches FFieldClass::Name +0x30", DynOff::FFIELDCLASS_NAME == 0x30, got().c_str());
+        check("VND10-A1-02 ⭐: PBZ measures FField::Next +0x10, not the Owner at +0x18", DynOff::FFIELD_NEXT == 0x10,
+              got().c_str());
+        check("VND10-A1-02 ⭐: PBZ's ChildProperties, FField::Name and FProperty offsets are the stock ones",
+              DynOff::USTRUCT_CHILDPROPS == 0x50 && DynOff::FFIELD_NAME == 0x20 && DynOff::FPROPERTY_OFFSET == 0x44
+              && DynOff::FPROPERTY_ELEMSIZE == 0x34, got().c_str());
+        {
+            const ClassInfo pbzWalk = Ubel::WalkClass(A(lfGuid[4]));
+            std::string seen;
+            bool typed = pbzWalk.Fields.size() == 4;
+            for (size_t i = 0; i < pbzWalk.Fields.size(); ++i) {
+                const auto& f = pbzWalk.Fields[i];
+                seen += f.Name + ":" + f.TypeName + "@" + std::to_string(f.Offset) + " ";
+                if (i < 4 && (f.Name != lfNames[4 + i] || f.TypeName != "IntProperty"
+                              || f.Offset != static_cast<int32_t>(i * 4)))
+                    typed = false;
+            }
+            check("VND10-A1-02 ⭐: a PBZ walk reads A, B, C, D as IntProperty at 0/4/8/12", typed, seen.c_str());
+        }
+        check("VND10-A1-03 ⭐: PBZ's PropertiesSize is measured at +0xA8 and Script follows at +0xB0, past its 0x50 insert",
+              DynOff::USTRUCT_PROPSSIZE == 0xA8 && DynOff::USTRUCT_SCRIPT == 0xB0, ustruct().c_str());
+        {
+            const int voted = vote(0x100, 0x10);
+            std::string why;
+            const bool three = readsThree(why);
+            check("VND10-A1-03 ⭐: the PBZ vote decides FunctionFlags +0x100, not Script's +0xB0", voted == 0x100,
+                  std::to_string(voted).c_str());
+            check("VND10-A1-03 ⭐: ...measures its tail there, and a function reads 3 parameters, 12 bytes",
+                  DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x100 && three,
+                  (std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()) + " " + why).c_str());
+        }
+
+        // A licensee reading needs a second field of the chain to agree: one *Property at +0x30 alone is not a chain.
+        build(lfGuid[5], Shape::Pbz);
+        memset(lfField[0] + 0x10, 0, 8);          // A's Next: the chain is A alone
+        const bool rOne = run(lfGuid[5], 507);
+        check("VND10-A1-02 control: a one-field PBZ chain is not corroborated and still gives up",
+              !rOne && std::string(DynOff::g_offsetsFallbackReason) == "childprops-probe-failed"
+              && DynOff::FFIELDCLASS_NAME == 0x00, got().c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::bUFunctionFlagsDetected.store(svFnDet);
+        DynOff::UFUNCTION_FLAGS = svFnFlags; DynOff::UFUNCTION_TAIL_EXTRA = svFnExtra;
+        DynOff::UFUNCTION_TAIL_MEASURED.store(svFnMeas);
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
+        DynOff::UFIELD_NEXT = svUNext;        DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::USTRUCT_CHILDPROPS = svChildProps;
+        DynOff::USTRUCT_PROPSSIZE = svPropsSize; DynOff::USTRUCT_SCRIPT = svScript;
+        DynOff::FFIELDCLASS_NAME = svFcName;  DynOff::FFIELD_NEXT = svFNext;     DynOff::FFIELD_NAME = svFName;
+        DynOff::bTaggedFFieldVariant = svTagged;
+        DynOff::FPROPERTY_OFFSET = svPOff;    DynOff::FPROPERTY_ELEMSIZE = svPElem; DynOff::FPROPERTY_FLAGS = svPFlags;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::bPropsSizeLicensee = svLicensee;
+        DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
+        DynOff::g_offsetsFallbackReason = "";
+        g_cachedUEVersion = svVer;
+    }
+
     // -- UPROPINNER-2026-09-27 -- a UProperty engine's container inners are named -------------------------------------
     //
     // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx must not type a container's inner / key /
@@ -14484,6 +14805,476 @@ int main() {
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
+    // -- VND10-A1-01 -- a Phantom Blade Zero FUObjectArray is read whole at both anchors; stock shapes as before ------
+    //
+    // ⛔ POOL-FAKING (own name table, for the static scorer).
+    // [VND10-A1] PBZ reorders ObjObjects (at +0x10 in FUObjectArray, as stock): MaxChunks +0x00, NumChunks +0x04, Objects
+    // +0x08, NumElements +0x10, MaxElements +0x14, PreAllocatedObjects +0x18. The shape is RE-UE4SS's
+    // MemberVariableLayout.ini for the game; nobody here owns it, so this block is its only test. Every stock shape runs
+    // in the same block and must read as before (working-lessons §7.3 #5).
+    {
+        blk("VND10-A1-01 - a PBZ FUObjectArray is read whole at its base and at ObjObjects; stock shapes as before");
+        static uint8_t a1Entry[2][0x40] = {};
+        memcpy(a1Entry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t a1Chunk[3] = { 0, reinterpret_cast<uintptr_t>(a1Entry[1]), 0 };
+        static uintptr_t a1Chunks[2] = { reinterpret_cast<uintptr_t>(a1Chunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(a1Chunks), 0x10);
+
+        // Genau validates through the objects: each one's ClassPrivate leads to a UClass whose own ClassPrivate is
+        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data).
+        constexpr int kA1Items = 64;
+        std::vector<uint8_t> a1Objs(static_cast<size_t>(kA1Items) * 0x40, 0), a1Cls(0x40, 0);
+        const uintptr_t a1ClsAddr = reinterpret_cast<uintptr_t>(a1Cls.data());
+        memcpy(a1Cls.data() + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
+        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(kA1Items) * 24, 0);
+        for (int i = 0; i < kA1Items; ++i) {
+            uint8_t* o = a1Objs.data() + static_cast<size_t>(i) * 0x40;
+            memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
+            const int32_t nameIdx = 1;
+            memcpy(o + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+            const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+            memcpy(a1Chunk0.data() + static_cast<size_t>(i) * 24, &oa, 8);
+        }
+        // Every table slot names a readable chunk, so a strict reading of up to 65 chunks finds each one.
+        std::vector<uintptr_t> a1Table(65, reinterpret_cast<uintptr_t>(a1Chunk0.data()));
+        const uintptr_t table = reinterpret_cast<uintptr_t>(a1Table.data());
+
+        alignas(16) static uint8_t a1[0x80] = {};
+        const uintptr_t B = reinterpret_cast<uintptr_t>(a1);
+        auto p32 = [](int at, int32_t v)   { memcpy(a1 + at, &v, 4); };
+        auto pP  = [](int at, uintptr_t v) { memcpy(a1 + at, &v, 8); };
+        // PBZ's FUObjectArray at its base: the GC prefix, ObjObjects, then the critical section (DebugInfo -1,
+        // LockCount -1, RecursionCount 0, SpinCount 4000).
+        auto buildPbz = [&](uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num, int32_t maxE) {
+            memset(a1, 0, sizeof(a1));
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001); p32(0x0C, 0);
+            p32(0x10, maxChunks); p32(0x14, numChunks); pP(0x18, tbl); p32(0x20, num); p32(0x24, maxE); pP(0x28, 0);
+            pP(0x30, ~0ull); p32(0x38, -1); p32(0x3C, 0); p32(0x50, 4000);
+        };
+        auto layoutText = [] {
+            char b[96];
+            snprintf(b, sizeof b, "count %d, obj %02X max %02X num %02X maxC %02X numC %02X", Aura::GetCount(),
+                     Aura::s_layout.objectsOffset, Aura::s_layout.maxElementsOffset, Aura::s_layout.numElementsOffset,
+                     Aura::s_layout.maxChunksOffset, Aura::s_layout.numChunksOffset);
+            return std::string(b);
+        };
+        auto latched = [](int32_t count, int obj, int maxE, int num, int maxC, int numC) {
+            return Aura::GetCount() == count && Aura::s_layout.objectsOffset == obj && Aura::s_layout.maxElementsOffset == maxE
+                && Aura::s_layout.numElementsOffset == num && Aura::s_layout.maxChunksOffset == maxC
+                && Aura::s_layout.numChunksOffset == numC;
+        };
+        // [CEPTR-OBJECTS-2026-11-19] get_ce_pointer_info's chain for the row Aura latched, resolved as Cheat Engine
+        // resolves a pointer record ([base] is read before the first offset is added; offsets[0] is only added), lands
+        // on the field of the object Aura reads at that slot: slot 5, and a slot in chunk 2 where the count reaches it.
+        // "" when it does; else where it went.
+        auto ceChainMiss = [](uintptr_t anchor) -> std::string {
+            for (int32_t idx : { 5, 2 * Grimoire::OBJECTS_PER_CHUNK + 7 }) {
+                if (idx >= Aura::GetCount()) continue;
+                const uintptr_t obj = Aura::GetByIndex(idx);
+                if (!obj) return "Aura reads no object at slot " + std::to_string(idx);
+                const Aura::CeChunkedChain chain = Aura::BuildCeChunkedChain(
+                    anchor, Aura::GetObjectsOffset(), idx, Aura::GetItemSize(), Aura::GetItemObjOffset(), 0x30);
+                char b[128];
+                uintptr_t at = chain.base;
+                for (size_t i = chain.offsets.size(); i-- > 0;) {
+                    uintptr_t v = 0;
+                    if (!Macht::ReadSafe(at, v)) {
+                        snprintf(b, sizeof b, "slot %d: CE's read at 0x%llX fails", idx, (unsigned long long)at);
+                        return b;
+                    }
+                    at = v + static_cast<uintptr_t>(static_cast<intptr_t>(chain.offsets[i]));
+                }
+                if (at != obj + 0x30) {
+                    snprintf(b, sizeof b, "slot %d: CE lands on 0x%llX, Aura's object +0x30 is 0x%llX", idx,
+                             (unsigned long long)at, (unsigned long long)(obj + 0x30));
+                    return b;
+                }
+            }
+            return {};
+        };
+
+        struct Numbers { const char* what; int32_t maxChunks, numChunks, num, maxE; };
+        const Numbers sets[] = {
+            { "6 chunks of 64K, one in use",                 6,  1, 0x4000, 0x60000 },
+            { "PBZ's own: 65 chunks, 3 in use, 153,466",    65,  3, 153466, 4259840 },
+        };
+        for (const Numbers& n : sets) {
+            buildPbz(table, n.maxChunks, n.numChunks, n.num, n.maxE);
+            const std::string tag = std::string(" (") + n.what + ")";
+            check(("VND10-A1-01 ⭐: Genau validates a PBZ array at its base" + tag).c_str(), Genau::ValidateGObjects(B));
+            check(("VND10-A1-01 ⭐: ...and at ObjObjects" + tag).c_str(), Genau::ValidateGObjects(B + 0x10));
+            Aura::Init(B);
+            check(("VND10-A1-01 ⭐: Aura reads it whole at its base" + tag).c_str(),
+                  latched(n.num, 0x18, 0x24, 0x20, 0x10, 0x14), layoutText().c_str());
+            {
+                const std::string miss = ceChainMiss(B);
+                check(("CEPTR-OBJECTS ⭐: a CE pointer from a PBZ array's base reaches Aura's object" + tag).c_str(),
+                      miss.empty(), miss.c_str());
+            }
+            Aura::Init(B + 0x10);
+            check(("VND10-A1-01 ⭐: ...and at ObjObjects" + tag).c_str(),
+                  latched(n.num, 0x08, 0x14, 0x10, 0x00, 0x04), layoutText().c_str());
+            {
+                const std::string miss = ceChainMiss(B + 0x10);
+                check(("CEPTR-OBJECTS ⭐: ...and from its ObjObjects" + tag).c_str(), miss.empty(), miss.c_str());
+            }
+            // What the mov rows deliver, the Objects field: relaxed F takes it (pass 2), and Aura reads 0 objects, so
+            // Frieren's Count == 0 recovery runs. Pinned, not a goal: a change that moves either must do it on purpose.
+            check(("VND10-A1-01 pin: Genau takes PBZ's Objects field through relaxed F" + tag).c_str(),
+                  Genau::ValidateGObjects(B + 0x18));
+            Aura::Init(B + 0x18);
+            check(("VND10-A1-01 pin: ...and Aura reads 0 objects there, so the recovery runs" + tag).c_str(),
+                  Aura::GetCount() == 0, layoutText().c_str());
+        }
+        {
+            buildPbz(table, 65, 3, 153466, 4259840);
+            int stride = 0, objOff = -1;
+            bool ue58 = true, licensee = false;
+            const int score = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 ⭐: the static scorer reads a PBZ array at its base (the recovery's way back from Objects)",
+                  score >= 32 && stride == 0x18 && objOff == 0 && !ue58,
+                  ("score " + std::to_string(score) + " stride " + std::to_string(stride)).c_str());
+            check("VND10-A1-01 ⭐: ...as a licensee array, which Frieren hands to Aura::Init", licensee);
+            // Frieren hands what the scorer reported to Aura::InitRecoveredStaticArray: a licensee array is read by its
+            // own row. Without the licensee bit it would get the forced 5.0-5.7 layout, MaxChunks|NumChunks as Objects.
+            Aura::InitRecoveredStaticArray(B, stride, objOff, ue58, licensee);
+            check("VND10-A1-01 ⭐: the recovery reads the PBZ array it found whole, through its own row",
+                  latched(153466, 0x18, 0x24, 0x20, 0x10, 0x14), layoutText().c_str());
+            Aura::InitRecoveredStaticArray(B, stride, objOff, ue58, false);
+            check("VND10-A1-01 control: ...which the forced 5.0-5.7 layout would not",
+                  Aura::GetCount() != 153466, layoutText().c_str());
+
+            // The licensee rows are held to whole chunks: the same array one chunk short of its MaxElements is not one,
+            // to the scorer or to Genau at either anchor.
+            buildPbz(table, 65, 3, 153466, 4259840 - 0x10000);
+            const int shortScore = Genau::ScoreGObjectsStaticBase(B, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: a PBZ-shaped array whose MaxElements is not MaxChunks * 64K scores 0",
+                  shortScore == 0, ("score " + std::to_string(shortScore)).c_str());
+            check("VND10-A1-01 control: ...Genau refuses it at its base", !Genau::ValidateGObjects(B));
+            check("VND10-A1-01 control: ...and at ObjObjects", !Genau::ValidateGObjects(B + 0x10));
+            // NumChunks that does not follow from Num: refused too.
+            buildPbz(table, 65, 2, 153466, 4259840);
+            check("VND10-A1-01 control: a PBZ-shaped array whose NumChunks is not Num / 64K + 1 is refused at both anchors",
+                  !Genau::ValidateGObjects(B) && !Genau::ValidateGObjects(B + 0x10));
+        }
+
+        // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
+        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; };
+        const Stock stock[] = {
+            { "Default (ObjObjects, 4.20-5.7)", 0x10, 0x00, 0x10, 0x14, 0x18, 0x1C },
+            { "UE5-Extended (base, 4.20-5.7)",  0x00, 0x10, 0x20, 0x24, 0x28, 0x2C },
+            { "UE4-Extended (base)",            0x00, 0x10, 0x18, 0x1C, 0x20, 0x24 },
+            { "UE5.8 (ObjObjects first)",       0x00, 0x00, 0x0C, 0x08, 0x14, 0x10 },
+            { "UE5.7-Mistfall (base)",          0x00, 0x10, 0x20, 0x24, 0x04, 0x08 },
+            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14 },
+            { "Back4Blood",                     0x10, 0x10, 0x00, 0x04, 0x08, 0x0C },
+            { "Multiversus",                    0x10, 0x18, 0x10, 0x00, 0x14, 0x20 },
+            { "MindsEye",                       0x10, 0x18, 0x00, 0x14, 0x10, 0x04 },
+        };
+        auto buildStock = [&](const Stock& s, uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num,
+                              int32_t maxE) {
+            memset(a1, 0, sizeof(a1));
+            uint8_t* at = a1 + s.base;
+            memcpy(at + s.obj, &tbl, 8);
+            memcpy(at + s.maxE, &maxE, 4); memcpy(at + s.num, &num, 4);
+            memcpy(at + s.maxC, &maxChunks, 4); memcpy(at + s.numC, &numChunks, 4);
+            return B + s.base;
+        };
+        for (const Stock& s : stock) {
+            for (const Numbers& n : { Numbers{ "6 chunks, one in use", 6, 1, 0x4000, 0x60000 },
+                                      Numbers{ "6 chunks, Num = Max - 1", 6, 6, 0x5FFFF, 0x60000 } }) {
+                const uintptr_t addr = buildStock(s, table, n.maxChunks, n.numChunks, n.num, n.maxE);
+                const std::string tag = std::string(s.name) + ", " + n.what;
+                Aura::Init(addr);
+                check(("VND10-A1-01 control: " + tag + " -- Aura latches its own row").c_str(),
+                      latched(n.num, s.obj, s.maxE, s.num, s.maxC, s.numC), layoutText().c_str());
+                check(("VND10-A1-01 control: " + tag + " -- Genau validates it").c_str(), Genau::ValidateGObjects(addr));
+                const std::string miss = ceChainMiss(addr);
+                check(("CEPTR-OBJECTS ⭐: " + tag + " -- a CE pointer from it reaches Aura's object").c_str(),
+                      miss.empty(), miss.c_str());
+            }
+        }
+
+        // A chunk table above 16 TB, where a pointer's halves pass the 0x1000 floor: a base-anchored UE5-Extended
+        // array whose Objects is 0x00001F00_00001000 reads, through PBZ's ObjObjects row, num 0x1000 and max 0x1F00.
+        // Its MaxChunks slot (ObjFirstGCIndex) is far past any chunk count, so the row refuses it.
+        {
+            void* hi = VirtualAlloc(reinterpret_cast<void*>(0x00001F0000000000ull), 0x10000, MEM_RESERVE | MEM_COMMIT,
+                                    PAGE_READWRITE);
+            check("VND10-A1-01 setup: a chunk table at 0x00001F00_00001000", hi != nullptr);
+            if (hi) {
+                auto* hiTable = reinterpret_cast<uintptr_t*>(static_cast<uint8_t*>(hi) + 0x1000);
+                for (int i = 0; i < 65; ++i) hiTable[i] = reinterpret_cast<uintptr_t>(a1Chunk0.data());
+                const uintptr_t addr = buildStock(stock[1], reinterpret_cast<uintptr_t>(hiTable), 6, 1, 0x4000, 0x60000);
+                p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+                Aura::Init(addr);
+                check("VND10-A1-01 control: a UE5-Extended array whose table sits above 16 TB is still UE5-Extended's",
+                      latched(0x4000, 0x10, 0x20, 0x24, 0x28, 0x2C), layoutText().c_str());
+                check("VND10-A1-01 control: ...and Genau validates it", Genau::ValidateGObjects(addr));
+                VirtualFree(hi, 0, MEM_RELEASE);
+            }
+        }
+        // Stock shapes no strict chunked row takes, which therefore reach the licensee rows in Aura's order before their
+        // own: a flat 4.18-4.19 array at its base, and a base-anchored 4.20-5.7 array with more than 0x14 live chunks.
+        {
+            std::vector<uint8_t> flatItems(static_cast<size_t>(kA1Items) * 24, 0);
+            memcpy(flatItems.data(), a1Chunk0.data(), flatItems.size());
+            memset(a1, 0, sizeof(a1));
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+            pP(0x10, reinterpret_cast<uintptr_t>(flatItems.data())); p32(0x18, 0x10000); p32(0x1C, 0x2000);
+            pP(0x20, ~0ull); p32(0x28, -1);   // the critical section behind it
+            Aura::Init(B);
+            check("VND10-A1-01 control: a flat 4.18-4.19 array at its base is still Flat-Base's",
+                  Aura::GetCount() == 0x2000 && Aura::s_layout.objectsOffset == 0x10
+                  && Aura::s_layout.numElementsOffset == 0x1C && Aura::s_layout.maxChunksOffset < 0,
+                  layoutText().c_str());
+
+            const uintptr_t many = buildStock(stock[1], table, 0x20, 0x16, 0x150005, 0x200000);
+            p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+            Aura::Init(many);
+            check("VND10-A1-01 control: a UE5-Extended array of 22 live chunks is still read whole, not by a PBZ row",
+                  Aura::GetCount() == 0x150005 && Aura::s_layout.objectsOffset == 0x10
+                  && Aura::s_layout.numElementsOffset == 0x24, layoutText().c_str());
+            check("VND10-A1-01 control: ...and Genau still validates it", Genau::ValidateGObjects(many));
+        }
+        {
+            // The static scorer's stock geometries still answer for their own arrays, and say so.
+            const uintptr_t addr = buildStock(stock[1], table, 6, 1, 0x4000, 0x60000);
+            int stride = 0, objOff = -1;
+            bool ue58 = true, licensee = true;
+            const int score = Genau::ScoreGObjectsStaticBase(addr, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: a stock 5.0-5.7 static array still scores as one, and not as a licensee's",
+                  score >= 32 && stride == 0x18 && !ue58 && !licensee, ("score " + std::to_string(score)).c_str());
+            // 8 below that stock array, the licensee geometry reads its Objects (at +0x18) and its PreAllocatedObjects
+            // halves (0) as Num / Max: refused, so the stock base is the only reading.
+            const int below = Genau::ScoreGObjectsStaticBase(addr - 8, &stride, &objOff, &ue58, &licensee);
+            check("VND10-A1-01 control: 8 below a stock 5.0-5.7 array, no geometry reads it as a licensee array",
+                  !(below > 0 && licensee), ("score " + std::to_string(below)).c_str());
+        }
+
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
+    // -- UE58-ADJ10 -- 0x10 below a UE 5.8 FUObjectArray is not GObjects; every shape validates as before around it ----
+    //
+    // [UE58-ADJ10-WRONG-ANCHOR] UE 5.8 puts ObjObjects at the FUObjectArray base: Objects +0x00, NumElements +0x08,
+    // MaxElements +0x0C, NumChunks +0x10, MaxChunks +0x14, PreAllocatedObjects +0x18, ObjFirstGCIndex +0x20,
+    // ObjLastNonGCIndex +0x24. A GObjects row whose adjustment is -0x10 anchors ObjObjects.Objects, so on 5.8 it offers
+    // base-0x10 first, and TryResolveMatch hands over the first candidate that validates. There relaxed D reads
+    // MaxElements as its count, NumElements as its max and the real chunk table as its Objects; Aura's relaxed D refuses
+    // a count above its max, falls to the default layout and reads a small non-zero count, so Frieren's Count == 0
+    // recovery never runs. Every shape in the sweep below must validate as before at every offset (working-lessons §7.3
+    // #5): the masks are what each shape validates at today, the 5.8 ones less base-0x10.
+    {
+        blk("UE58-ADJ10 - a -0x10 GObjects row on UE 5.8 hands over the base, not base-0x10; every shape as before");
+        // The table, the chunks and the objects sit at a fixed address whose halves no count slot can take: a high dword
+        // under the relaxed rows' 0x1000 floor and a low dword above their 0x400000 ceiling, so the masks below do not
+        // depend on where the heap put the fixture.
+        uint8_t* region = nullptr;
+        for (uint32_t hi : { 0x00F1u, 0x00E1u, 0x00D1u, 0x00C1u }) {
+            region = static_cast<uint8_t*>(VirtualAlloc(
+                reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x10000000u), 0x10000,
+                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (region) break;
+        }
+        check("UE58-ADJ10 setup: a fixture region at 0x000000X1_10000000", region != nullptr);
+        if (region) {
+            // 64 objects whose ClassPrivate is a UClass that is its own class (Genau's cyclic chain), and one chunk of
+            // 64 FUObjectItems of 24 bytes for each item shape: UObject* at +0x00, and at +0x08 behind UE 5.7+'s
+            // FlagsAndRefCount.
+            uint8_t* objs = region;
+            uint8_t* cls = region + 0x1000;
+            const uintptr_t clsAddr = reinterpret_cast<uintptr_t>(cls);
+            memcpy(cls + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+            uint8_t* chunkAt[2] = { region + 0x1100, region + 0x1800 };
+            for (int i = 0; i < 64; ++i) {
+                uint8_t* o = objs + i * 0x40;
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+                const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+                memcpy(chunkAt[0] + i * 24, &oa, 8);
+                memcpy(chunkAt[1] + i * 24 + 8, &oa, 8);
+            }
+            auto* table = reinterpret_cast<uintptr_t*>(region + 0x2000);   // room for 0x300 chunk pointers
+            const uintptr_t tableAddr = reinterpret_cast<uintptr_t>(table);
+
+            alignas(16) static uint8_t hdr[0x100] = {};
+            constexpr int kBase = 0x40;   // the FUObjectArray base inside hdr
+            const uintptr_t B = reinterpret_cast<uintptr_t>(hdr) + kBase;
+
+            // Offsets from the FUObjectArray base; -1 where the layout has no such field (or none known here). `at`: the
+            // addresses ValidateGObjects takes around the array, one string per number set below (in its order) and the
+            // same for both item shapes. Pinned, not a goal: they are what each shape validated at before the
+            // UE58-ADJ10 guard, less 5.8's base-0x10, so a change that moves one must do it on purpose. Among them, 5.8's
+            // preallocated base+0x08 is `[UE58-ADJ14-PREALLOC]`, open.
+            struct Shape { const char* name; int obj, maxE, num, maxC, numC, preAlloc, gc; const char* at[4]; };
+            const Shape shapes[] = {
+                { "UE 4.20-5.7",        0x10, 0x20, 0x24, 0x28, 0x2C, 0x18, 0x00,
+                  { "+00 +10",         "+00 +08 +10 +18", "+00 +10",         "+00 +10" } },
+                { "UE 5.8",             0x00, 0x0C, 0x08, 0x14, 0x10, 0x18, 0x20,
+                  { "+00",             "+00 +08 +18",     "+00",             "+00"     } },
+                { "UE4-Extended",       0x10, 0x18, 0x1C, 0x20, 0x24,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "+00"     } },
+                { "flat 4.11-4.19",     0x10, 0x18, 0x1C,   -1,   -1,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "+00 +10" } },
+                { "Back4Blood",         0x20, 0x10, 0x14, 0x18, 0x1C,   -1, 0x00,
+                  { "+10",             "+10",             "+10",             "+10"     } },
+                { "Multiversus",        0x28, 0x20, 0x10, 0x24, 0x30,   -1, 0x00,
+                  { "+10",             "+10",             "+10",             "none"    } },
+                { "MindsEye",           0x28, 0x10, 0x24, 0x20, 0x14,   -1, 0x00,
+                  { "+00 +10",         "+00 +10",         "+00 +10",         "none"    } },
+                { "UE5.7-Mistfall",     0x10, 0x20, 0x24, 0x04, 0x08, 0x18,   -1,
+                  { "+00 +10",         "+00 +08 +10 +18", "+00 +10",         "+00 +10" } },
+                { "Phantom Blade Zero", 0x18, 0x24, 0x20, 0x10, 0x14, 0x28, 0x00,
+                  { "+00 +08 +10 +18", "+08 +18",         "+00 +08 +10 +18", "+18"     } },
+            };
+            // MaxElements is MaxChunks whole chunks, as FUObjectArray::AllocateObjectPool leaves it.
+            struct Numbers { const char* what; int32_t maxChunks, numChunks, num; bool prealloc; };
+            const Numbers sets[] = {
+                { "default, 33 chunks, 2 in use",            33,  2, 0x14000, false },
+                { "preallocated, 33 of 33 chunks",           33, 33, 0x14000, true  },
+                { "6 chunks, 1 in use",                       6,  1, 0x04000, false },
+                { "768 chunks, past the strict max ceiling", 768,  4, 0x30000, false },
+            };
+            auto build = [&](const Shape& s, const Numbers& n, int item) {
+                memset(hdr, 0, sizeof hdr);
+                memset(table, 0, 0x300 * sizeof(uintptr_t));
+                const uintptr_t chunk = reinterpret_cast<uintptr_t>(chunkAt[item]);
+                for (int i = 0; i < n.numChunks; ++i) table[i] = chunk;
+                auto p32 = [&](int at, int32_t v) { memcpy(hdr + kBase + at, &v, 4); };
+                auto pP = [&](int at, uintptr_t v) { memcpy(hdr + kBase + at, &v, 8); };
+                // ObjFirstGCIndex, ObjLastNonGCIndex once the disregard-for-GC set closes; on a pre-5.8 base, then
+                // MaxObjectsNotConsideredByGC and the OpenForDisregardForGC bool. The layout's own fields go on top.
+                if (s.gc >= 0) { p32(s.gc, 0x8001); p32(s.gc + 4, 0x8000); }
+                if (s.gc == 0) { p32(0x08, 0x8001); p32(0x0C, 0); }
+                const bool flat = s.maxC < 0;
+                pP(s.obj, flat ? chunk : tableAddr);
+                p32(s.maxE, n.maxChunks * Grimoire::OBJECTS_PER_CHUNK);
+                p32(s.num, n.num);
+                if (!flat) { p32(s.maxC, n.maxChunks); p32(s.numC, n.numChunks); }
+                if (s.preAlloc >= 0 && n.prealloc) pP(s.preAlloc, chunk);
+            };
+            // Which addresses from base-0x20 to base+0x40, every 4 bytes, ValidateGObjects takes: "-10 +00" and so on.
+            auto sweep = [&] {
+                std::string got;
+                for (int off = -0x20; off <= 0x40; off += 4) {
+                    if (!Genau::ValidateGObjects(B + off)) continue;
+                    char b[8];
+                    snprintf(b, sizeof b, "%s%c%02X", got.empty() ? "" : " ", off < 0 ? '-' : '+', off < 0 ? -off : off);
+                    got += b;
+                }
+                return got.empty() ? std::string("none") : got;
+            };
+
+            // A GObjects row whose RIP target is `target`, through TryResolveMatch -- the adjusted candidate first, then
+            // the target -- as a scan that matched it would resolve it.
+            static uint8_t code[0x40] = {};
+            auto viaRow = [&](const AobSignature& sig, uintptr_t target) {
+                memset(code, 0x90, sizeof code);
+                const uintptr_t instr = reinterpret_cast<uintptr_t>(code) + sig.instrOffset;
+                const int32_t rel = static_cast<int32_t>(static_cast<intptr_t>(target)
+                                                         - static_cast<intptr_t>(instr + sig.totalLen));
+                memcpy(code + sig.instrOffset + sig.opcodeLen, &rel, 4);
+                return Genau::TryResolveMatch(reinterpret_cast<uintptr_t>(code), sig, Genau::ValidateGObjects);
+            };
+            auto fromBase = [&](uintptr_t got) {
+                char b[32];
+                snprintf(b, sizeof b, "base%+lld", static_cast<long long>(static_cast<intptr_t>(got - B)));
+                return got ? std::string(b) : std::string("0");
+            };
+
+            // The finding: on a 5.8 array, 0x10 below the base is not GObjects, and each -0x10 row, whose RIP target
+            // is ObjObjects.Objects -- the base itself on 5.8 -- resolves the base.
+            const Shape& s58 = shapes[1];
+            for (const Numbers& n : { sets[0], sets[1] }) {
+                for (int item = 0; item < 2; ++item) {
+                    const std::string tag = std::string(" (") + n.what + (item ? ", UObject* at +0x08)" : ")");
+                    build(s58, n, item);
+                    check(("UE58-ADJ10 control: a 5.8 array validates at its base" + tag).c_str(),
+                          Genau::ValidateGObjects(B));
+                    check(("UE58-ADJ10 ⭐: 0x10 below a 5.8 array is not GObjects" + tag).c_str(),
+                          !Genau::ValidateGObjects(B - 0x10));
+                    int rows = 0;
+                    for (const AobSignature& sig : Sig::GOBJECTS_PATTERNS) {
+                        if (sig.adjustment != -0x10) continue;
+                        ++rows;
+                        const uintptr_t got = viaRow(sig, B);
+                        check(("UE58-ADJ10 ⭐: " + std::string(sig.id) + " resolves a 5.8 array to its base" + tag).c_str(),
+                              got == B, fromBase(got).c_str());
+                    }
+                    check("UE58-ADJ10 setup: the -0x10 GObjects rows are there to try", rows >= 5);
+                    // The other adjusted rows, pinned as they resolve today. -0x14 targets ObjObjects.NumElements, which
+                    // 5.8 moved to +0x08: the adjusted candidate (base-0x0C) misses, and the target itself validates
+                    // on a preallocated array (`[UE58-ADJ14-PREALLOC]`, open). +0x0C targets ObjLastNonGCIndex, at
+                    // +0x24 on 5.8: both candidates miss.
+                    for (const AobSignature& sig : Sig::GOBJECTS_PATTERNS) {
+                        if (sig.adjustment != -0x14 && sig.adjustment != 0x0C) continue;
+                        const bool adj14 = sig.adjustment == -0x14;
+                        const uintptr_t got = viaRow(sig, B + (adj14 ? 0x08 : 0x24));
+                        const uintptr_t want = adj14 && n.prealloc ? B + 0x08 : 0;
+                        check(("UE58-ADJ10 pin: " + std::string(sig.id) + " on a 5.8 array resolves "
+                               + (want ? "base+0x08" : "nothing") + tag).c_str(),
+                              got == want, fromBase(got).c_str());
+                    }
+                    // Why Genau must refuse it: Aura reads base-0x10 with a non-zero count that is not the array's, so
+                    // nothing downstream notices. Pinned, not a goal.
+                    Aura::Init(B - 0x10);
+                    check(("UE58-ADJ10 pin: Aura reads 0x10 below a 5.8 array with a wrong non-zero count" + tag).c_str(),
+                          Aura::GetCount() != 0 && Aura::GetCount() != n.num,
+                          ("count " + std::to_string(Aura::GetCount())).c_str());
+                }
+            }
+
+            // Every shape, every number set, both item shapes: the addresses it validated at, the one change being 5.8's
+            // base-0x10.
+            static_assert(sizeof(sets) / sizeof(sets[0]) == sizeof(Shape::at) / sizeof(Shape::at[0]),
+                          "one pinned string per number set");
+            for (const Shape& s : shapes) {
+                for (size_t k = 0; k < std::size(sets); ++k) {
+                    for (int item = 0; item < 2; ++item) {
+                        build(s, sets[k], item);
+                        const std::string got = sweep();
+                        check(("UE58-ADJ10 control: " + std::string(s.name) + ", " + sets[k].what
+                               + (item ? ", UObject* at +0x08" : "") + " -- validates where it did").c_str(),
+                              got == s.at[k], got.c_str());
+                    }
+                }
+            }
+
+            // The base relaxed D alone validates: a 4.20-5.7 preallocated array whose block sits above 16 TB at a
+            // 64K boundary (D's count is its high dword, D's max its low dword 0), with 5,242,880 objects (past every
+            // row's 0x400000) and the disregard-for-GC set off (ObjLastNonGCIndex -1, so relaxed B has no count).
+            // D's count is above its max but no whole number of chunks, so the 5.8 guard leaves it.
+            {
+                uint8_t* hiBlock = nullptr;
+                for (uint32_t hi : { 0x1F05u, 0x2105u, 0x2305u, 0x2505u }) {
+                    hiBlock = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(static_cast<uintptr_t>(hi) << 32),
+                                                                 0x10000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+                    if (hiBlock) break;
+                }
+                check("UE58-ADJ10 setup: a preallocated block above 16 TB at a 64K boundary", hiBlock != nullptr);
+                if (hiBlock) {
+                    memcpy(hiBlock, chunkAt[0], 64 * 24);
+                    const Numbers big = { "5,242,880 objects, preallocated", 96, 81, 0x500000, true };
+                    build(shapes[0], big, 0);
+                    for (int i = 0; i < big.maxChunks; ++i) table[i] = reinterpret_cast<uintptr_t>(hiBlock);
+                    const uintptr_t block = reinterpret_cast<uintptr_t>(hiBlock);
+                    memcpy(hdr + kBase + 0x18, &block, 8);
+                    const int32_t lastNonGC = -1, firstGC = 0, maxNotGC = 0;
+                    memcpy(hdr + kBase + 0x00, &firstGC, 4);
+                    memcpy(hdr + kBase + 0x04, &lastNonGC, 4);
+                    memcpy(hdr + kBase + 0x08, &maxNotGC, 4);
+                    check("UE58-ADJ10 control: a pre-5.8 base that only relaxed D validates (PreAllocatedObjects' halves) "
+                          "still validates", Genau::ValidateGObjects(B));
+                    VirtualFree(hiBlock, 0, MEM_RELEASE);
+                }
+            }
+            VirtualFree(region, 0, MEM_RELEASE);
+        }
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     // [DENKEN-WRITE-SITES] Path 2's mapping (Aura::MapNativeAccesses). Bitfield bools packed into one byte share
     // Offset_Internal, so each of them gets the byte's row -- a map that kept the first one only would file a write to
     // bCanBeDamaged under whichever flag came first, and give bCanBeDamaged no row at all.
@@ -14665,6 +15456,480 @@ int main() {
         Genau::s_mainLinker = self;
         check("control: an MSVC build's warning gets no note", std::string(Genau::LinkerNote()).empty());
         Genau::s_mainLinker = saved;
+    }
+
+    // -- RESCAN-DECOY-REINIT -- Extra Scan replaces a GObjects that reads no objects, and re-runs what its session derived --
+    //
+    // ⛔ POOL-FAKING and DYNOFF: own name table, a fixed fixture region, and a real offsets probe over it. LAST in main:
+    // the probe rewrites DynOff globals no later block may meet.
+    // [RESCAN-DECOY-REINIT] A published GObjects that Aura reads no objects from, which every Count == 0 recovery missed.
+    // Extra Scan collects candidates past it instead of stopping at the first, apply_rescan keeps the one UE5_Init's heap
+    // fallback would (the largest array whose head resolves names), and the re-init re-runs the offsets probe and resets
+    // every latch the empty pool fed, in UE5_Init's order. Stock shapes and a GObjects of 0 behave as before (§7.3 #5).
+    {
+        blk("RESCAN-DECOY-REINIT - a 0-object GObjects is replaced by the largest named candidate; its session is re-run");
+        static uint8_t rdEntry[2][0x40] = {};
+        memcpy(rdEntry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t rdChunk[3] = { 0, reinterpret_cast<uintptr_t>(rdEntry[1]), 0 };
+        static uintptr_t rdChunks[2] = { reinterpret_cast<uintptr_t>(rdChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(rdChunks), 0x10);
+
+        // The tables, chunks and objects sit at a fixed address whose halves no count slot can take (see UE58-ADJ10), in a
+        // region large enough that a walk over every slot of the largest count below stays inside committed zeros.
+        uint8_t* region = nullptr;
+        for (uint32_t hi : { 0x00F2u, 0x00E2u, 0x00D2u, 0x00C2u }) {
+            region = static_cast<uint8_t*>(VirtualAlloc(
+                reinterpret_cast<void*>((static_cast<uintptr_t>(hi) << 32) | 0x20000000u), 0x80000,
+                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            if (region) break;
+        }
+        check("RESCAN setup: a fixture region at 0x000000X2_20000000", region != nullptr);
+        if (region) {
+            // 64 named objects whose ClassPrivate is a UClass that is its own class; a chunk of 24-byte items for each item
+            // shape (UObject* at +0x00, and at +0x08 behind UE 5.7+'s FlagsAndRefCount), the 64 objects at their head.
+            uint8_t* objs = region;
+            uint8_t* cls = region + 0x1000;
+            const uintptr_t clsAddr = reinterpret_cast<uintptr_t>(cls);
+            memcpy(cls + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+            uint8_t* chunkAt[2] = { region + 0x10000, region + 0x48000 };
+            for (int i = 0; i < 64; ++i) {
+                uint8_t* o = objs + i * 0x40;
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &clsAddr, 8);
+                const int32_t nameIdx = 1;
+                memcpy(o + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+                const uintptr_t oa = reinterpret_cast<uintptr_t>(o);
+                memcpy(chunkAt[0] + i * 24, &oa, 8);
+                memcpy(chunkAt[1] + i * 24 + 8, &oa, 8);
+            }
+            auto* table = reinterpret_cast<uintptr_t*>(region + 0x2000);   // every chunk slot: chunk 0
+            for (int i = 0; i < 0x300; ++i) table[i] = reinterpret_cast<uintptr_t>(chunkAt[0]);
+            const uintptr_t tableAddr = reinterpret_cast<uintptr_t>(table);
+
+            // A stock UE 4.20-5.7 FUObjectArray at `at` (its base): the GC prefix, then ObjObjects at +0x10.
+            auto putStock = [](uint8_t* at, uintptr_t tbl, int32_t maxChunks, int32_t numChunks, int32_t num) {
+                memset(at, 0, 0x80);
+                auto p32 = [&](int o, int32_t v) { memcpy(at + o, &v, 4); };
+                p32(0x00, 0x8001); p32(0x04, 0x8000); p32(0x08, 0x8001);
+                memcpy(at + 0x10, &tbl, 8);
+                p32(0x20, maxChunks * Grimoire::OBJECTS_PER_CHUNK); p32(0x24, num);
+                p32(0x28, maxChunks); p32(0x2C, numChunks);
+            };
+            // The decoy: Phantom Blade Zero's ObjObjects from its Objects field on (VND10-A1-01 pins that Genau takes that
+            // anchor through relaxed F and Aura reads 0 there), alone, with nothing before it that reads as an array.
+            auto putDecoy = [](uint8_t* at, uintptr_t tbl, int32_t num, int32_t maxE) {
+                memset(at, 0, 0x60);
+                memcpy(at + 0x00, &tbl, 8);
+                memcpy(at + 0x08, &num, 4);
+                memcpy(at + 0x0C, &maxE, 4);
+                const uint64_t all = ~0ull;
+                memcpy(at + 0x18, &all, 8);
+                const int32_t m1 = -1, spin = 4000;
+                memcpy(at + 0x20, &m1, 4);
+                memcpy(at + 0x38, &spin, 4);
+            };
+
+            // One range the sweep searches: the decoy inline, a partial list, the master, and a slot pointing at a second
+            // decoy in the region (pointer mode).
+            alignas(16) static uint8_t rd[0x400] = {};
+            memset(rd, 0, sizeof rd);
+            const uintptr_t D = reinterpret_cast<uintptr_t>(rd) + 0x40;
+            const uintptr_t P = reinterpret_cast<uintptr_t>(rd) + 0x140;
+            const uintptr_t M = reinterpret_cast<uintptr_t>(rd) + 0x240;
+            uint8_t* d2 = region + 0x3000;
+            const uintptr_t D2 = reinterpret_cast<uintptr_t>(d2);
+            constexpr int32_t kPartial = 0x1200, kMaster = 0x4000;
+            putDecoy(rd + 0x40, tableAddr, 0x4000, 4259840);
+            putStock(rd + 0x140, tableAddr, 6, 1, kPartial);
+            putStock(rd + 0x240, tableAddr, 6, 1, kMaster);
+            putDecoy(d2, tableAddr, 0x4000, 4259840);
+            memcpy(rd + 0x340, &D2, 8);
+            const std::vector<Genau::ScanRange> range = { { reinterpret_cast<uintptr_t>(rd), reinterpret_cast<uintptr_t>(rd) + sizeof rd } };
+
+            check("RESCAN setup: the decoy validates in Genau", Genau::ValidateGObjects(D) && Genau::ValidateGObjects(D2));
+            Aura::Init(D);
+            check("RESCAN setup: ...and Aura reads no objects from it", Aura::GetCount() <= 0,
+                  std::to_string(Aura::GetCount()).c_str());
+            check("RESCAN setup: the partial list and the master validate at their bases",
+                  Genau::ValidateGObjects(P) && Genau::ValidateGObjects(M));
+            Aura::Init(M);
+            check("RESCAN setup: ...and Aura reads the master whole", Aura::GetCount() == kMaster);
+
+            // Today's sweep, kept here as the oracle: the first address, inline then pointed to, that validates.
+            auto oldFirstHit = [](const std::vector<Genau::ScanRange>& rs) -> uintptr_t {
+                for (const Genau::ScanRange& sec : rs) {
+                    for (uintptr_t addr = sec.start; addr + 0x20 < sec.end; addr += 4) {
+                        if (Genau::ValidateGObjects(addr)) return addr;
+                        uintptr_t ptrVal = 0;
+                        if (Macht::ReadSafe(addr, ptrVal) && ptrVal && Genau::LooksLikeDataPtr(ptrVal)
+                            && Genau::ValidateGObjects(ptrVal))
+                            return ptrVal;
+                    }
+                }
+                return 0;
+            };
+            auto has = [](const std::vector<uintptr_t>& v, uintptr_t a) {
+                return std::find(v.begin(), v.end(), a) != v.end();
+            };
+            auto listText = [&](const std::vector<uintptr_t>& v) {
+                std::string s;
+                for (uintptr_t a : v) {
+                    char b[40];
+                    const char* name = a == D ? "D" : a == D2 ? "D2" : a == P ? "P" : a == M ? "M" : nullptr;
+                    if (name) snprintf(b, sizeof b, "%s%s", s.empty() ? "" : " ", name);
+                    else snprintf(b, sizeof b, "%s0x%llX", s.empty() ? "" : " ", (unsigned long long)a);
+                    s += b;
+                }
+                return s;
+            };
+
+            // -- the sweep --
+            std::vector<uintptr_t> first, all, avoidD, avoidD2;
+            Genau::CollectExtraScanCandidates(range, 0, 1, first);
+            check("RESCAN control: a GObjects of 0 gets today's first hit, the same address", first.size() == 1
+                  && first[0] == oldFirstHit(range), listText(first).c_str());
+            Genau::CollectExtraScanCandidates(range, 0, Genau::kRescanMaxCandidates, all);
+            Genau::CollectExtraScanCandidates(range, D, Genau::kRescanMaxCandidates, avoidD);
+            Genau::CollectExtraScanCandidates(range, D2, Genau::kRescanMaxCandidates, avoidD2);
+            check("RESCAN ⭐: the replace sweep collects past the first hit -- the partial list and the master",
+                  has(avoidD, P) && has(avoidD, M), listText(avoidD).c_str());
+            check("RESCAN ⭐: ...in scan order", has(avoidD, P) && has(avoidD, M)
+                  && std::find(avoidD.begin(), avoidD.end(), P) < std::find(avoidD.begin(), avoidD.end(), M));
+            check("RESCAN ⭐: ...never offering the published decoy inline", !has(avoidD, D) && has(all, D),
+                  listText(all).c_str());
+            check("RESCAN ⭐: ...nor through a pointer to it", !has(avoidD2, D2) && has(avoidD2, D) && has(all, D2),
+                  listText(avoidD2).c_str());
+            {
+                std::vector<uintptr_t> sorted = all;
+                std::sort(sorted.begin(), sorted.end());
+                check("RESCAN: every address once", std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
+                std::vector<uintptr_t> capped;
+                Genau::CollectExtraScanCandidates(range, 0, 2, capped);
+                check("RESCAN: the cap stops the sweep, keeping the first ones",
+                      capped.size() == 2 && capped[0] == all[0] && capped[1] == all[1], listText(capped).c_str());
+            }
+
+            // -- the choice --
+            size_t sampled = 0;
+            bool aborted = true;
+            Genau::GObjectsCandidateScore won = Genau::ChooseGObjectsCandidate(D, avoidD, Genau::kRescanNameSampleSlots,
+                                                                              &sampled, &aborted);
+            check("RESCAN ⭐: the master is chosen over the partial list", won.addr == M && won.count == kMaster
+                  && won.resolved >= Genau::kMinResolvedNames && !aborted, listText({ won.addr }).c_str());
+            check("RESCAN ⭐: ...and Aura is left on it", Aura::GetCount() == kMaster);
+            check("RESCAN: ...sampling names only down to the winner", sampled == 1,
+                  ("sampled " + std::to_string(sampled)).c_str());
+            won = Genau::ChooseGObjectsCandidate(D, { D, D2 }, Genau::kRescanNameSampleSlots, &sampled);
+            check("RESCAN ⭐: no candidate that reads objects -> none, and Aura goes back to the published decoy",
+                  won.addr == 0 && Aura::GetCount() <= 0);
+            // Found live (DumperTest, rescan_decoy_live.py): the sweep met a heap structure Aura read with 524,312
+            // objects whose head named 8 objects among 1,009 non-null slots -- a sparse head, where the master's is
+            // its CoreUObject core, named slot after slot. The larger count must not win on 8 names.
+            {
+                std::vector<uint8_t> nothing(0x40, 0);   // a readable object that names nothing (index 0, "None")
+                std::vector<uint8_t> spChunk(1024 * 24, 0);
+                for (int i = 0; i < 1024; ++i) {
+                    const uintptr_t o = i % 128 == 0 ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
+                                                     : reinterpret_cast<uintptr_t>(nothing.data());
+                    memcpy(spChunk.data() + static_cast<size_t>(i) * 24, &o, 8);
+                }
+                std::vector<uintptr_t> spTable(6, reinterpret_cast<uintptr_t>(spChunk.data()));
+                alignas(16) static uint8_t sp[0x80] = {};
+                putStock(sp, reinterpret_cast<uintptr_t>(spTable.data()), 6, 4, 0x30000);
+                const uintptr_t S = reinterpret_cast<uintptr_t>(sp);
+                Aura::Init(S);
+                check("RESCAN setup: the sparse structure reads a larger count than the master", Aura::GetCount() == 0x30000,
+                      std::to_string(Aura::GetCount()).c_str());
+                const Genau::GObjectsCandidateScore sparse = Genau::ScoreGObjectsCandidate(S, Genau::kRescanNameSampleSlots);
+                check("RESCAN setup: ...and its head names objects only here and there",
+                      sparse.resolved >= Genau::kMinResolvedNames && sparse.scanned > 4 * sparse.resolved,
+                      (std::to_string(sparse.resolved) + " of " + std::to_string(sparse.scanned)).c_str());
+                won = Genau::ChooseGObjectsCandidate(D, { S, P, M }, Genau::kRescanNameSampleSlots);
+                check("RESCAN ⭐: a sparse head's larger count does not beat the master's densely named head",
+                      won.addr == M && won.count == kMaster, listText({ won.addr }).c_str());
+                won = Genau::ChooseGObjectsCandidate(D, { S }, Genau::kRescanNameSampleSlots);
+                check("RESCAN ⭐: ...and alone it does not qualify", won.addr == 0 && Aura::GetCount() <= 0);
+            }
+            // [RESCAN-STATIC-LAYOUT] The replace scores candidates through Aura::Init only. Every static shape UE5_Init's
+            // static recovery knows (STATICGOBJ's table: Obsidian's packed 20-byte item, the 5.7+ item, the Test item, the
+            // 5.8 array) is read whole that way too, so such an array found by the sweep can win: Aura's item detection
+            // reads the stride from content. Each shape is checked against the static scorer's reading of it.
+            {
+                struct StaticShape { const char* what; bool ue58; int stride; int objOff; };
+                const StaticShape staticShapes[] = {
+                    { "<=5.7 array, classic item, stride 24",           false, 0x18, 0x00 },
+                    { "Obsidian: <=5.7 array, packed 20-byte item",     false, 0x14, 0x00 },
+                    { "<=5.7 array, 5.7+ item (UObject* @+0x08), 24",   false, 0x18, 0x08 },
+                    { "5.8 array (ObjObjects first), 5.7+ item, 24",    true,  0x18, 0x08 },
+                    { "<=5.7 array, 40-byte Test item, UObject* @+0x08", false, 0x28, 0x08 },
+                };
+                constexpr int32_t kStaticNum = 0x3000;
+                for (const StaticShape& k : staticShapes) {
+                    std::vector<uint8_t> stChunk(static_cast<size_t>(kStaticNum) * k.stride + 0x100, 0);
+                    for (int i = 0; i < kStaticNum; ++i) {
+                        const uintptr_t o = reinterpret_cast<uintptr_t>(objs + (i % 64) * 0x40);
+                        memcpy(stChunk.data() + static_cast<size_t>(i) * k.stride + k.objOff, &o, 8);
+                    }
+                    std::vector<uintptr_t> stTable(6, reinterpret_cast<uintptr_t>(stChunk.data()));
+                    // The array at its base, every count field set: Max 33 chunks of 64K, one chunk in use.
+                    alignas(16) static uint8_t st[0xC0] = {};
+                    memset(st, 0, sizeof st);
+                    uint8_t* a = st + 0x40;
+                    const uintptr_t tbl = reinterpret_cast<uintptr_t>(stTable.data());
+                    const int32_t num = kStaticNum, maxE = 33 * 65536, numC = 1, maxC = 33;
+                    memcpy(a + (k.ue58 ? 0x00 : 0x10), &tbl, 8);
+                    memcpy(a + (k.ue58 ? 0x08 : 0x24), &num, 4);
+                    memcpy(a + (k.ue58 ? 0x0C : 0x20), &maxE, 4);
+                    memcpy(a + (k.ue58 ? 0x10 : 0x2C), &numC, 4);
+                    memcpy(a + (k.ue58 ? 0x14 : 0x28), &maxC, 4);
+                    const uintptr_t K = reinterpret_cast<uintptr_t>(a);
+                    int stride = 0, objOff = -1;
+                    bool ue58 = !k.ue58, licensee = true;
+                    const int staticScore = Genau::ScoreGObjectsStaticBase(K, &stride, &objOff, &ue58, &licensee);
+                    const std::string tag = std::string(" (") + k.what + ")";
+                    check(("RESCAN setup: the static scorer reads the array with its own stride and item" + tag).c_str(),
+                          staticScore > 0 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58,
+                          ("score " + std::to_string(staticScore) + " stride " + std::to_string(stride)).c_str());
+                    // What UE5_Init's static recovery reads, from the scorer's recipe (it forces the stride of a classic
+                    // item only, and leaves a 5.7+ item to the item detection).
+                    Aura::InitRecoveredStaticArray(K, stride, objOff, ue58, licensee);
+                    const int32_t initCount = Aura::GetCount();
+                    const int initItem = Aura::GetItemSize(), initObjOff = Aura::GetItemObjOffset();
+                    const uintptr_t initSlot5 = Aura::GetByIndex(5);
+                    won = Genau::ChooseGObjectsCandidate(D, { K }, Genau::kRescanNameSampleSlots);
+                    check(("RESCAN control: the replace reads a static array as UE5_Init's static recovery does" + tag).c_str(),
+                          won.addr == K && won.count == initCount && initCount == kStaticNum
+                          && Aura::GetItemSize() == initItem && Aura::GetItemObjOffset() == initObjOff
+                          && Aura::GetByIndex(5) == initSlot5,
+                          ("replace: item " + std::to_string(Aura::GetItemSize()) + " objOff "
+                           + std::to_string(Aura::GetItemObjOffset()) + "; init: item " + std::to_string(initItem)
+                           + " objOff " + std::to_string(initObjOff)).c_str());
+                }
+            }
+            // A published pointer that reads objects now is its own winner (the engine was not up when init ran).
+            won = Genau::ChooseGObjectsCandidate(M, { P }, Genau::kRescanNameSampleSlots);
+            check("RESCAN: a published GObjects that reads objects now is kept", won.addr == M && Aura::GetCount() == kMaster);
+
+            // Every stock shape: among the anchors the sweep would offer around it, the choice reads the array whole.
+            // The shapes and the GC fields as UE58-ADJ10 builds them.
+            struct Shape { const char* name; int obj, maxE, num, maxC, numC, gc; };
+            const Shape shapes[] = {
+                { "UE 4.20-5.7", 0x10, 0x20, 0x24, 0x28, 0x2C, 0x00 }, { "UE 5.8", 0x00, 0x0C, 0x08, 0x14, 0x10, 0x20 },
+                { "UE4-Extended", 0x10, 0x18, 0x1C, 0x20, 0x24, 0x00 }, { "flat 4.11-4.19", 0x10, 0x18, 0x1C, -1, -1, 0x00 },
+                { "Back4Blood", 0x20, 0x10, 0x14, 0x18, 0x1C, 0x00 },  { "Multiversus", 0x28, 0x20, 0x10, 0x24, 0x30, 0x00 },
+                { "MindsEye", 0x28, 0x10, 0x24, 0x20, 0x14, 0x00 },    { "UE5.7-Mistfall", 0x10, 0x20, 0x24, 0x04, 0x08, -1 },
+                { "Phantom Blade Zero", 0x18, 0x24, 0x20, 0x10, 0x14, 0x00 },
+            };
+            alignas(16) static uint8_t sh[0x100] = {};
+            const uintptr_t SB = reinterpret_cast<uintptr_t>(sh) + 0x40;
+            int shapesChecked = 0;
+            for (const Shape& s : shapes) {
+                for (int item = 0; item < 2; ++item) {
+                    memset(sh, 0, sizeof sh);
+                    auto p32 = [&](int o, int32_t v) { memcpy(sh + 0x40 + o, &v, 4); };
+                    if (s.gc >= 0) { p32(s.gc, 0x8001); p32(s.gc + 4, 0x8000); }
+                    if (s.gc == 0) { p32(0x08, 0x8001); p32(0x0C, 0); }
+                    const uintptr_t chunk = reinterpret_cast<uintptr_t>(chunkAt[item]);
+                    const bool flat = s.maxC < 0;
+                    for (int i = 0; i < 6; ++i) table[i] = chunk;
+                    const uintptr_t objs0 = flat ? chunk : tableAddr;
+                    memcpy(sh + 0x40 + s.obj, &objs0, 8);
+                    p32(s.maxE, 6 * Grimoire::OBJECTS_PER_CHUNK);
+                    p32(s.num, kMaster);
+                    if (!flat) { p32(s.maxC, 6); p32(s.numC, 1); }
+                    std::vector<uintptr_t> anchors;
+                    for (int off = -0x20; off <= 0x40; off += 4)
+                        if (Genau::ValidateGObjects(SB + off)) anchors.push_back(SB + off);
+                    const std::string tag = std::string(" (") + s.name + (item ? ", UObject* at +0x08)" : ")");
+                    if (anchors.empty()) continue;   // counted below: every pair must validate somewhere
+                    ++shapesChecked;
+                    won = Genau::ChooseGObjectsCandidate(0, anchors, Genau::kRescanNameSampleSlots);
+                    check(("RESCAN control: the choice reads a stock array whole" + tag).c_str(),
+                          won.addr != 0 && won.count == kMaster && won.resolved >= Genau::kMinResolvedNames,
+                          ("count " + std::to_string(won.count) + ", " + std::to_string(anchors.size()) + " anchor(s)").c_str());
+                }
+            }
+            check("RESCAN control: every stock shape and item layout validates somewhere, so each was checked",
+                  shapesChecked == static_cast<int>(sizeof shapes / sizeof shapes[0]) * 2, std::to_string(shapesChecked).c_str());
+            for (int i = 0; i < 0x300; ++i) table[i] = reinterpret_cast<uintptr_t>(chunkAt[0]);
+
+            // -- the re-init --
+            // The decoy's session: the offsets probe gave up over its empty pool, and the latches it fed are taken.
+            const auto svCpn   = DynOff::bCasePreservingName;
+            const auto svOuter = DynOff::UOBJECT_OUTER;
+            const auto svFProp = DynOff::bUseFProperty;
+            const uint32_t svVersion = g_cachedUEVersion;
+            g_cachedUEVersion = 501;
+            auto decoySession = [&] {
+                Aura::Init(D);
+                Genau::ValidateAndFixOffsets(501);
+                DynOff::bUFunctionFlagsDetected.store(true); DynOff::UFUNCTION_FLAGS = 0;
+                DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+                DynOff::bUFunctionFuncDetected.store(true); DynOff::UFUNCTION_FUNC = 0;
+                DynOff::bUEnumNamesFailed.store(true); DynOff::bUEnumNamesDetected.store(true);
+                DynOff::FNAME_SIZE_MEASURED.store(0); DynOff::bFNameSizeProbed.store(true);
+                DynOff::FNAME_ALIGN_MEASURED.store(0); DynOff::bFNameAlignProbed.store(true);
+                DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(-1); DynOff::bSoftPathProbed.store(true);
+                DynOff::UCLASS_INTERFACES.store(-1);
+                DynOff::bCompactSets.store(true);
+                DynOff::SOFTPTR_PATH = 0x10; DynOff::LAZYPTR_GUID = 0x10;
+                g_cachedUEVersion = 507;   // the decoy's ladder raised it from the decoy's item layout
+            };
+            decoySession();
+            check("RESCAN setup: the decoy's probe gave up over its empty pool, and still counts as run",
+                  DynOff::bOffsetsProbeRan.load() && !DynOff::bOffsetsValidated.load(), DynOff::g_offsetsFallbackReason);
+
+            using Step = Genau::ReplaceStep;
+            std::vector<Step> steps;
+            bool probeRanAtPublish = true, voteAtPublish = true, probedAtGEngine = false;
+            bool enumClearAtClimb = false, versionAtClimb = false;
+            uint32_t retiresAtClimb = 0;
+            uintptr_t published = 0;
+            bool inPlace = true;
+            Genau::ReplaceHooks hooks;
+            hooks.publish = [&](uintptr_t w, bool place) {
+                published = w; inPlace = place;
+                probeRanAtPublish = DynOff::bOffsetsProbeRan.load();
+                voteAtPublish = DynOff::bUFunctionFlagsDetected.load();
+            };
+            hooks.resolveGEngine = [&] { probedAtGEngine = DynOff::bOffsetsProbeRan.load(); };
+            hooks.climbVersion = [&] {
+                enumClearAtClimb = !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load();
+                versionAtClimb = g_cachedUEVersion == 501;
+                Ubel::FunctionFlagsOffset();   // the CMC rung votes through WalkFunctions, as UE5_Init's ladder does
+                // The ladder's walks latch what walks latch, under the version it is still climbing from.
+                DynOff::bCompactSets.store(true);
+                DynOff::SOFTPTR_PATH = 0x10;
+                DynOff::LAZYPTR_GUID = 0x10;
+                DynOff::UCLASS_INTERFACES.store(-1);
+                retiresAtClimb = DynOff::g_offsetValidations.load();
+            };
+            std::vector<bool> fluxAt;
+            hooks.onStep = [&](Step s) { steps.push_back(s); fluxAt.push_back(Aura::PoolInFlux()); };
+            Genau::ReplaceInput in;
+            in.published = D;
+            in.candidates = avoidD;
+            in.preLadderVersion = 501;
+            const uint32_t retiresBefore = DynOff::g_offsetValidations.load();
+            Genau::ReplaceResult rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+
+            check("RESCAN ⭐: the decoy is replaced by the master", rr.outcome == Genau::ReplaceOutcome::Replaced
+                  && rr.winner.addr == M && published == M && !inPlace && Aura::GetCount() == kMaster);
+            const std::vector<Step> want = { Step::Chosen, Step::VerdictReset, Step::AuraOnWinner, Step::Published,
+                                             Step::LatchesReset, Step::Probed, Step::GEngine, Step::UEnumReset,
+                                             Step::Climbed, Step::WalkLatchesReset };
+            check("RESCAN ⭐: the re-init runs UE5_Init's order", steps == want,
+                  ("steps " + std::to_string(steps.size())).c_str());
+            check("RESCAN ⭐: the pool is in flux while the choice moves Aura, and settled once it sits on the winner",
+                  fluxAt.size() == want.size() && fluxAt[0] && fluxAt[1] && !fluxAt[2] && !fluxAt.back()
+                  && !Aura::PoolInFlux());
+            check("RESCAN ⭐: the decoy's verdict and vote are gone before the winner is published",
+                  !probeRanAtPublish && !voteAtPublish);
+            check("RESCAN ⭐: the offsets probe runs again over the winner, before the GEngine second pass",
+                  probedAtGEngine && DynOff::bOffsetsProbeRan.load());
+            check("RESCAN ⭐: the UEnum names latch is clear when the ladder asks for it", enumClearAtClimb);
+            check("RESCAN ⭐: the ladder climbs from the pre-ladder version", versionAtClimb);
+            check("RESCAN ⭐: the vote the ladder's CMC rung takes is kept, as UE5_Init keeps it",
+                  DynOff::bUFunctionFlagsDetected.load());
+            check("RESCAN ⭐: UFunction::Func is detected again on next use", !DynOff::bUFunctionFuncDetected.load());
+            check("RESCAN ⭐: the validated-gated layout probes run again",
+                  !DynOff::bFNameSizeProbed.load() && !DynOff::bFNameAlignProbed.load() && !DynOff::bSoftPathProbed.load());
+            check("RESCAN ⭐: the walk-fed latches and the version-derived envelopes are dropped after the ladder's walks",
+                  !DynOff::bCompactSets.load() && DynOff::SOFTPTR_PATH == -1 && DynOff::LAZYPTR_GUID == -1
+                  && DynOff::UCLASS_INTERFACES.load() == 0);
+            // One retire is two bumps of g_offsetValidations (DynOff::RetireFamilyEpoch).
+            check("RESCAN ⭐: the family epoch is retired after the ladder too, once",
+                  retiresAtClimb > retiresBefore && DynOff::g_offsetValidations.load() == retiresAtClimb + 2,
+                  (std::to_string(retiresBefore) + " -> " + std::to_string(retiresAtClimb) + " -> "
+                   + std::to_string(DynOff::g_offsetValidations.load())).c_str());
+
+            // None qualifies: nothing but Aura is touched, and it goes back to the decoy.
+            decoySession();
+            const char* svReason = DynOff::g_offsetsFallbackReason;
+            const uint32_t svRetires = DynOff::g_offsetValidations.load();
+            steps.clear();
+            bool hookRan = false;
+            Genau::ReplaceHooks quiet;
+            quiet.publish = [&](uintptr_t, bool) { hookRan = true; };
+            quiet.resolveGEngine = [&] { hookRan = true; };
+            quiet.climbVersion = [&] { hookRan = true; };
+            in.candidates = { D2 };
+            rr = Genau::ReplaceGObjectsAndReprobe(in, quiet);
+            check("RESCAN ⭐: no candidate qualifies -> none, Aura back on the decoy, no hook",
+                  rr.outcome == Genau::ReplaceOutcome::NoneQualified && Aura::GetCount() <= 0 && !hookRan);
+            check("RESCAN ⭐: ...and the decoy's DynOff state is untouched",
+                  DynOff::bOffsetsProbeRan.load() && !DynOff::bOffsetsValidated.load()
+                  && DynOff::g_offsetsFallbackReason == svReason && DynOff::g_offsetValidations.load() == svRetires
+                  && DynOff::bUFunctionFlagsDetected.load() && DynOff::bUEnumNamesFailed.load()
+                  && DynOff::bCompactSets.load());
+
+            // The published pointer reads objects now: re-initialised in place.
+            decoySession();
+            in.published = M;
+            in.candidates = { P };
+            rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+            check("RESCAN: a published GObjects that reads objects now is re-initialised in place",
+                  rr.outcome == Genau::ReplaceOutcome::ReinitInPlace && published == M && inPlace);
+
+            // The caller's connection dropping does not cut the re-init short: it ends measured, not half-done.
+            decoySession();
+            in.published = D;
+            in.candidates = avoidD;
+            Tot::g_perCommand.store(true);
+            steps.clear();
+            rr = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+            Tot::g_perCommand.store(false);
+            check("RESCAN ⭐: a per-command cancel does not cut the re-init short", rr.outcome == Genau::ReplaceOutcome::Replaced
+                  && steps.size() == want.size());
+            // Shutdown does: before the choice is published, Aura goes back to the decoy.
+            decoySession();
+            Tot::g_shutdown.store(true);
+            rr = Genau::ReplaceGObjectsAndReprobe(in, quiet);
+            Tot::g_shutdown.store(false);
+            check("RESCAN: shutdown aborts the choice, back on the decoy",
+                  rr.outcome == Genau::ReplaceOutcome::Aborted && Aura::GetCount() <= 0);
+
+            {
+                Aura::PoolInFluxScope off(false);
+                check("RESCAN control: a flux scope built off raises nothing (UE5_Init's, over a pool that reads objects)",
+                      !Aura::PoolInFlux());
+                Aura::PoolInFluxScope outer(true);
+                {
+                    Aura::PoolInFluxScope inner(true);
+                    inner.End();
+                    check("RESCAN: flux scopes nest", Aura::PoolInFlux());
+                }
+                outer.End();
+                check("RESCAN: ...and End() lowers it before the scope ends", !Aura::PoolInFlux());
+            }
+            // The resets on their own.
+            DynOff::bUEnumNamesDetected.store(true); DynOff::bUEnumNamesFailed.store(true);
+            DynOff::UENUM_NAMES = 0x58; DynOff::UENUM_VALUE_SIZE = 1; DynOff::UENUM_PAIR_STRIDE = 0x10;
+            DynOff::bEnumNamesNewContainer = true;
+            const uint32_t enumGen = DynOff::UENUM_DETECT_GEN.load();
+            Genau::ResetUEnumNamesDetection();
+            check("RESCAN ⭐: the reset moves the detection generation, so a table parsed across it is not cached",
+                  DynOff::UENUM_DETECT_GEN.load() != enumGen);
+            check("RESCAN: the UEnum names reset forgets the latch, the failure and the layout",
+                  !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load() && DynOff::UENUM_NAMES == 0x40
+                  && DynOff::UENUM_VALUE_SIZE == 8 && DynOff::UENUM_PAIR_STRIDE == 0 && !DynOff::bEnumNamesNewContainer);
+            DynOff::bUFunctionFlagsDetected.store(true); DynOff::UFUNCTION_FLAGS = 0xB0; DynOff::UFUNCTION_TAIL_EXTRA = 4;
+            DynOff::UFUNCTION_TAIL_MEASURED.store(0xB6);
+            Ubel::ResetFunctionFlagsVote();
+            check("RESCAN: the vote reset forgets the vote and the tail", !DynOff::bUFunctionFlagsDetected.load()
+                  && DynOff::UFUNCTION_FLAGS == 0 && DynOff::UFUNCTION_TAIL_EXTRA == 0
+                  && DynOff::UFUNCTION_TAIL_MEASURED.load() == -1);
+            DynOff::bUFunctionFuncDetected.store(true); DynOff::UFUNCTION_FUNC = 0xD8;
+            Aura::ResetUFunctionFuncDetection();
+            check("RESCAN: the UFunction::Func reset", !DynOff::bUFunctionFuncDetected.load() && DynOff::UFUNCTION_FUNC == 0);
+
+            DynOff::bCasePreservingName = svCpn;
+            DynOff::UOBJECT_OUTER = svOuter;
+            DynOff::bUseFProperty = svFProp;
+            g_cachedUEVersion = svVersion;
+            VirtualFree(region, 0, MEM_RELEASE);
+        }
+        Aura::Init(pool.Addr());
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

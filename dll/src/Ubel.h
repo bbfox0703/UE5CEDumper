@@ -795,6 +795,15 @@ bool IsNativeClass(uintptr_t cls);
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
 int FunctionFlagsOffset();
 
+// [RESCAN-DECOY-REINIT] Forget the FunctionFlags vote and the tail it measured, under the vote's lock: the next
+// FunctionFlagsOffset() votes again, once the offsets probe has run. For apply_rescan's replacement of a GObjects that
+// read no objects, whose vote sampled an empty pool.
+void ResetFunctionFlagsVote();
+
+// [RESCAN-DECOY-REINIT] Forget the lazy layout probes that latch once the offsets are validated -- sizeof / alignof
+// FName, FSoftObjectPath's shape -- so a replacement's pool measures them again.
+void ResetValidatedLayoutProbes();
+
 // [UE-OVERRIDE-411] Whether a UE version override fits the UFunction tail this game actually has. A version's
 // layout puts NumParms / ParmsSize where its FunctionTailShiftFor says, and the sampled UFunctions say where they are.
 // The readers follow the measurement whenever there is one (DynOff::FunctionTailReadBase), so set_ue_version_override

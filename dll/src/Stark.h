@@ -437,6 +437,69 @@ inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size
     return -1;
 }
 
+/// [VND10-A1] The dword tests with FunctionFlags at or past +0x100: Phantom Blade Zero inserts 0x50 bytes into UStruct,
+/// so its FUNC_Native test is `test dword ptr [reg+0x100], 0x400`, a disp32 with a non-zero second byte that both dword
+/// patterns pin to 0. The FunctionFlags offset when a FUNC_Native test (imm32 0x400, within `p1Limit`) and a 0x400000
+/// test (anywhere) name the SAME disp below 0x10000; -1 otherwise. Requiring them to agree makes this stricter than the
+/// first pass, whose two patterns may sit on different fields; Frieren runs it only after the first two passes found
+/// nothing on any candidate vtable.
+inline int WideFlagTestsFunctionFlags(const uint8_t* body, size_t size, size_t p1Limit) {
+    // One `test dword ptr [reg+disp32], imm32` ending by `limit`: F7, ModRM mod=10 reg=000 (/0 is TEST), a SIB byte when
+    // rm=100, a disp32 below 0x10000, then the imm32. Its disp, or -1.
+    auto testAt = [&](size_t i, uint32_t imm, size_t limit) -> int {
+        if (i + 10 > limit || body[i] != 0xF7) return -1;
+        const uint8_t modrm = body[i + 1];
+        if ((modrm & 0xF8) != 0x80) return -1;
+        const size_t d = ((modrm & 7) == 4) ? i + 3 : i + 2;
+        if (d + 8 > limit) return -1;
+        if (body[d + 2] != 0 || body[d + 3] != 0) return -1;
+        const uint32_t v = static_cast<uint32_t>(body[d + 4]) | (static_cast<uint32_t>(body[d + 5]) << 8)
+                         | (static_cast<uint32_t>(body[d + 6]) << 16) | (static_cast<uint32_t>(body[d + 7]) << 24);
+        if (v != imm) return -1;
+        return body[d] | (body[d + 1] << 8);
+    };
+    constexpr int kMaxHigh = 16;
+    int high[kMaxHigh];
+    int nHigh = 0;
+    for (size_t j = 0; j < size && nHigh < kMaxHigh; ++j) {
+        const int d = testAt(j, 0x00400000u, size);
+        if (d < 0) continue;
+        bool seen = false;
+        for (int k = 0; k < nHigh; ++k) seen = seen || high[k] == d;
+        if (!seen) high[nHigh++] = d;
+    }
+    if (nHigh == 0) return -1;
+    const size_t lim1 = p1Limit < size ? p1Limit : size;
+    for (size_t i = 0; i < lim1; ++i) {
+        const int d = testAt(i, 0x00000400u, lim1);
+        if (d < 0) continue;
+        for (int k = 0; k < nHigh; ++k)
+            if (high[k] == d) return d;
+    }
+    return -1;
+}
+
+/// [VND10-A1] The ProcessEvent vtable slot from the candidate vtables, in pass order: `firstPasses(vtable)` (the dword
+/// patterns, then the byte-narrowed tests) over EVERY vtable first, and only when all of them miss, `widePass(vtable)`
+/// (WideFlagTestsFunctionFlags) over every vtable. A binary the first passes answer on any vtable keeps that answer,
+/// whatever the wide pass would find on an earlier one. Each returns a slot offset or a value <= 0 for a miss. -1 when
+/// both miss everywhere; `outIndex` / `outWide` say which vtable and which pass answered.
+template <class FirstPasses, class WidePass>
+inline int PickProcessEventSlot(const std::vector<uintptr_t>& vtables, FirstPasses&& firstPasses, WidePass&& widePass,
+                                size_t* outIndex = nullptr, bool* outWide = nullptr) {
+    if (outIndex) *outIndex = 0;
+    if (outWide) *outWide = false;
+    for (size_t i = 0; i < vtables.size(); ++i) {
+        const int off = firstPasses(vtables[i]);
+        if (off > 0) { if (outIndex) *outIndex = i; return off; }
+    }
+    for (size_t i = 0; i < vtables.size(); ++i) {
+        const int off = widePass(vtables[i]);
+        if (off > 0) { if (outIndex) *outIndex = i; if (outWide) *outWide = true; return off; }
+    }
+    return -1;
+}
+
 /// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
 /// know whether it has run since: a STATEFUL toggle reads its state before it fires, and a toggle still queued will
 /// flip whatever that read said. Answered from the request's own promise: the drain fulfils it when it runs the

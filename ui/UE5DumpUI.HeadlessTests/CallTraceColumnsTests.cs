@@ -605,4 +605,42 @@ public class CallTraceColumnsTests
         AssertListFloor(panel, Row2);
         Assert.Equal(window - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
     });
+
+    // [LIVEFUNCS-UI-SNAP-MEMORY] The Parameters tab with a struct's long summary at the call: the value wraps inside its
+    // own column and never draws over "After the call", whose cells stay under their heading.
+    private const string LongAtCall =
+        "(bOverride_WhiteTemp=True, bOverride_WhiteTint=False, bOverride_ColorSaturation=True, " +
+        "bOverride_ColorContrast=False, WhiteTemp=6500.0, WhiteTint=0.0, ColorSaturation=(X=1.0,Y=1.0,Z=1.0,W=1.0))";
+    private const string ShortAfter = "(bOverride_WhiteTemp=False)";
+
+    /// <summary>The Parameters tab showing the long row, then <paramref name="more"/> short ones: enough of them make
+    /// the list scroll, which must not move its columns off the heading's.</summary>
+    private static CallTracePanel ParamsShown(double detailPaneWidth, int more)
+    {
+        var (_, panel, vm) = LaidIn(1000, detailPaneWidth, Row);
+        vm.ParamRows = new[] { new ParamRow { Name = "Settings", Kind = "in", AtCall = LongAtCall, After = ShortAfter } }
+            .Concat(Enumerable.Range(0, more).Select(i => new ParamRow { Name = $"F{i}", Kind = "in", AtCall = "0", After = "1" }))
+            .ToArray();
+        var tabs = panel.GetVisualDescendants().OfType<TabControl>().Single();
+        tabs.SelectedItem = tabs.Items.OfType<TabItem>().Single(t => Equals(t.Header, Header("str.CT.Tab.Params")));
+        Dispatcher.UIThread.RunJobs();
+        return panel;
+    }
+
+    [Theory]
+    [InlineData(520, 0)]
+    [InlineData(700, 0)]
+    [InlineData(520, 80)]
+    public Task A_long_value_at_the_call_wraps_in_its_column_and_never_draws_over_the_one_after(double pane, int more)
+        => Headless.Run(() =>
+    {
+        var panel = ParamsShown(pane, more);
+        var at = Text(panel, LongAtCall);
+        var after = Text(panel, ShortAfter);
+        double atRight = VisibleRight(at, panel), afterLeft = Span(after, panel).left;
+        Assert.True(atRight <= afterLeft + 0.5, $"\"At the call\" draws to {atRight:0.#}, past \"After\" at {afterLeft:0.#}");
+        Assert.True(at.Bounds.Height > 2 * at.FontSize, $"the long value is one line {at.Bounds.Height:0.#} high: it does not wrap");
+        double heading = Span(Text(panel, Header("str.CT.Param.Col.After")), panel).left;
+        Assert.True(Math.Abs(afterLeft - heading) < 0.5, $"\"After\" cells start at {afterLeft:0.#}, the heading at {heading:0.#}");
+    });
 }

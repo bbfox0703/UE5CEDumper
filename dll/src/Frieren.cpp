@@ -48,6 +48,10 @@ uint32_t    g_cachedUEVersion = 0;
 bool        g_cachedVersionDetected = true;  // false if UE version detection failed (PE + memory scan)
 bool        g_cachedIsUserOverride  = false; // true = the version in force is the user's override (persisted, or cleared with Auto pending)
 bool        g_cachedIsLowConfidence = false; // true = Tier 3 bare-pattern OR publisher-bias fallback
+// [RESCAN-DECOY-REINIT] The version and its confidence before the structural ladder climbed them: what a GObjects
+// replacement re-probes and climbs from, since the ladder only raises and may have raised from a decoy's item layout.
+uint32_t    g_cachedPreLadderUEVersion    = 0;
+bool        g_cachedPreLadderLowConfidence = false;
 bool        g_cachedAutoPending     = false; // true = Auto chosen, nothing on record to hand back: the override's version holds until the next launch
 bool        g_cachedVersionTooOld   = false; // true = engine predates 4.11 — scan skipped, see Genau.h
 const char* g_cachedPublisherThumbprint = nullptr;  // e.g. "SQUARE_ENIX" (nullptr if no match)
@@ -322,6 +326,145 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
                  "keep this log for the report.", who, ueVersion, climbed.version, climbed.version);
     return climbed;
 }
+
+// [RESCAN-DECOY-REINIT] The lock UE5_Init and an apply_rescan hold, taken only if free, for the pipe commands that read
+// or write what they settle: a rescan's decision (Aura's count, which an apply moves candidate by candidate) and a
+// version override (which a replacement's climb would overwrite). Never from a thread that may hold it already.
+bool TryHoldInit()    { return s_initMutex.try_lock(); }
+void ReleaseInitHold() { s_initMutex.unlock(); }
+
+// --- GWorld recovery (Avowed / Obsidian UE5.3) ---
+// GWorld's AOB can land on a decoy (like GObjects did). Validate that *GWorld is a
+// UObject whose class is "World"; if not, recover in two stages: (1) find a live UWorld
+// instance in GObjects and the static .data pointer to it (ExtraScanGWorld); (2) if no
+// static slot exists, fall back to the engine object graph — GEngine->GameViewport->&World
+// (RecoverGWorldViaEngine, a live engine-updated UWorld* field). Needs a working GObjects +
+// offsets, so it runs after the GObjects recovery + offset validation. Gated on a real
+// object array, so titles with a correct GWorld are unaffected. NOT gated on
+// GWorld != 0: ValidateGWorldBasic REJECTS a decoy during the
+// scan, so GWorld can legitimately be 0 here (no valid AOB) and still
+// needs recovery — the guarded ReadSafe below leaves gworldOk=false → recovery runs.
+// Run by UE5_Init, and by apply_rescan once it has replaced a GObjects that read no objects (the case this gate skipped
+// at init). `who` prefixes the log lines. True when GWorld was recovered.
+bool CheckAndRecoverGWorld(const char* who) {
+    if (!(g_cachedGObjects && g_cachedGNames && Aura::GetCount() > 0)) return false;
+    bool gworldOk = false;
+    uintptr_t uworld = 0;
+    if (g_cachedGWorld && Macht::ReadSafe(g_cachedGWorld, uworld) && uworld) {
+        uintptr_t cls = 0;
+        if (Macht::ReadSafe(uworld + Grimoire::OFF_UOBJECT_CLASS, cls) && cls) {
+            uint32_t cn = 0;
+            if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, cn) &&
+                Serie::GetString(cn) == "World") {
+                gworldOk = true;
+            }
+        }
+    }
+
+    // TEST HOOK — the recovery path is otherwise only reachable on a game whose GWorld
+    // AOB genuinely fails. Set UE5DUMP_FORCE_GWORLD_RECOVERY in the GAME process env to
+    // exercise it on demand:
+    //   =1       force the full recovery chain (ExtraScanGWorld, then engine path)
+    //   =engine  also skip ExtraScanGWorld -> go straight to RecoverGWorldViaEngine
+    // Non-destructive: if recovery fails the valid AOB GWorld is left untouched.
+    char forceEnv[32] = {0};
+    DWORD forceLen = GetEnvironmentVariableA("UE5DUMP_FORCE_GWORLD_RECOVERY", forceEnv, sizeof(forceEnv));
+    bool forceRecovery   = (forceLen > 0 && forceLen < sizeof(forceEnv));
+    bool forceEngineOnly = forceRecovery && _stricmp(forceEnv, "engine") == 0;
+    if (forceRecovery && gworldOk) {
+        LOG_WARN("%s: TEST HOOK UE5DUMP_FORCE_GWORLD_RECOVERY=%s — forcing recovery (AOB GWorld was valid)",
+                 who, forceEnv);
+        gworldOk = false;
+    }
+
+    if (gworldOk) return false;
+    LOG_WARN("%s: GWorld=0x%llX does not deref to a UWorld — recovering...",
+             who, static_cast<unsigned long long>(g_cachedGWorld));
+    uintptr_t   rec    = 0;
+    const char* method = nullptr;
+    if (!forceEngineOnly) {
+        rec = Genau::ExtraScanGWorld();          // primary: static .data slot
+        if (rec) method = "instance_scan_recovery";
+    }
+    if (!rec) {
+        rec = Genau::RecoverGWorldViaEngine();    // gap-fill: live GameViewport->World slot
+        if (rec) method = "engine_recovery";
+    }
+    if (!rec) {
+        LOG_WARN("%s: GWorld recovery failed (no static slot, no engine/viewport path)", who);
+        return false;
+    }
+    g_cachedGWorld = rec;
+    g_cachedGWorldMethod = method;
+    g_cachedGWorldPatternId = nullptr;       // the GWLD_* AOB found a decoy — drop its stale label
+    // The AOB symbol/scan fields would otherwise still describe the (decoy) AOB
+    // match, leaving the UI's GWorld "AOB" symbol toggle wrongly enabled (it keys
+    // on a non-empty gworld_aob via IsAobSymbolAvailable) and the Pointers panel
+    // still showing the decoy's "AOB: <scan addr>" line. Recovery slots are not
+    // static module symbols, so AOB-symbol export / disasm do not apply. Clearing
+    // these makes the toggle auto-uncheck + gray out and the scan-addr line hide,
+    // re-evaluated on the next connect; the UI shows the recovery method instead.
+    g_cachedGWorldAob      = nullptr;
+    g_cachedGWorldAobPos   = 0;
+    g_cachedGWorldAobLen   = 0;
+    g_cachedGWorldExport   = nullptr;   // a recovered slot is not the export either
+    g_cachedGWorldScanAddr = 0;
+    LOG_INFO("%s: GWorld recovered via %s -> 0x%llX",
+             who, method, static_cast<unsigned long long>(rec));
+    return true;
+}
+
+// [RESCAN-DECOY-REINIT] apply_rescan's replacement of a published GObjects that reads no objects, under its init fence:
+// Genau::ReplaceGObjectsAndReprobe chooses and re-runs the session in UE5_Init's order; this supplies what Frieren
+// owns -- the published globals (cleared as UE5_Init's Count == 0 recoveries clear them), the GEngine second pass and
+// the version ladder, climbed from the version init recorded before its own climb.
+Genau::ReplaceResult ReplaceDecoyGObjects(uintptr_t published, const std::vector<uintptr_t>& candidates) {
+    Genau::ReplaceInput in;
+    in.published = published;
+    in.candidates = candidates;
+    in.preLadderVersion = g_cachedPreLadderUEVersion;
+    Genau::ReplaceHooks hooks;
+    hooks.publish = [](uintptr_t winner, bool inPlace) {
+        g_cachedIsLowConfidence = g_cachedPreLadderLowConfidence;
+        if (inPlace) return;   // the published pointer was right: its AOB and its labels stand
+        g_cachedGObjects = winner;
+        g_cachedGObjectsMethod = "data_heuristic";
+        g_cachedGObjectsPatternId = nullptr;
+        g_cachedGObjectsExport = nullptr;
+        g_cachedGObjectsAdjustment = 0;
+        g_cachedGObjectsScanAddr = 0;   // the decoy's code site: the Asm / SYM buttons would point at it
+    };
+    hooks.resolveGEngine = [] {
+        if (g_cachedGEngine != 0) return;   // validated through the reflected GameViewport: it stands
+        Genau::EnginePointers eng;   // scratch -- carries the AOB metadata triple
+        if (!Genau::ResolveGEngineDeferred(eng)) return;
+        g_cachedGEngine          = eng.GEngine;
+        g_cachedGEngineMethod    = eng.gengineMethod;
+        g_cachedGEnginePatternId = eng.genginePatternId;
+        g_cachedGEngineScanAddr  = eng.gengineScanAddr;
+        g_cachedGEngineAob       = eng.gengineAob;
+        g_cachedGEngineAobPos    = eng.gengineAobPos;
+        g_cachedGEngineAobLen    = eng.gengineAobLen;
+        g_cachedGEngineExport    = eng.gengineExport;
+        LOG_INFO("apply_rescan: Applied GEngine=0x%llX (%s)", (unsigned long long)g_cachedGEngine, g_cachedGEngineMethod);
+    };
+    hooks.climbVersion = [] {
+        const DynOff::StructuralVersion climbed =
+            CorrectVersionStructurally(g_cachedPreLadderUEVersion, g_cachedIsUserOverride, "apply_rescan");
+        g_cachedUEVersion = climbed.version;
+        if (climbed.loweredToUE4)
+            g_cachedIsLowConfidence = true;
+    };
+    const Genau::ReplaceResult r = Genau::ReplaceGObjectsAndReprobe(in, hooks);
+    if (r.outcome == Genau::ReplaceOutcome::Replaced || r.outcome == Genau::ReplaceOutcome::ReinitInPlace) {
+        const char* reason = DynOff::g_offsetsFallbackReason;
+        LOG_INFO("apply_rescan: GObjects=0x%llX (%s) Objects=%d, UE%u, offsets %s%s%s",
+                 (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod, Aura::GetCount(), g_cachedUEVersion,
+                 DynOff::bOffsetsValidated.load(std::memory_order_acquire) ? "measured" : "NOT measured",
+                 reason && *reason ? " -- " : "", reason ? reason : "");
+    }
+    return r;
+}
 } // namespace FrierenInit
 
 extern "C" {
@@ -344,14 +487,17 @@ bool UE5_Init() {
     // this guard exists to prevent.
     std::unique_lock<std::mutex> initLock(s_initMutex, std::try_to_lock);
     if (!initLock.owns_lock()) {
-        LOG_WARN("UE5_Init: init already in progress on another thread — tid=%lu is waiting "
-                 "(guard working, not an error)", GetCurrentThreadId());
+        // [RESCAN-DECOY-REINIT] The lock's holder need not be an init: an apply_rescan holds it, and so, briefly, do the
+        // pipe commands that read or write what init settles (a rescan's decision, a version override).
+        LOG_WARN("UE5_Init: the init lock is held (init already in progress on another thread, "
+                 "or an apply_rescan or a pipe command) — tid=%lu is waiting (guard working, not an error)",
+                 GetCurrentThreadId());
         initLock.lock();
-        LOG_INFO("UE5_Init: tid=%lu resumed after waiting (first caller %s)",
+        LOG_INFO("UE5_Init: tid=%lu resumed after waiting (%s)",
                  GetCurrentThreadId(),
                  s_initialized.load(std::memory_order_acquire)
-                     ? "succeeded — returning its result, no second scan"
-                     : "did NOT complete — this thread will scan");
+                     ? "the engine is initialised — returning that result, no second scan"
+                     : "the engine is not initialised — this thread will scan");
     }
     if (s_initialized.load(std::memory_order_acquire)) {
         LOG_WARN("UE5_Init: Already initialized");
@@ -389,6 +535,8 @@ bool UE5_Init() {
     g_cachedVersionDetected = ptrs.bVersionDetected;
     g_cachedIsUserOverride  = ptrs.bUserOverride;
     g_cachedIsLowConfidence = ptrs.bLowConfidence;
+    g_cachedPreLadderUEVersion = ptrs.UEVersion;
+    g_cachedPreLadderLowConfidence = ptrs.bLowConfidence;
     g_cachedAutoPending     = false;   // a fresh scan read the cache, so a cleared override is already gone
     g_cachedVersionTooOld   = ptrs.bVersionTooOld;
     g_cachedPublisherThumbprint = ptrs.publisherThumbprint;
@@ -488,6 +636,9 @@ bool UE5_Init() {
         // count: the master GObjects (~millions) dwarfs partial lists (~thousands).
         // STRICTLY ADDITIVE: runs only when Count==0, so titles that already
         // resolve objects are never affected. See docs/avowed-gobjects-fix.md.
+        // [RESCAN-DECOY-REINIT] Both recoveries move Aura from candidate to candidate (Aura::PoolInFlux); raised only
+        // when they run.
+        Aura::PoolInFluxScope recovering(Aura::GetCount() == 0);
         if (Aura::GetCount() == 0) {
             LOG_WARN("UE5_Init: GObjects=0x%llX produced 0 objects — likely a decoy match; "
                      "attempting recovery...",
@@ -496,23 +647,15 @@ bool UE5_Init() {
             // Primary recovery: a STATIC FUObjectArray in the module's .data/BSS that
             // no AOB matches (Avowed / Obsidian UE5.3 — even patternsleuth fails). The
             // base is content-validated (first objects resolve to clean names), so the
-            // layout is known — force UE5-Extended so Aura reads NumElements at +0x24.
+            // layout is known: Aura reads it by the geometry that matched.
             int staticStride = 0, staticObjOff = 0;
             bool staticCancelled = false;   // [P1-GENAU-ABORT]
-            bool staticUE58 = false;
+            bool staticUE58 = false, staticLicensee = false;
             uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,
-                                                                   &staticObjOff, &staticUE58);
+                                                                   &staticObjOff, &staticUE58, &staticLicensee);
             if (staticCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             if (staticBase) {
-                // [VND583-10] A UE 5.8 array keeps ObjObjects at +0x00, which is what Aura::Init's
-                // "UE5.8" preset reads. A 5.0-5.7 one is UE5-Extended; its stride is forced only for a
-                // classic item (Obsidian's 20 bytes), and a 5.7+ item (UObject* @+0x08) is left to the
-                // item auto-detection, which knows that shape -- InitWithExtendedLayout's forced mode
-                // would read the UObject* at +0x00.
-                if (staticUE58)
-                    Aura::Init(staticBase);
-                else
-                    Aura::InitWithExtendedLayout(staticBase, staticObjOff == 0 ? staticStride : 0);
+                Aura::InitRecoveredStaticArray(staticBase, staticStride, staticObjOff, staticUE58, staticLicensee);
                 if (Aura::GetCount() > 0) {
                     LOG_INFO("UE5_Init: Recovery SUCCESS (static struct scan) — GObjects 0x%llX -> 0x%llX (Count=%d, stride=%d)",
                              static_cast<unsigned long long>(ptrs.GObjects),
@@ -523,6 +666,7 @@ bool UE5_Init() {
                     g_cachedGObjectsPatternId = nullptr;
                     g_cachedGObjectsExport    = nullptr;   // a recovered array is not the export either
                     g_cachedGObjectsAdjustment = 0;      // ...nor the signature's
+                    g_cachedGObjectsScanAddr = 0;        // ...nor its code site: Asm / SYM would point at the decoy's
                     Flamme::UpdateGObjectsMethod(g_cachedPeHash, "static_struct_recovery");
                 }
             }
@@ -589,6 +733,7 @@ bool UE5_Init() {
                 g_cachedGObjectsPatternId = nullptr;
                 g_cachedGObjectsExport    = nullptr;
                 g_cachedGObjectsAdjustment = 0;
+                g_cachedGObjectsScanAddr = 0;
                 Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_scan_recovery");
             } else {
                 LOG_WARN("UE5_Init: Recovery failed — no candidate qualified as an object array; "
@@ -596,6 +741,7 @@ bool UE5_Init() {
                 Aura::Init(ptrs.GObjects);  // keep state consistent (Count stays 0)
             }
         }
+        recovering.End();
 
         // Dynamically detect FField/FProperty/UStruct offsets
         // Must be called AFTER FNamePool + ObjectArray are initialized
@@ -635,84 +781,9 @@ bool UE5_Init() {
                  ptrs.GObjects ? "OK" : "MISSING", ptrs.GNames ? "OK" : "MISSING");
     }
 
-    // --- GWorld recovery (Avowed / Obsidian UE5.3) ---
-    // GWorld's AOB can land on a decoy (like GObjects did). Validate that *GWorld is a
-    // UObject whose class is "World"; if not, recover in two stages: (1) find a live UWorld
-    // instance in GObjects and the static .data pointer to it (ExtraScanGWorld); (2) if no
-    // static slot exists, fall back to the engine object graph — GEngine->GameViewport->&World
-    // (RecoverGWorldViaEngine, a live engine-updated UWorld* field). Needs a working GObjects +
-    // offsets, so it runs after the GObjects recovery + offset validation above. Gated on a real
-    // object array, so titles with a correct GWorld are unaffected. NOT gated on
-    // ptrs.GWorld != 0: ValidateGWorldBasic REJECTS a decoy during the
-    // scan, so GWorld can legitimately be 0 here (no valid AOB) and still
-    // needs recovery — the guarded ReadSafe below leaves gworldOk=false → recovery runs.
-    if (ptrs.GObjects && ptrs.GNames && Aura::GetCount() > 0) {
-        bool gworldOk = false;
-        uintptr_t uworld = 0;
-        if (ptrs.GWorld && Macht::ReadSafe(ptrs.GWorld, uworld) && uworld) {
-            uintptr_t cls = 0;
-            if (Macht::ReadSafe(uworld + Grimoire::OFF_UOBJECT_CLASS, cls) && cls) {
-                uint32_t cn = 0;
-                if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, cn) &&
-                    Serie::GetString(cn) == "World") {
-                    gworldOk = true;
-                }
-            }
-        }
-
-        // TEST HOOK — the recovery path is otherwise only reachable on a game whose GWorld
-        // AOB genuinely fails. Set UE5DUMP_FORCE_GWORLD_RECOVERY in the GAME process env to
-        // exercise it on demand:
-        //   =1       force the full recovery chain (ExtraScanGWorld, then engine path)
-        //   =engine  also skip ExtraScanGWorld -> go straight to RecoverGWorldViaEngine
-        // Non-destructive: if recovery fails the valid AOB GWorld is left untouched.
-        char forceEnv[32] = {0};
-        DWORD forceLen = GetEnvironmentVariableA("UE5DUMP_FORCE_GWORLD_RECOVERY", forceEnv, sizeof(forceEnv));
-        bool forceRecovery   = (forceLen > 0 && forceLen < sizeof(forceEnv));
-        bool forceEngineOnly = forceRecovery && _stricmp(forceEnv, "engine") == 0;
-        if (forceRecovery && gworldOk) {
-            LOG_WARN("UE5_Init: TEST HOOK UE5DUMP_FORCE_GWORLD_RECOVERY=%s — forcing recovery (AOB GWorld was valid)",
-                     forceEnv);
-            gworldOk = false;
-        }
-
-        if (!gworldOk) {
-            LOG_WARN("UE5_Init: GWorld=0x%llX does not deref to a UWorld — recovering...",
-                     static_cast<unsigned long long>(ptrs.GWorld));
-            uintptr_t   rec    = 0;
-            const char* method = nullptr;
-            if (!forceEngineOnly) {
-                rec = Genau::ExtraScanGWorld();          // primary: static .data slot
-                if (rec) method = "instance_scan_recovery";
-            }
-            if (!rec) {
-                rec = Genau::RecoverGWorldViaEngine();    // gap-fill: live GameViewport->World slot
-                if (rec) method = "engine_recovery";
-            }
-            if (rec) {
-                ptrs.GWorld = rec;
-                g_cachedGWorld = rec;
-                g_cachedGWorldMethod = method;
-                g_cachedGWorldPatternId = nullptr;       // the GWLD_* AOB found a decoy — drop its stale label
-                // The AOB symbol/scan fields would otherwise still describe the (decoy) AOB
-                // match, leaving the UI's GWorld "AOB" symbol toggle wrongly enabled (it keys
-                // on a non-empty gworld_aob via IsAobSymbolAvailable) and the Pointers panel
-                // still showing the decoy's "AOB: <scan addr>" line. Recovery slots are not
-                // static module symbols, so AOB-symbol export / disasm do not apply. Clearing
-                // these makes the toggle auto-uncheck + gray out and the scan-addr line hide,
-                // re-evaluated on the next connect; the UI shows the recovery method instead.
-                g_cachedGWorldAob      = nullptr;
-                g_cachedGWorldAobPos   = 0;
-                g_cachedGWorldAobLen   = 0;
-                g_cachedGWorldExport   = nullptr;   // a recovered slot is not the export either
-                g_cachedGWorldScanAddr = 0;
-                LOG_INFO("UE5_Init: GWorld recovered via %s -> 0x%llX",
-                         method, static_cast<unsigned long long>(rec));
-            } else {
-                LOG_WARN("UE5_Init: GWorld recovery failed (no static slot, no engine/viewport path)");
-            }
-        }
-    }
+    // --- GWorld recovery (Avowed / Obsidian UE5.3) --- FrierenInit::CheckAndRecoverGWorld says when and how.
+    FrierenInit::CheckAndRecoverGWorld("UE5_Init");
+    ptrs.GWorld = g_cachedGWorld;
 
     // A CE Disable that landed while this scan was running has already cleared the
     // latch (UE5_Shutdown) and torn the server down, and every cancellable loop above
@@ -878,14 +949,20 @@ uint32_t UE5_GetVersion() {
     //     holds the rule and its citations.
     // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
     // user browses.
+    const uint32_t current = g_cachedUEVersion;
     const uint32_t refined = DynOff::RefineVersionFromLazyMarkers(
-        g_cachedUEVersion, Ubel::SawUtf8OrAnsiStr(), DynOff::bEnumNamesNewContainer);
-    if (refined != g_cachedUEVersion) {
-        LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5 string-property / UE5.7 enum marker).",
-                 g_cachedUEVersion, refined);
-        g_cachedUEVersion = refined;
+        current, Ubel::SawUtf8OrAnsiStr(), DynOff::bEnumNamesNewContainer);
+    if (refined != current) {
+        // [RESCAN-DECOY-REINIT] Written under the init lock, and only over the value it was refined from: an apply_rescan
+        // settling the version holds the lock, and a write from a read taken before it would bring back what it replaced.
+        std::unique_lock<std::mutex> lk(s_initMutex, std::try_to_lock);
+        if (lk.owns_lock() && g_cachedUEVersion == current) {
+            LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5 string-property / UE5.7 enum marker).",
+                     current, refined);
+            g_cachedUEVersion = refined;
+        }
     }
-    return g_cachedUEVersion;
+    return refined;
 }
 
 int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
@@ -1923,7 +2000,8 @@ int32_t UE5_SetFlyNoclip(int32_t enable) {
 // 10-byte signatures for `F7 /0 disp32, imm32` (TEST [reg+disp32], imm32):
 //   [F7] [ModRM] [disp32 low byte = FF_off] [disp32 high 3 bytes = 0] [imm32]
 // ModRM and the FF_off byte are wildcarded — FF_off varies by UE version
-// (0x88..0xC0, always < 0x100 so the high 3 bytes of disp32 are 0).
+// (0x88..0xC0 on every stock layout, < 0x100 so the high 3 bytes of disp32 are 0; a
+// licensee FunctionFlags past it is DetectProcessEventVTableOffsetByWideFlagTests').
 // The remaining 7 bytes pin the instruction shape and the literal imm32.
 namespace {
     constexpr uint8_t kPePat1Bytes[10] = { 0xF7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00 };
@@ -2057,6 +2135,27 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
     return -1;
 }
 
+// [VND10-A1] FunctionFlags at or past +0x100 (Stark::WideFlagTestsFunctionFlags). Stark::PickProcessEventSlot runs it
+// only after DetectProcessEventVTableOffsetByPattern found nothing on EVERY candidate vtable, so a binary any earlier
+// pass answers keeps that answer, whichever vtable gave it.
+static int DetectProcessEventVTableOffsetByWideFlagTests(uintptr_t vtable) {
+    constexpr int kMinOffset = 0x100;
+    constexpr int kMaxOffset = 0x300;
+    constexpr size_t kBodySize = 0x2000;
+    uint8_t body[kBodySize];
+    for (int off = kMinOffset; off <= kMaxOffset; off += 8) {
+        uintptr_t funcAddr = 0;
+        if (!Macht::ReadSafe(vtable + off, funcAddr) || !funcAddr) continue;
+        if (!Macht::ReadBytesSafe(funcAddr, body, kBodySize)) continue;
+        const int flagsOff = Stark::WideFlagTestsFunctionFlags(body, kBodySize, 0x400);
+        if (flagsOff < 0) continue;
+        LOG_INFO("DetectProcessEvent (pattern, FunctionFlags past +0xFF): match at vtable+0x%X -> 0x%llX "
+                 "(FunctionFlags +0x%X)", off, (unsigned long long)funcAddr, flagsOff);
+        return off;
+    }
+    return -1;
+}
+
 // Legacy version-based detection — kept as a fallback for cases where the
 // pattern scanner whiffs (unusual compiler output, heavily-optimised LTO,
 // custom publisher fork). Not authoritative: a "success" return here is
@@ -2073,7 +2172,7 @@ static int DetectProcessEventVTableOffsetByVersion(uintptr_t vtable) {
     int primary = DynOff::ProcessEventVTableSlotFor(g_cachedUEVersion);
     bool extrapolated = false;
     if (primary == 0) {
-        // No measurement for this version: below the 4.11 floor, or a future 5.9+.
+        // No measurement for this version: below the 4.11 floor, or 5.9+, not yet measured.
         // Take the nearest measured neighbour rather than a blanket constant, and say
         // out loud that it is a guess.
         primary = (g_cachedUEVersion >= 500) ? DynOff::ProcessEventVTableSlotFor(508)
@@ -2151,14 +2250,14 @@ static int DetectProcessEventVTableOffset(bool* fromVersionTable) {
     // Try the pattern scan across several distinct classes before giving up on it.
     // A class that overrides ProcessEvent (any AActor) hides the high-flag test in the
     // base implementation, so one sample is not enough to conclude "pattern scan failed".
-    for (size_t i = 0; i < vtables.size(); ++i) {
-        int off = DetectProcessEventVTableOffsetByPattern(vtables[i]);
-        if (off > 0) {
-            if (i > 0)
-                LOG_INFO("DetectProcessEvent: pattern matched on candidate vtable #%zu "
-                         "(earlier ones override ProcessEvent)", i);
-            return off;
-        }
+    size_t matchedOn = 0;
+    const int byPattern = Stark::PickProcessEventSlot(vtables, DetectProcessEventVTableOffsetByPattern,
+                                                      DetectProcessEventVTableOffsetByWideFlagTests, &matchedOn);
+    if (byPattern > 0) {
+        if (matchedOn > 0)
+            LOG_INFO("DetectProcessEvent: pattern matched on candidate vtable #%zu "
+                     "(earlier ones override ProcessEvent)", matchedOn);
+        return byPattern;
     }
 
     int off = DetectProcessEventVTableOffsetByVersion(vtables[0]);
@@ -2262,7 +2361,8 @@ static std::atomic<int>      s_peValidationFailures{0};
 static std::atomic<bool>     s_peOffsetDistrusted{false};
 
 /// The one and only detection entry point. Serialized, bounded and rate-limited.
-/// No-op (and cheap) when the offset is already usable or terminally failed.
+/// No-op (and cheap) when the offset is already usable or terminally failed, and a no-op that spends nothing while a
+/// recovery moves Aura from candidate to candidate (Aura::PoolInFlux).
 static void RunPeDetection(bool force) {
     // HOT-PATH FAST OUT. Every ordinary invoke walks this, so once the offset is
     // known (or terminally unknown) the whole function must cost one relaxed load
@@ -2287,6 +2387,9 @@ static void RunPeDetection(bool force) {
                                        force)) {
         return;
     }
+    // [RESCAN-DECOY-REINIT] Not while a recovery moves Aura from candidate to candidate: a candidate's slots read as
+    // vtables could name no slot, and that failure is terminal. Nothing is spent or stamped; the next call detects.
+    if (Aura::PoolInFlux()) return;
     s_lastPeDetectMs.store(GetTickCount64(), std::memory_order_relaxed);
 
     bool fromTable = false;
@@ -2325,6 +2428,9 @@ static void RunPeDetection(bool force) {
 // retry is cheap; the automatic lazy path stays bounded.
 static void TryInstallGameThreadHook(bool force = false) {
     if (Stark::IsHookActive()) return;
+    // [RESCAN-DECOY-REINIT] ResolveProcessEventAddr reads Aura's objects, which a recovery moves from candidate to
+    // candidate. Nothing is spent or stamped; the next call installs.
+    if (Aura::PoolInFlux()) return;
 
     int attempts = s_hookAttempts.load(std::memory_order_relaxed);
     if (!force && attempts >= kMaxHookAttempts) return;

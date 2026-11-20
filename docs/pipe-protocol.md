@@ -253,7 +253,7 @@ disconnects. A second `watch` of the same address on the same connection replace
 // Query rescan progress
 { "id": 25, "cmd": "rescan_status" }
 
-// Apply rescanned pointers (replaces current GObjects/GNames/GWorld)
+// Apply rescanned pointers (fills a GObjects / GWorld of 0, or replaces a GObjects that reads no objects)
 { "id": 26, "cmd": "apply_rescan" }
 
 // Trigger full re-initialization (proxy DLL deferred scan)
@@ -270,10 +270,40 @@ disconnects. A second `watch` of the same address on the same connection replace
 - The job keeps running when the client that started it disconnects, and another client's death no longer cancels
   it; only Stop / shutdown does.
 - `scan_status` sets `scanned: true` only when the scan initialized the engine; a scan Stop cancelled is not scanned.
+  It adds `applying` (additive, [MCP-READY-DURING-APPLY]): true while an init or an `apply_rescan` settles the pool
+  outside a scan job, when `get_pointers`' object count may be a candidate's. The MCP server reads it as still running.
 - `rescan` refuses while a scan or an init is still running, since what it looks for is decided from the pointers that
   scan has not finished publishing.
 - `rescan_status` adds `cancelled` (additive) once the run is over: true when Stop cut the sweep short, so its
   "not found" is unknown rather than a result.
+
+**What `rescan` looks for** ([RESCAN-DECOY-REINIT], `Genau::PlanRescan`): a GObjects of 0 (the first .data hit, as
+before); a GObjects that is published but reads no objects (0 or negative count), when GNames is up -- reply
+`"replacing": true`; a GWorld of 0, only over a pool that reads objects. Nothing to look for answers
+`"message": "All scannable pointers already found"`. The decision and the job's start take the init lock: `rescan`
+refuses while a scan or an apply runs ("A scan is still running -- wait for it to finish"), and while another
+command holds the lock for a moment ("The engine state is being settled by another command -- try again").
+
+- A **replace** sweep never offers the published GObjects (inline or through a pointer) and collects up to 64
+  distinct addresses instead of stopping at the first. `rescan_status` adds `gobjects_candidates` (how many) and
+  `replacing`; `gobjects_addr` stays the first hit, which a replace need not keep.
+- **`apply_rescan`** finishes once begun (a client that drops mid-apply does not cut it short; shutdown does). Under the
+  init fence it scores the published pointer and the candidates -- the largest array whose first slots resolve at
+  least two names, densely (at most two non-null slots read per name: a master's head is its CoreUObject core) -- and,
+  when one qualifies, re-runs what the decoy's session derived from
+  an empty pool, in UE5_Init's order: the offsets probe (from the version before init's structural climb), the GEngine
+  second pass, the version ladder, with the pool-sampled detections reset (FunctionFlags vote, UFunction::Func, UEnum
+  names, the validated layout probes, compact sets, the soft / lazy envelopes, UClass::Interfaces). After the fence it
+  runs init's GWorld check -- also after a fill that made the pool readable, which init skipped the same way -- and,
+  after a replacement, points the hint cache's GObjects method at `data_heuristic`. A fill resets UFunction::Func and
+  UEnum names too (an empty pool latched them). A job's candidates are used once. The apply can hold the CE mailbox
+  for the scoring and the probe.
+- Reply keys added (additive): `gobjects_outcome` -- `filled`, `replaced`, `reinit_in_place` (the published pointer
+  reads objects now), `none_qualified`, `aborted` (shutdown), `already_applied`, `changed` (GObjects moved or reads
+  objects since the job), `cancelled` (a cut-short sweep), `not_sought`; `gobjects_method`, `gworld_method`,
+  `gobjects_candidates_scored` (replace only: how many candidates' names were sampled), `gworld_recovered`.
+- `set_ue_version_override` also refuses while an init or an apply holds the init lock ("A scan is still running --
+  wait for it to finish", or the "being settled" text when another command holds it for a moment).
 
 ### CE Export
 
@@ -1818,7 +1848,7 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
   "fname_size":         8,             // DynOff::SizeofFName(): a measured 4 / 8 / 12, else 8 or 12
                                        // from case_preserving. Added 2026-10-27 ([DELEGATE-PAD-ALIGN]).
   "uobject_outer":      32,            // 0x20 standard, 0x28 case-preserving
-  "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8
+  "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8, 0x30 on Phantom Blade Zero's layout
                                        // (5.8 made ~FFieldClass() virtual). ⚠ 0x00 is FOUR-WAY
                                        // ambiguous: <=5.7, probe gave up, probe gave up earlier,
                                        // or UProperty mode. Read `fallback_reason` before it.
@@ -1875,15 +1905,23 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
 Builds a CE pointer chain (`ce_base` + `ce_offsets`) for a GObjects instance. Under the
 UE5.7+ packed FUObjectItem layout a native CE chain cannot reconstruct the bit-packed
 object pointer, so the response degrades to the absolute object address and sets
-`packed_layout:true` + a `warning` (the chain won't survive a restart / ASLR rebase). The
-direct-layout item hop includes `Aura::GetItemObjOffset()` so it dereferences the Object
-pointer at its real within-item offset (+0x00 classic, +0x08 UE5.7+ unpacked).
+`packed_layout:true` + a `warning` (the chain won't survive a restart / ASLR rebase). A flat
+(non-chunked) array degrades the same way, with `flat_layout:true`.
+
+On the chunked direct layouts, `ce_base` is the array's **Objects field**: `gobjects_rva` plus
+`objects_offset`, the latched preset row's offset of that field (0 for a stock array published at
+ObjObjects, 0x10 for UE5-Extended at the FUObjectArray base, 0x28 for MindsEye-Extended, ...).
+Cheat Engine reads `[base]` before it adds the first offset (N offsets are N reads), so the
+Objects offset cannot be one of the offsets; three follow — the chunk in the table, the item's
+UObject* in the chunk (`Aura::GetItemObjOffset()`: +0x00 classic, +0x08 UE5.7+ unpacked), and the
+field. `[CEPTR-OBJECTS-2026-11-19]`; built by `Aura::BuildCeChunkedChain`.
 
 ```jsonc
-// Direct (classic / unpacked57): full GObjects → chunk → item → field chain
+// Direct (classic / unpacked57): Objects field → chunk → item → field
 { "id": 18, "ok": true, "packed_layout": false,
-  "ce_base": "\"Game.exe\"+1BA1820",
-  "ce_offsets": [64, 264, 24, 0] }            // [field, withinChunk*itemSize+objOff, chunkIndex*8, 0]
+  "gobjects_rva": "0x1BA1820", "objects_offset": 16,
+  "ce_base": "\"Game.exe\"+1BA1830",             // gobjects_rva + objects_offset
+  "ce_offsets": [64, 264, 24] }                // [field, withinChunk*itemSize+objOff, chunkIndex*8]
 
 // Packed57 (UNVERIFIED): degraded to the absolute object address
 { "id": 18, "ok": true, "packed_layout": true,

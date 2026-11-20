@@ -27,6 +27,156 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (build 3776) — Extra Scan's follow-ups: a recovered array's code site, the MCP server during an apply `[INIT-RECOVERY-SCANADDR]` `[MCP-READY-DURING-APPLY]` `[RESCAN-STATIC-LAYOUT]`
+
+- **What changes:**
+  - **A GObjects init recovered** (its static-struct or heap fallback) no longer leaves the wrong match's code site
+    behind: the Pointers panel's Asm / SYM buttons stop pointing at it, as after Extra Scan's replace. The
+    static-struct recovery's method reads "static struct recovery", not its raw name.
+  - **The MCP server** no longer treats a game as scanned while an Extra Scan apply is choosing among candidates:
+    `scan_status` says `applying` then, and the AI is told the scan is still running.
+- **Checked, nothing to change:** Extra Scan's replace reads every static array shape init's static recovery knows
+  (Obsidian's packed 20-byte item among them) the same way init does; a test now pins it.
+- **Not done, by decision:** running Extra Scan's whole-.data search inside init (`[RESCAN-INIT-THIRD-RECOVERY]`).
+- **Tests:** red, then green, for the two fixes. dll_core_test 1981, dll_helpers_test 4456, C# 8547 (1 skipped),
+  headless 74, 40 gates. Stock control on DumperTest Shipping with this build: 24,530 objects, offsets validated,
+  `applying` false, Extra Scan has nothing to look for, a game-thread invoke answers.
+- AOT UI 62,882,304 bytes (sha256 cab59503ae5050a1...); UE5Dumper.dll 3,882,496 bytes (sha256 a445e371311bc29d...).
+
+## 2026-11-20 (no build change) — Three staging recipes stage again `[STAGING-STALE-RECIPES]`
+
+- **What changes:** `l41-step2-prefix-stall`, `l45-giveup-mutant` and `l55-denken-before` (the red arms of the closed
+  L41 / L45 / L55 live rows) match today's code again; each was staged and built. l41's commit reversal no longer
+  applied, so it is now a direct edit with the same effect (a cancelled enum search latches FAILED).
+- **Found doing it:** 20 of the 22 recipes that reverse a fix commit no longer reverse at today's code -- red arms of
+  their day, for closed rows. They stay as they are; `stage_dll.py`'s refusal now says to re-express one as direct
+  edits if its row reopens. The list is in todo.md.
+
+## 2026-11-20 (build 3775) — Extra Scan replaces a GObjects that reads no objects `[RESCAN-DECOY-REINIT]`
+
+- **What changes:**
+  - **Extra Scan** now helps when GObjects was found but reads **no objects** and both of init's recoveries missed
+    (before, it answered "All scannable pointers already found"). It sweeps the game's .data for candidates, keeps
+    the largest array whose first objects are named, and re-runs what that session had measured over an empty
+    pool: the property offsets, the GEngine pointer, the UE version check, and the detections that sample objects
+    once (UFunction flags and code pointer, enum names, FName and soft-path layouts). It then checks GWorld, as init
+    does, and the scan cache stops pointing the next launch at the wrong match.
+  - The **Pointers panel** offers Extra Scan in that case (with DLL 3775 or later), keeps the result line in view
+    after the scan hides the button, and says what happened: replaced (with the object count), no candidate
+    qualified, or why nothing was applied. The panels refresh after every apply.
+  - Extra Scan on a GObjects of 0 picks the same address as before; it now also resets the two detections an empty
+    pool latched, and checks GWorld afterwards.
+  - While an apply re-measures, God Mode / movement / time / fly / See-through skip their re-assert ticks, a UE
+    version override and a new Extra Scan wait ("A scan is still running"), and ProcessEvent detection waits while
+    a recovery moves between candidates. God Mode re-reads its targets after any offsets re-measure.
+- **Found by the live check, not the unit tests:** the first staged run on DumperTest kept a heap structure that read
+  as 524,312 objects with 8 named ones among its first 1,009 slots. A candidate's first slots must now be named
+  densely (at most two slots per name); the re-run picked the real array.
+- **Tests:** red, then green, throughout; a design critique (3 lenses) and a code review (4 lenses, 13 LOW findings,
+  all fixed); 12 mutations caught. dll_core_test 1971, dll_helpers_test 4456, C# 8543 (1 skipped), headless 74,
+  40 gates. **Live:** staged on DumperTest Shipping (`rescan_decoy_live.py`, `RESULT: PASS`: the decoy replaced by
+  the real FUObjectArray, 24,530 objects, offsets validated); stock control on DumperTest with this build: 24,530
+  objects, offsets validated, Extra Scan has nothing to look for, a game-thread invoke answers. No shipped title is
+  known to reach the replace (a verification-register row).
+- AOT UI 62,882,304 bytes (sha256 c9c7a36f6e38972e...); UE5Dumper.dll 3,882,496 bytes (sha256 eff53902e43e6304...).
+
+## 2026-11-20 (build 3774) — A UE 5.8 GObjects anchor and the GObjects Cheat Engine pointer `[UE58-ADJ10-WRONG-ANCHOR]` `[CEPTR-OBJECTS-2026-11-19]`
+
+- **What changes:**
+  - **UE 5.8 GObjects:** an address 0x10 below a 5.8 FUObjectArray validated (Genau's relaxed D read its ObjObjects
+    with the count pairs swapped), so a GObjects pattern with a -0x10 adjustment that was the first to hit a 5.8 title
+    handed over that address and Aura read a wrong non-zero count. Relaxed D now refuses that shape; the 5.8 base is
+    what such a row resolves. No 5.8 title is known where those rows win today. Stock shapes are pinned unchanged.
+  - **Cheat Engine pointer for an object** (`get_ce_pointer_info`, the MCP tool `read_ce_pointer`): the chain
+    dereferenced once too often and ignored where the array's Objects field sits, so on every chunked layout a CE
+    pointer record built from it led elsewhere. It now starts at the Objects field and reads three times; the reply
+    gains `objects_offset`.
+- Both were found while mapping `[VND10-A1]` and fixed in their own sessions, then merged here.
+- **Tests:** each red, then green. dll_core_test 1906, dll_helpers_test 4417, C# 8523 (1 skipped), headless 74,
+  40 gates. The CE pointer is not checked in Cheat Engine on a running game yet (a verification-register row).
+- AOT UI 62,868,992 bytes (sha256 b98e00e135c5aab5...); UE5Dumper.dll 3,862,528 bytes (sha256 acf952c5109e4d21...).
+
+## 2026-11-19 (build 3773) — Phantom Blade Zero's engine layout is supported, untested on the game `[VND10-A1]` `[VENDOR-AUDIT10-2026-11-19]`
+
+- **What changes:**
+  - **Phantom Blade Zero** (UE 5.7.4, a licensee layout): the DLL reads its object array (a reordered
+    `TUObjectArray`, at the FUObjectArray base, at ObjObjects, and through the Count == 0 recovery when an AOB hands
+    over its Objects field), its property type names (`FFieldClass::Name` at +0x30; `FField::Next` and `Owner`
+    swapped), `UStruct::PropertiesSize` and `UFunction::FunctionFlags` past its 0x50-byte insert, and finds
+    `ProcessEvent` by its flag tests at +0x100. The layout is RE-UE4SS's config for the game; **nobody here owns it, so
+    it is tested on synthetic shapes only.**
+  - **Stock engines read as before:** every licensee reading runs only where the stock readings find nothing, or is
+    appended after the stock rows and held to stricter rules; each test pairs the PBZ shape with the stock shapes.
+- **Not done:** audit #10's upstream lea + three-call GUObjectArray AOB. It helps PBZ only ranked ahead of the stock mov
+  rows, where it moves the winning pattern on stock titles and meets a decoy in FF7 Rebirth; PBZ goes through the
+  recovery instead. Extra Scan on a published GObjects of 0 objects was tried and reverted (todo `[RESCAN-DECOY-REINIT]`).
+- **Rules recorded** (working-lessons §7.3): a licensee layout never moves the stock logic (#5); a file outside every
+  test target is no reason to leave a change untested (#6).
+- **Tests:** each part red, then green; an independent review's findings fixed; three mutations (the whole-chunks rule
+  removed, +0x30 added to the stock FFieldClass probes, the PropertiesSize search run before the stock offset) each turn
+  their checks red. dll_core_test 1761, dll_helpers_test 4305, C# 8523 (1 skipped), headless 74, 40 gates.
+- AOT UI 62,868,992 bytes (sha256 bda90a049b8b6c52...); UE5Dumper.dll 3,860,992 bytes (sha256 eac54186f0848652...).
+- **Release notes:** "Added support for Phantom Blade Zero's engine layout (not tested on the game)."
+
+## 2026-11-19 (no build change) — The zydis bump rig prints all of Denken's output again `[VND10-A4]`
+
+- **What changes:** `tools/verify/zydis_bump_diff/` prints each field access's write sites, so a Zydis bump that moved
+  only where Denken finds a field's writes would now show. A control case covers upstream's newest delta, so a run over
+  just the commits since the last review can pass. A field added to Denken's result later stops the rig compiling
+  instead of going unprinted.
+- **The rig's exit code means what it says:** a relative `--out` broke the run; a toolchain it could not load, or a
+  crash of its own, read as "something needs reading" instead of "the rig failed"; and a candidate build that crashed
+  where the base's completed read as "the rig failed" instead of a finding. All nine exit paths checked with the
+  toolchain and harnesses mocked; the rig before the fix passes two of them.
+- An independent review of the rig changes confirmed eight distinct findings (one MED: the toolchain's exit code); all
+  are fixed.
+- **zydis stays held:** from the pin to `4b31c34` on four binaries, byte-identical; recorded in `vendor-pin-reviews.md`
+  with the new-format hashes, which do not compare with older runs.
+
+## 2026-11-19 (build 3772) — UE 5.9 is recognised `[VND9-05]` `[VENDOR-AUDIT10-2026-11-19]`
+
+- **What changes:**
+  - **Version detection:** a UE 5.9 game reads as 5.9 (509) at every version-string tier; before, one whose version
+    resource did not answer read as 5.8. Cached detections run once more (detection logic rev 12).
+  - **Pointer panel:** the UE version override list offers UE 5.9.
+  - **Game-only filters:** UE 5.9 moves Cascade into a plugin; its classes (`ParticleSystemComponent`, the
+    `ParticleModule*` set) now count as engine in the DLL's game-only filters, Dump All's GameOnly skip and the
+    analysis scripts.
+  - The ProcessEvent slot for 5.9 is not measured yet, so a 5.9 game uses 5.8's slot and the log says so.
+- **Vendor audit #10** (`docs/audit-2026-11-19-vendor-delta10.md`): what `sync_tools.ps1` brought in; this build is its
+  `VND10-A2`. zydis stays held (recorded in `vendor-pin-reviews.md`).
+- **Tests:** each part red, then green; `tools/verify/needle_sweep/` swept 174 exes (the corpus and both Steam
+  libraries; 84 of them read a version string at some tier) with the old and the new needle table: none reads
+  differently, none is unreadable, and a planted 5.9 control does. An
+  independent review found no fault in the shipped code; its findings on the sweep rig, a survey script, a test and
+  three comments are fixed. C# 8523 (1 skipped), headless 74, the five C++ self-tests, 40 gates.
+- AOT UI 62,868,992 bytes (sha256 fbaaa7493dc32d24...); UE5Dumper.dll 3,857,920 bytes (sha256 e9c16be431ab5e83...).
+
+## 2026-11-19 (no build change) — Build 3771's parameter-copy memory measured on a game `[LIVEFUNCS-UI-SNAP-MEMORY]`
+
+- **Live, DumperTest58 Shipping, the run that found it** (two CameraModifier functions, the 32 MB buffer, 162 s,
+  31,184 copies): loading the trace in Call Trace now peaks at 340 MB of working set and leaves 241 MB, with 110 MB of
+  heap; build 3733 peaked at 1,381 MB and left 1,035 MB with 900 MB of heap. Every copy was kept: the decoded values
+  shared down to under 1 MB. The Live Funcs line read "this UI up to 477 MB ..., about 352 MB after", a bound the load
+  stayed under. The PostProcess settings summary wraps inside its own Parameters column.
+
+## 2026-11-19 (build 3771) — Call Trace keeps a full parameter buffer in a fraction of the memory `[LIVEFUNCS-UI-SNAP-MEMORY]`
+
+- **What changes:**
+  - **Call Trace, loading parameter copies:** a decoded value that recurs from call to call (a camera's post-process
+    settings, say) is now held once and shared, and so is a raw copy that recurs. Past 256 MB of decoded values the
+    earliest calls keep only their raw bytes, and their Parameters tab says so; the Bytes tab still shows them. A full
+    32 MB buffer of a 1,984-byte struct had taken the UI from 251 MB to 1,381 MB and left 1,035 MB.
+  - **Live Funcs, the memory line:** this UI's figures now include the parameter copies it will keep (the snapshot
+    buffer, plus their decoded values up to the 256 MB budget), and the free-memory warning weighs them.
+  - **Call Trace, Parameters tab:** "At the call" and "After the call" share the room left after Name and Kind, and a
+    long struct summary wraps in its own column instead of running into the next.
+- **Tests:** each part red, then green; the keeper's sharing, its budget by call order, and 4,000 copies of an
+  unchanging 400-field struct held as one tree; the layout headless at two pane widths and with a scrolling list.
+  C# 8521 (1 skipped), headless 74, 40 gates. Not yet re-measured on a game (verification register
+  `[LIVEFUNCS-STEP2-UIMEM]`).
+- AOT UI 62,868,992 bytes (sha256 a0d8a6167f3a187b...); UE5Dumper.dll 3,858,432 bytes (sha256 2a7e3da50baf3e4e...).
+
 ## 2026-11-19 (build 3770) — The build uses MSVC whatever else is installed; the scan log names the game's linker and Wine `[MSVC-GUARD-2026-11-19]` `[SCAN-LINKER-LOG-2026-11-19]` `[IDGUARD-CANNOT-RUN-2026-11-19]`
 
 - **What changes:**
