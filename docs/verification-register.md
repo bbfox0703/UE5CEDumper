@@ -182,6 +182,13 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > so nothing is riding on it — but it is untested *today* and this says so rather than implying a
 > clean sweep.
 >
+> ✅ **Live Walker's Params, run 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504). The
+> entry point is the **Functions** selector at the bottom of Live Walker. `FunctionalTestUtilityLibrary` is not in the
+> Shipping package (0 objects), so the host was `Default__KismetSystemLibrary` (274 functions): the first click on
+> **Params** sorted ascending from `0 (0B)`, the second reversed it and topped with `15 (401B)`
+> `CapsuleTraceSingleForObjects`, then the other 15-parameter traces -- an ordinal sort would have topped with a
+> `9 (…)` row. The header sorts, reverses, and sorts by count.
+>
 > ✅ **Two things fell out of the same session:**
 >
 > 1. **`[CADENCEGAP-2026-08-22]` confirmed in the shipped UI**, which no unit test reaches. Live
@@ -940,127 +947,7 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     the DLL logs "own claim released", and the occluders stay hidden; with only the AI's claim, its OFF turns
     See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
 
-### ✅ The cards' holder labels (build 3716) — live checks, all six closed 2026-11-17 `[MCP-WRITE-GRANTS-2026-11-14]`
-
-Each gameplay card on the Teleport tab names who other than the window holds its feature, from `get_holds` every 2 s,
-and follows that holder's value -- dev-log 3716, docs/mcp-write-approval-eval.md §4.10. Three review rounds; unit
-tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGateTests`) and source pins
-(`PipePerProcessSourceTests`) for the DLL's debug-camera ownership.
-
-1. ✅ **CLOSED 2026-11-16** (AOT exe and DLL 3716, DumperTest Shipping pid 35288, the window connected;
-    `tools/verify/holder_chips_live.py --seconds 120`, PASS; log `out/holder_chips_live_3716.log`).
-    - **DLL side** (the rig's `get_holds`): `god_mode`, `time:global`, `movement:walk_speed` active, holder client
-      pid 30864 background; `movement:jump` active, holder client pid 34140 not background.
-    - **UI side** (screenshots): God Mode, Move Speed and Whole world read "Held by an AI session (pid 30864)" with
-      the badges ON, Move Speed's readout 750 cm/s (base 500 x 1.5) and Whole world's "0.5x (held; natural 1x)" while
-      its slider stayed at 100%; Super Jump read "Held by another program (pid 34140)" at 840 cm/s; Gravity, Stealth,
-      Keep Foreground and Player pawn had no chip. The chip's tooltip read as en.axaml words it.
-    - **The card's Reset takes over:** Super Jump's Reset turned it OFF (700 cm/s), the chip went, and the rig then
-      read the jump inactive and nobody's.
-    - **The holder leaves:** the background client's exit released its three holds (DLL side: inactive, kind none);
-      the window's chips went and the God Mode, Move Speed and Whole world badges read OFF (500 cm/s, 1x).
-
-    *Was:* Acceptance: with the window connected, holds taken by a background client and by another foreground
-    process show their labels on the matching cards, the badges follow their values, the card's Reset ends the hold,
-    and the labels go once the holders let go -- read on both sides (`get_holds` and the screen).
-2. ✅ **CLOSED 2026-11-16, DLL side** (DLL 3716, DumperTest58 Development, UE 5.8, 35,860 objects;
-    `tools/verify/dbgcam_ledger_live.py` 13/13; log `out/dbgcam_ledger_live_3716.log`). The AI's invoke of
-    ToggleDebugCamera was refused by name, pointing at `write_debug_camera`; the window stand-in's invokes named it on
-    and off; after the AI's `write_debug_camera` ON, the window's invokes off and on made the camera the window's, and
-    the AI's exit left it on; the mailbox's INVOKE_BY_NAME (written with WriteProcessMemory, no CE) named CE, off and
-    on. The UI side is item 1's path (`get_holds` to the chip). **Not run:** a negative control on a pre-3716 DLL
-    (none kept); each fix's red step is a unit test or a source pin.
-3. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 30528, the window connected;
-    `tools/verify/holder_chips_live.py --experimental --seconds 90` PASS, log `out/holder_chips_exp_3719.log`).
-    - **DLL side:** the background client (pid 4784) turned See-through on (`claims` 1, `you` true) and took Fly and
-      Keep Foreground (if_free): `get_holds` named it, background, for `fly` and `foreground_lock`; after it left,
-      both read inactive and nobody's and See-through off with 0 claims.
-    - **UI side** (screenshots, switch on): Keep Foreground and Fly read State ON, "Held by an AI session (pid 4784)";
-      See-through read State ON, "Held by another program or AI session"; after the client left, the chips were gone
-      and the cards read OFF.
-    - **Switch off** (experimental.json `enabled` false, its exact bytes restored after): the window, restarted and
-      connected, polled `get_holds` alone -- the pipe log's repeat counter read "repeated 49x: get_holds" from
-      03:59:19 to 04:00:58, about one per 2 s, with nothing between; switched on, each poll had read get_holds,
-      seethrough_get_state, get_foreground_lock, fly_get_state. Two `seethrough_get_state` came in the connect's
-      first refresh (03:59:17), before the poll began: once, not per poll.
-4. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 25912; driven through the window with
-    computer-use, `get_holds` read with a pipe client). The window (pid 1264) turned god mode on with Force ON and was
-    closed (WM_CLOSE); `get_holds` still read `god_mode` active, holder client pid 1264, not background (godmode 1).
-    The window started again (pid 10044) and connected: its God Mode card read State ON, "Held by a program that has
-    exited (pid 1264)". Its Force OFF turned it off and cleared the chip; `get_holds` then read inactive, holder none
-    (godmode 0).
-5. ✅ **CLOSED 2026-11-17, its premise corrected** (AOT exe and DLL 3719, DumperTest58 Development pid 21556, UE 5.8,
-    the window connected on the Debug Camera card; `tools/verify/dbgcam_ledger_live.py --ui-queued --suspend-name
-    DumperTest58 --seconds 30` 9/9, log `out/dbgcam_uiqueued_3719.log`; the cards read by screenshot).
-    - **A, queued:** game thread frozen; the background client's (pid 14868) `set_debug_camera` ON answered -5 and
-      `get_holds` read it pending, the client's; the card read State Queued, "Held by an AI session (pid 14868)"; the
-      window sent no `get_debug_camera_state` in the 30 s it was pending (pipe log: 0). Resumed, the queued ON ran:
-      camera on, held by the client.
-    - **B, owed:** frozen again with the camera on, the client exited: `get_holds` read `release_owed`, kind none; the
-      card read State ON, "Turning off: the AI session that held it has ended". Resumed, the owed OFF was sent: camera
-      off, the hold nobody's, the card OFF with no chip.
-    - **C, dropped:** a second background client's ON queued (-5, pending), then the client exited while still frozen:
-      the hold read nobody's at once, nothing owed, and after the resume the camera stayed off -- the DLL drops a
-      departed background client's queued invokes first (Fern.cpp, [D2-3-INVOKE]), so that ON never ran.
-    - **Premise corrected:** the acceptance had the client exit while its ON was still queued and expected an owed
-      release. The first run (log `out/dbgcam_uiqueued_3719_firstpremise.log`, 4 of 5) showed what the DLL does
-      instead: case C. An OFF is owed only when the camera is ON as its holder leaves with the game thread stalled.
-      *Was:* "Then, still frozen, the client exits: get_holds reads release_owed: true, kind none, and the card reads
-      'Turning off: ...'; after the resume the camera turns off and the chip goes." 
-6. ✅ **CLOSED 2026-11-17** (DLL 3719, DumperTest58 Development pid 13776, UE 5.8, 35,859 objects;
-    `tools/verify/dbgcam_ledger_live.py --busy-lock --suspend-name DumperTest58` 7/7, log
-    `out/dbgcam_busylock_3719.log`). The game thread (tid 33700) suspended; a second foreground client's
-    `set_debug_camera` ON waiting on it, holding the camera's lock; the mailbox's INVOKE_BY_NAME of ToggleDebugCamera,
-    written with WriteProcessMemory (no CE), answered in **5.0 s with a 5 s invoke timeout** (one timeout; waiting for
-    the lock would have taken about 9.75 s) with -5 "ProcessEvent returned -5"; the writer answered -5 (queued); the
-    pipe log read "Mailbox: ToggleDebugCamera ran unrecorded -- another writer was changing the debug camera"; resumed,
-    the clean-up left the camera off. *Was:* ⬜ with this acceptance test.
-
-### ✅ MCP invoke grants, Phase 1b (build 3717) — all three rows closed 2026-11-17 `[MCP-WRITE-GRANTS-2026-11-14]`
-
-One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `write_invoke_granted_function` unasked
--- dev-log 3717, docs/mcp-write-approval-eval.md §4.4. Unit tests (`McpGrantsTests`, `McpToolsTests`,
-`McpInvokeRulesTests`, `dll_helpers_test` Test_Voll_InvokeParamIndirection / Test_D23) and source pins
-(`PipePerProcessSourceTests` for Fern's grant mode).
-
-1. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3717, DumperTest Shipping pid 31104, UE 5.4; `mcp_client.py invokegrant`
-    22/22, log `out/mcp_invokegrant_3717.log`).
-    - **MCP side:** the grant marked, the granted invoke listed unmarked and destructive; before the grant, refused naming
-      it; `Add_IntInt` granted by full name and called unasked, returning 42, `read_grants` uses 1; grants refused for
-      K2_DestroyActor, K2_SetTimer, Delay, K2_ClearTimer, a missing class and a short class name, nothing else granted;
-      a granted SetActorHiddenInGame refused on Default__StaticMeshActor ("class default or a template") and run on a
-      live StaticMeshActor; one function's grant revoked, its call refused again, the other grant standing.
-    - **DLL side** (a background pipe client, no server between): `grant` with another `expect_func_full` refused -28
-      with `func_full` naming Add_IntInt; K2_ClearTimer under a grant refused -28 naming FunctionName; Delay per call
-      refused -24 "latent".
-    - Regressions on the same run: `probe` 29/29, `raw` 28/28, `invokeparams` 26/26, `writes --toggle-experimental`
-      39/39, `holdsmore` 78/78.
-2. ✅ **CLOSED 2026-11-17** (the server registered from the AOT exe 3727 -- the acceptance names 3717, the build that
-    brought the grant; DLL 3727 injected into DumperTest Shipping pid 37752, UE 5.4; a Claude Code desktop session in
-    auto mode; the server's log `mcp-20261117-190901-13664.log` under `Logs\UE5DumpUI\`).
-    - Asked to call `Add_IntInt` repeatedly, the AI called `grant_invoke_one_function_any_object_and_args` (function
-      `Add_IntInt`, class `//Script/Engine/KismetMathLibrary`). The maintainer read the prompt as the tool's name, then
-      Function, then Class, then the scope_ack sentence, each whole, and pressed Allow.
-    - `write_invoke_granted_function` three times on `Default__KismetMathLibrary`, no prompt (the maintainer's reading),
-      returning 5, 42 and 993 for 2+3, 40+2 and -7+1000; `read_grants` uses 3.
-    - `write_invoke` of `Subtract_IntInt` on the same object asked; the maintainer denied it, and the server's log never
-      names it.
-    - The log has one `Grant 1: Invoke for game 37752 (run 1DD7683C3CC1DC5):
-      //Script/Engine/KismetMathLibrary.Add_IntInt.` line and one `Grant 1 admitted a call of ...` line per call.
-    *Was:* ⬜ **Claude Code's prompt for an invoke grant.** Acceptance: with the server registered from a 3717 exe, the
-    AI asked to call one function repeatedly calls `grant_invoke_one_function_any_object_and_args`; the prompt shows
-    that name, then Function, then Class, then the scope_ack sentence, each whole; after Allow,
-    `write_invoke_granted_function` runs without a prompt in auto mode, `write_invoke` of another function still asks,
-    and the server's log has one `Grant N: Invoke ... : <full name>` line. Covered meanwhile by
-    `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst` (the order) and Phase 0's M1 (whole arguments).
-3. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 6244; `mcp_client.py invokegrant` 29/29,
-    its step 7, log `out/mcp_invokegrant_3719b.log`). `BlueprintUpdateAnimation`, the anim Blueprint
-    `//Game/Characters/Mannequins/Animations/ABP_Manny/ABP_Manny_C`'s override of AnimInstance's native event, was
-    granted by its `//Game` full name and run unasked on the live `ABP_Quinn_C` (a Blueprint subclass of it, so the
-    call was on a subclass's instance rather than the class's own), result 0. With only the native declaration
-    granted (`//Script/Engine/AnimInstance.BlueprintUpdateAnimation`), the server refused the call naming the
-    override; asked directly as a background client (`grant`, `expect_func_full` the native name), the DLL resolved
-    the override and refused it -28 with `func_full` naming `ABP_Manny_C.BlueprintUpdateAnimation`.
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/verification-register-closed-2026-11-20-build-3776.md](archive/verification-register-closed-2026-11-20-build-3776.md): `[MCP-WRITE-GRANTS-2026-11-14] holder labels (build 3716)`, `[MCP-WRITE-GRANTS-2026-11-14] Phase 1b invoke grants`. Grep the tag; tags resolve across files.
 
 ### ✅ MCP field grants, Phase 2 (build 3718) — all four rows closed 2026-11-17, row 3 narrower than written `[MCP-WRITE-GRANTS-2026-11-14]`
 
@@ -1119,37 +1006,7 @@ One field of one class per grant: `grant_write_field_one_property_every_instance
     byte, and its grant revoked. *Was:* the acceptance named `Actor:bHidden`; `bCanBeDamaged` is the same shape on an
     object nothing renders.
 
-### ✅ The init-window gaps (build 3722) — both rows closed 2026-11-17 — `[PIPE-WALK-DURING-INIT]` and `[DYNOFF-LATCH-STALE]` `[CPP-HARDENING-2026-11-14]`
-
-Two LOW rows of the hardening analysis's item 2, each fixed as the maintainer decided on 2026-11-17 and reviewed in
-three rounds (`wf_8f451d97-434`, `wf_b0aa9098-dd5`, `wf_2d9f83d5-21b`); docs/todo.md has the commits. Unit tests:
-`Test_Voll_DuringInitNotes` (dll_helpers_test); the LATCHSTALE, OFFSETS, UPROPSLOT and FAMILYEPOCH straddle checks
-(dll_core_test); the source pins `PipePerProcessSourceTests.ACommandDuringInit_IsNotedBeforeDispatch_AndNeverRefused`
-and `InvokeScriptTests.MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init`.
-
-1. ✅ **CLOSED 2026-11-17** (DLL 3722 as a `dxgi.dll` proxy, DumperTest Shipping pid 628, UE 5.4;
-    `initlog_live.py` 6/6). The pipe log has four lines, one per name -- the unknown `initlog_no_such_command`,
-    `get_pointers`, `pipe_clients`, and lane A's own `scan_status` polls -- over 48 lane-B commands, every known one
-    answered ok and the connection never dropped. The same DLL injected (pid 19744) logged none, as it must: the pipe
-    opens after `UE5_Init`. The proxy was removed from the fixture afterwards. **Re-run on 3723** (the round-4 fix,
-    pid 40176): 6/6, the same four names once each; proxy removed again.
-    In inject mode the pipe opens only after `UE5_Init`, so only a proxy reaches the window. Acceptance: `py tools/verify/initlog_live.py --pid <pid>` on a game whose 3722 proxy has
-    not scanned yet passes every check -- at least one `<cmd> arrived during an init or rescan apply` line in the pipe
-    log, each name at most once, lane B's connection never dropped, every known command answered ok. A run whose scan
-    ends before lane B's first command proves nothing: run it again.
-2. ✅ **CLOSED 2026-11-17, as a regression check** (DLL 3722; `latch_regression_live.py` 4/4 injected, pid 19744,
-    and 4/4 after row 1's proxy-mode `trigger_scan`, pid 628). `DumperTestActor`'s six StructProperty fields each name
-    their struct (ActorTickFunction, RepAttachment, RepMovement, DumperTestAttribute, DumperTestBracketPayload,
-    DumperTestNestedBag); no `CorrectSubclassOffsets: delta=` line; one `ValidateAndFixOffsets` run. Same build,
-    injected: `mcp_client.py probe` 29/29, `raw` 28/28, `fieldgrant` 44/44. **Not reached:** the failure itself -- no
-    fixture mis-derives the family; dll_core_test's LATCHSTALE, OFFSETS, UPROPSLOT and straddle checks hold it.
-    **Re-run on 3723** (the seqlock-shaped retire count): 4/4 injected (pid 24120) and 4/4 in proxy mode (pid 40176);
-    `probe` 29/29, `raw` 28/28, `fieldgrant` 44/44. The half-retire interleaving is dll_core_test's (a timed thread).
-    The failure it fixes -- a family published after a calibration, one
-    pointer off -- needs a game whose Genau derivation is wrong, and no fixture has one. Acceptance: on DumperTest
-    Shipping with an injected 3722 DLL, the walk log has no more `CorrectSubclassOffsets: delta=` lines than a 3721 run,
-    `walk_class` of `DumperTestActor` names a struct type for each of its StructProperty fields, and the same holds after
-    row 1's proxy-mode `trigger_scan`.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/verification-register-closed-2026-11-20-build-3776.md](archive/verification-register-closed-2026-11-20-build-3776.md): `[PIPE-WALK-DURING-INIT] / [DYNOFF-LATCH-STALE]`. Grep the tag; tags resolve across files.
 
 ### ⬜ Phantom Blade Zero's layout (build 3773) — `[VND10-A1]`
 
@@ -1229,7 +1086,11 @@ add an lld note. Unit tests: dll_core_test's SCAN-LINKER-LOG block.
     module linker = msvc (Rich header yes, linker 14.38, 4 debug entries, VC_FEATURE / POGO among them)`; no Wine line;
     the scan completed by AOB. `linker_survey.py` on the same exe file: msvc, Rich, 14.38, debug [2, VC_FEATURE, POGO,
     16]. The game was closed afterwards.
-2. ⬜ **An lld build.** Avowed is the one on this machine (`linker_survey.py`: lld, 14.00, debug [2, 16]). Acceptance:
+2. ✅ **An lld build. CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`: Avowed through its dxgi.dll proxy (refreshed to
+    3776; `load_mode proxy:dxgi.dll`), `trigger_scan` at the main menu, UE 503, 92,031 objects. scan-0.log reads
+    **`FindAll: main module linker = lld (Rich header no, linker 14.00, 2 debug entries)`**, with no Wine line; every
+    global resolved, so no failed-pattern warning carried the lld note (as expected). The game was closed afterwards.
+    The original text: Avowed is the one on this machine (`linker_survey.py`: lld, 14.00, debug [2, 16]). Acceptance:
     its scan log reads `main module linker = lld (Rich header no, linker 14.00, 2 debug entries)`. Its AOBs hit today,
     so the lld note on a failed-pattern warning is not expected there.
 3. ⬜ **Wine / Proton.** No Linux here. Acceptance: under Proton, the scan log has `running under Wine <version> on
@@ -1255,15 +1116,7 @@ Relaxed A/C and B refuse a count that is half of a chunk table pointer unless th
     Acceptance: such a title's init log shows its own row (`UE5.7-Mistfall`) or relaxed E, never relaxed A/C or B with a
     count near the table pointer's high dword.
 
-### ✅ PreAllocatedObjects is not read as Max / Num (build 3725) — closed 2026-11-17 `[RELAXED-D-PREALLOC-HALF]`
-
-`Aura::CountIsHalfOfFirstEntry` now runs for every strict FUObjectArray row and relaxed D, so the check owed was that no
-title's own row moved. **Closed 2026-11-17 on DLL 3725**, `relaxed_layout_live.py` 4/4 each, the games closed afterwards:
-DumperTest Shipping (UE 5.4, pid 9824) `UE5-Extended`, 24,530 objects, ThirdPersonMap walked; DumperTest58 Shipping
-(UE 5.8, pid 42784) `UE5.8`, 34,570 objects, Lvl_ThirdPerson walked; NEKOPALIVE (UE 4.11, the inner `Nekopara.exe`, pid
-33752, injected) `Flat-Base`, 25,749 objects, Title walked. The Outer Worlds 2 (relaxed A/C) was checked on 3724; this
-build does not touch that row. No title in the corpus carries a preallocated array; dll_core_test holds the misread at
-both heap heights.
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/verification-register-closed-2026-11-20-build-3776.md](archive/verification-register-closed-2026-11-20-build-3776.md): `[RELAXED-D-PREALLOC-HALF]`. Grep the tag; tags resolve across files.
 
 ### ✅ A UE 5.8 array its strict row refuses is read by relaxed F (build 3727) — closed 2026-11-17 `[UE58-PREALLOC-NO-ROW]`
 
@@ -1331,7 +1184,7 @@ reached:
    and each arm's slots decode with its own layout. Unit-tested with fake readers (dll_core_test, "arm upkeep").
 2. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP2-AVOWED2]`** (Avowed, dxgi proxy 3640, `livefuncs_snap_live.py --choose Inventory Item Equip --plain-s 25 --record-s 100 --per-ring 30`, 9/9; the inventory opened and closed twice inside the window, about a minute apart): `AlabamaLightingFixtureInterface::GetRadiusValue`, about 2,198 calls a second, kept
    about 26 a second against a budget of 30 (5,220 slots, each call an entry and an after copy) and dropped 257,468
-   lone calls. ✅ And the cost, measured the same night `[LIVEFUNCS-STEP2-COST]` (`--choose "" --plain-s 20 --record-s 30`: the 60 busiest functions with parameters, the default budgets): the game ran 9,224 calls/s with the snapshots against 9,260 without (-0.4%), the fps overlay 136-140 against 136; 148,210 copies in 30 s, all decoded; the busiest choice (3,150 calls/s) kept about 1,021 a second against 1,000 and dropped 63,366. ⬜ Still owed: the defaults re-weighed against a game busier than this one (the total, 10,000 a second, was not reached here). *Was:* **The budget on a real game.** Avowed's first run kept every call (skipped 0, dropped
+   lone calls. ✅ And the cost, measured the same night `[LIVEFUNCS-STEP2-COST]` (`--choose "" --plain-s 20 --record-s 30`: the 60 busiest functions with parameters, the default budgets): the game ran 9,224 calls/s with the snapshots against 9,260 without (-0.4%), the fps overlay 136-140 against 136; 148,210 copies in 30 s, all decoded; the busiest choice (3,150 calls/s) kept about 1,021 a second against 1,000 and dropped 63,366. ⬜ Still owed: the defaults re-weighed against a game busier than this one (the total, 10,000 a second, was not reached here). ⏸ **Re-run 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`, the total still not reached: Avowed in gameplay from its latest save (dxgi proxy 3776, 272,404 objects, a cliffside, ~128 fps), `livefuncs_snap_live.py --label avowed-busy-3776 --choose "" --plain-s 20 --record-s 30`, 7/7 with 2 not run: plain **8,534 calls/s**, with the 60 snapshots **8,459** (-0.9%); 144,420 copies decoded, 0 raw; the busiest choice `AlabamaLightingFixtureInterface::GetRadiusValue` ~2,895 calls/s kept ~2,067 slots/s (~1,033 calls, entry and after) and dropped 55,086 -- the per-function budget holds; the copies total ~4,800 slots/s, under the 10,000 total. The Outer Worlds 2 was tried as the busier host and has no save on this machine (0/100; Steam offline). A host needs more than ten functions each above ~1,000 calls/s. *Was:* **The budget on a real game.** Avowed's first run kept every call (skipped 0, dropped
    0): the 64-choice cap left out its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
    is near calls minus 1,000 a second, and calls/s and fps stay within noise of a run without snapshots (the plan
    asks to re-measure the defaults, 1,000 / 10,000 a second).
@@ -1510,7 +1363,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -1699,6 +1552,17 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > **CLOSED on the verification PC, build 3371**, on the row's own terms: the DLL and Live Walker
 > legs closed independently, the CE leg recorded as **not exercised** (this row's own instruction —
 > *"If no such array exists, record the CE leg as not exercised … Do not synthesise one."*).
+>
+> ✅ **The CE-XML leg CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` on DumperTest Shipping (UE 504, DLL and AOT UI
+> 3776), on `DumperTestActor_0.Arr_SoftMesh` (`TArray<TSoftObjectPtr<UStaticMesh>>` at +0x930, added to the fixture
+> 2026-09-06, after this row closed). Live Walker → **Copy CE XML** of the whole actor (50 objects, 11,937 XML lines):
+> every element's `PackageName (8)` leaf carries `<Address>+8</Address>` and **no `<Offsets>`**, `AssetName (10)` sits
+> at +10, elements step by 0x28. The DropDownList keys `100180` / `92409` / `104649` (labels Cube / Sphere / Cone)
+> are exactly the 4-byte values read over the pipe at element +0x08 of `[0]` / `[1]` / `[2]`; the values at +0x10
+> (`100247` / `272` / `93518`) differ, so the keys come from the PackageName slot the leaf points at. The same
+> process's `offsets-0.log` reads `TSoftObjectPtr payload envelope measured: +0x08 (ElementSize 0x28 - payload 0x20,
+> UEver=504)` and the lazy sibling `+0x08 (ElementSize 0x18 - payload 0x10, UEver=504)`. Not covered: CE itself
+> rendering the dropdown (CE was not used).
 > Rig: [`tools/verify/a1_softlazy_envelope.py`](../tools/verify/a1_softlazy_envelope.py) — takes the
 > log-folder name and **derives** the expectation from the reported UE version, so the same command
 > scores a 5.6 host and a 4.18 control without being told which is which.
@@ -1772,206 +1636,22 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 -----
 
-### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A2-ES2-506-2026-09-05]` — audit A2: the 506 row is CORROBORATED at `0x260` on a retail UE 5.6.1 build
-
-> **CLOSED on the verification PC, build 3371, 2026-09-05 21:00.** Rig:
-> [`tools/verify/a2_es2_pehook.py`](../tools/verify/a2_es2_pehook.py) (written for this row; it
-> re-runs from one command). Every observable this row asked for was captured in one session, and
-> **both absence checks held** — which is the half a play-test cannot produce:
->
-> | observable | expected | measured |
-> |---|---|---|
-> | `scan-0.log` | `DetectVersion: … -> 506` | `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` |
-> | `init-0.log` | pattern match | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF6E6297080` |
-> | `init-0.log` | what was **installed** | `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` |
-> | `init-0.log` | `(fallback)` **absent** | **0 lines** |
-> | `init-0.log` | `VALIDATION FAILED` **absent** | **0 lines** — ⚠ vacuous, see below |
-> | `init-0.log` | ⭐ **`validation OK — hook fired N times`** | `validation OK — hook fired **660** times in 1500ms` |
-> | `init-0.log` | `fired 0 times in` **absent** | **0 lines** |
-> | invoke | `Add_IntInt(3,4) == 7` | **7** — a computed value, not a plausible one |
-> | diagnostics | hook live | `hook_active=True`, `hook_fire_count=52` |
-> | pipe | right binary | `build 3371`, `ue_version 506`, `79,831` objects, `load_mode proxy:version.dll` |
->
-> ➕ **ADDENDUM 2026-09-06 — the `508` row now has a live witness too, and it never had one.**
-> The rig takes a log-folder name now, because the table has **one row per UE version** and each
-> row needs its own witness; every prior live measurement was 506. On **DumperTest58 Development
-> (UE 5.8.2)**: `DetectProcessEvent (pattern): match at vtable+0x250`, `offset resolved to
-> vtable+0x250 via the pattern scan`, `Add_IntInt(3,4) = 7`, `validation OK — hook fired 184 times
-> in 1500ms`, `hook_fire_count` 7,696, no fallback, no `VALIDATION FAILED`. **`0x250` is exactly
-> what `case 508: return 0x250` says**, and it is independently corroborated offline: RE-UE4SS's
-> newly-shipped `VTableLayout_5_08_Template.ini` puts ProcessEvent at raw index 76, and every 5.0x
-> template sits a constant 2 entries (`0x10`) above our table — a calibration that is *measured*,
-> not assumed, because ES2 read `0x260` live at 5.6 where the raw index gives `0x270`.
->
-> ⚠ **Two rig defects this run exposed, both of which manufactured false FAILs** — recorded because
-> each is the same shape as the register's own traps:
-> * it demanded a `DetectVersion:` line in `scan-0.log`. `FindAll` **skips detection entirely** when
->   `UE5CEDumper.{Machine}.json` already holds a verdict for that PE hash, so on any previously
->   scanned host there are zero such lines and a `FindAll: UE Version = N (cached…)` line instead.
-> * it **raced the validator**. `hook installed … validator armed (1500ms)` is written at install
->   and the verdict lands ~1.5 s later; on a host where listing and invoking is quick, the log read
->   happened first and the rig reported "no validation OK line". It now waits for the verdict.
->
-> **Verdict: `0x260`.** The 506 row now has a second independent live witness (Lushfoil was the
-> first, the UVTD oracle aside). The title's twice-measured `0x278` stays what it always was — a
-> live witness for the **5.5** row, taken on the pre-patch binary — so the table's deliberate
-> non-monotonicity is confirmed from both sides by the same game. ⛔ Still do **not** collapse the
-> table into a `>=` ladder; that is the exact bug A2 fixed.
->
-> ⛔ **CORRECTION TO THIS ROW'S OWN GREP SET — "`VALIDATION FAILED` is absent" PROVES NOTHING on
-> the path this row expects.** `Stark::ShouldActOnValidationFailure` returns `offsetFromVersionTable`
-> (`dll/src/Stark.h:305-307`), so a **pattern**-derived offset that fires **zero** times takes the
-> early return at `Frieren.cpp:1951` and logs a line containing neither `VALIDATION FAILED` nor
-> `FAILED` — the hook is deliberately **KEPT**. A mis-detected pattern slot therefore produces
-> *exactly* the log the original grep set scores as a pass: no fallback line, no failure line,
-> `hook_active == true`. Two consequences, both now in the rig:
->   * the discriminator is the **positive** line `GameThreadDispatch: validation OK — hook fired N
->     times`, which this run has (660 in the 1500 ms window, and `hook_fire_count` 8.8 M once
->     in-world). Absence-of-failure was never the evidence; it only corroborates.
->   * `fired 0 times in` is a **hard fail**, not "the game thread was idle".
->
-> The verdict is unaffected — it never rested on the absence checks — but the row as written
-> invited a false PASS, and a later session leaning on it would have got one.
->
-> ⚠ **The build gate below was real and had to be paid twice.** The deployed `version.dll` was
-> dated 2026-08-29 (not 2026-08-27 as written below) and owned the pipe; `proxy_refresh.py` fixed
-> that. The run was then thrown away and repeated anyway, because build 3370 could not be read —
-> see `[SEINSHARE-2026-09-05]`.
-
-<details><summary>original row (kept — its reasoning is what made the row cheap to close)</summary>
-
-**FIXED 2026-09-05, NEEDED A LIVE CHECK — audit A2: EVERSPACE 2 patched to UE 5.6 and crossed the table's own boundary**
-
-⚠ Deliberately **not** a `###` heading and deliberately carrying no ⬜: `check_derived_counts`
-counts `^### .*⬜` inside this section, so leaving either here would keep the row counted as open.
-
-*A2 replaced an unreachable `>= 550` band (every UE5 game silently took `0x220`, wrong by `0x28-0x58`) with a measured per-version table, `DynOff::ProcessEventVTableSlotFor`, `dll/src/Grimoire.h:321-341`. The table is deliberately **non-monotonic**: `case 505: return 0x278` (`:336`) then `case 506: case 507: return 0x260` (`:337`). It is **fallback only** — `Frieren.cpp:1693-1701` runs the pattern scan across up to 12 candidate vtables and reaches `DetectProcessEventVTableOffsetByVersion` (`:1601`) at `:1703` only after all miss.*
-
-*⭐ **The open EVERSPACE 2 question is settled, and settled in a way that helps.** The `0x278` measurement is a **live retail witness for the 5.5 row**, not a contradiction of the 5.6 row: it was taken twice (2026-05-11, `docs/lessons-learned.md:140`; 2026-08-20 `[PEHOOK-6-2026-08-20]`, `docs/verification-register.md:3504`) and bracketed by in-process PE-resource detections of **505** on 2026-08-19 (`:4434`) and **505 (5.5)** on 2026-08-24 (`:9031`) — all of it on the exe that Steam replaced on **2026-09-01 22:05**. The installed binary now reads **`prod=5.6.1.0 → 506`** (`py tools/verify/pe_version_probe.py`, measured 2026-09-05) and the 2026-09-03 session logged it in-process: `scan-20260903-123758.log` `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506`, `init-0.log` `UE5_Init: Complete (UE506, …, Objects=1154897)`. So the maintainer's report is correct — and the title has moved from the `0x278` row to the `0x260` row with no slot ever measured on the new build.*
-
-**Why the suite cannot close it.** `dll_helpers_test.cpp:5607-5672` pins every table row *and* its non-monotonicity — 20 assertions of pure header arithmetic. `DetectProcessEventVTableOffset` is `static` in `Frieren.cpp` and the test target links headers, so nothing exercises whether the value is ever reached, and nothing can say what a real 5.6 licensee build's vtable actually looks like.
-
-**Acceptance test** — **EVERSPACE 2**, `D:\SteamLibrary\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\`. Detection is **lazy on the invoke path**: `RunPeDetection` (`Frieren.cpp:1804`) is reached only from `EnsureProcessEventReady` (`:2025`) and `UE5_EnsureGameThreadHook` (`:2188`), so a connect + scan + walk emits **nothing** — confirmed empirically, `grep -c DetectProcessEvent` over the whole 2026-09-03 ES2 log folder returns **0** in all 18 files. Sequence: refresh the proxy → inject → `trigger_scan` → **one invoke** (or `pe_profile_start`) → grep.
-
-| side | where | expect |
-|---|---|---|
-| DLL | `init-0.log` | `DetectProcessEvent (pattern): match at vtable+0x260 -> 0x…` (`Frieren.cpp:1589`), and `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 0/8)` (`Frieren.cpp:1850` — the only line reporting what was actually **installed**; `primary=` is not necessarily the return value, `:1640-1654` sweeps ±8/±16) |
-| DLL | `init-0.log` | **ABSENT**: `DetectProcessEvent (fallback)` (`Frieren.cpp:1623`) and `VALIDATION FAILED` (`Frieren.cpp:1980`). A fallback line means the table quoted itself and the run must be discarded |
-| DLL | `scan-0.log` | `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` (`Genau.cpp:2741`, category `SCAN:Ver` → `Sein.cpp:74`) — the run must be on the 5.6 binary, not a rolled-back one |
-| UI | status bar | `Connected — UE506 (…)` (`MainWindowViewModel.cs:734`, `:2763`) and Pointers panel showing **506** (`PointerPanel.axaml:42`, raw int) |
-| UI | Live Funcs | `HookActive == true` **and** `HookFireCount > 0` (`Fern.cpp:4097-4098` → `DumpService.cs:2832-2833`) |
-
-**Negative control, and it is what makes this a test rather than a screenshot**: the invoke must return a **computed** value — `Add_IntInt(3,4) = 7`, as `[PEHOOK-6]` did. A wrong slot returns 0/unchanged while `HookActive` can still read true. ⚠ Do **not** use the Self-Test advice strings as a positive: all five (`en.axaml:435-439`) are keyed `str.System.SelfTest.Fail.*` and `PointerPanelViewModel.cs:1739` documents `ClassifySelfTestFailureAsync` as running "only on the failure path" — nothing renders on a pass, so their absence is vacuously true for a UI that never connected.
-
-⛔ **Build gate, and this is the trap `[B648-TWOENGINES]` already hit.** ES2's deployed `version.dll` is dated **2026-08-27** (`init-0.log` line 1: `build: 1.0.0.3367 344d9242-dirty`), i.e. it predates all fourteen commits and **owns the pipe** — a fresh injection does not displace it. Refresh the proxy from a `-Mode Publish` dist and `assert_build()` (`tools/verify/pipe_client.py:11-22`) **before** any number is taken.
-
-**Outcome rule.** `0x260` → the table's 506 row is corroborated on a real retail 5.6 licensee build (Lushfoil and the UVTD oracle are currently its only support). Still `0x278` → the 506 row is wrong **for this title**; record it as a register note, and ⛔ do **not** collapse the table back into a `>=` ladder — the non-monotonicity is the bug A2 fixed.
-
-</details>
-
------
-
-### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A7-EMPTYBASE-2026-09-05]` — audit A7: all four hops, plus a real-world before/after on **96** engine structs
-
-> **CLOSED on the verification PC, build 3371, DumperTest Development (re-cooked today).** Rig:
-> [`tools/verify/a7_emptybase.py`](../tools/verify/a7_emptybase.py) for the DLL/pipe half; the
-> emitter half is a diff of two whole SDK exports.
->
-> **DLL → pipe (rig, on the new fixture):**
->
-> | | `props_size` | `super_props_size` | `own_props_start` | fields |
-> |---|---|---|---|---|
-> | `DumperTestEmptyBase` (base) | **1** | — | **-1** | **0** |
-> | `DumperTestBracketPayload` | 0x10 | **1** | **0** | `Description` @ **offset 0** |
->
-> and the live read at offset 0 returns **`'A7EmptyBase'`** — the field is not merely *described*
-> at 0, it is *readable* there.
->
-> **UI → emitter (the generated header):**
-> ```
-> struct DumperTestEmptyBase
-> {
-> }; // Size: 0x0001                                       <- empty, no Pad_0000[0x0001]
->
-> struct DumperTestBracketPayload : public DumperTestEmptyBase
-> {
->     FString Description; // 0x0000 (0x0010) StrProperty  <- at 0x0000, no leading pad
-> }; // Size: 0x0010
-> ```
->
-> ⭐ **AND THE REAL EVIDENCE IS NOT THE FIXTURE — it is a before/after on stock engine types.** An
-> SDK export of the *same* fixture taken **2026-08-20** (pre-fix) still sat in `out/`, so the two
-> are directly diffable. Same game, same machine, one emitter change between them:
->
-> * **69 empty bases** emitted a spurious `uint8_t Pad_0000[0x0001]`; they are now emitted empty.
-> * **27 derived structs had their offset-0 field REPLACED BY PADDING** and now have it back —
->   `TypedElementLabelColumn` `Pad_0001[0x000F]` → `FString Label`, `TypedElementAlertColumn`
->   `Pad_0001[0x0019]` → `FText Message`, `TypedElementLocalTransformColumn` `Pad_0001[0x005F]` →
->   `struct Transform Transform`, `TypedElementSelectionColumn` → `FName SelectionSet`, and 23 more.
->   In every case the **rest** of the layout is byte-identical, which is what shows the fix restored
->   the missing field without disturbing anything around it.
-> * `UniversalObjectLocatorEmptyPayload` is among the 69 — i.e. this row's originally-named
->   `FEmptyPayload` family was affected after all.
->
-> **Negative control (the W2 guard, the one this fix could plausibly break):** a non-empty super must
-> still split at `superPropsSize` and must not re-emit the inherited chain. `struct Subsystem :
-> public Object` begins at **`Pad_0028`**, and `Object`'s own `Pad_0000[0x0028]` appears only in
-> `Object`. Unchanged between the two exports.
->
-> ⛔ **CORRECTION TO MY OWN EARLIER NOTE ON THIS ROW.** It said "the empty base does not exist in any
-> live pool… zero structs with `PropertiesSize == 1`". **That was wrong**, and the mistake is worth
-> keeping: I harvested struct addresses from `walk_instance` field rows on a handful of walked
-> instances, which reaches only structs that are *fields of something I happened to walk*. The SDK
-> export walks the **whole pool** and found 92. The fixture is still worth having — it is
-> deterministic and does not depend on which engine types a given title happens to load — but it was
-> not *necessary*, and "I could not find one" is not "there is none".
-
-> **PARTIAL, `[A7-WIRE-2026-09-05]`, build 3371.** Two of the four hops are settled; the row's own
-> "rides along on any live session, no dedicated launch" turned out to be false.
->
-> ✅ **Hops 1–2 (DLL emits → pipe carries) are PROVEN, and not on a hand-built model.**
-> `own_props_start` is present on every `walk_class` response's class object and is internally
-> consistent wherever a super exists — measured across EVERSPACE 2 (1.15 M objects) and DumperTest:
->
-> | struct | `super_props_size` | `own_props_start` | `props_size` | reading |
-> |---|---|---|---|---|
-> | `ActorTickFunction` (super `TickFunction`) | 40 | **-1** | 48 | derived, adds no own properties |
-> | `Vector_NetQuantizeNormal` (super `Vector`) | 24 | **-1** | 24 | ditto |
-> | `DialogIDs` (ES2, super `DialogIDs_Chunk1`) | 32040 | **32040** | 40896 | the W2 case: split exactly at `superPropsSize` |
->
-> ⛔ **Hops 3–4 CANNOT be run: the empty base does not exist in any live pool.** The row names
-> `FEmptyPayload` and says it rides along on any session. Measured 2026-09-05: **zero** structs with
-> `PropertiesSize == 1` in EVERSPACE 2's 3,808 loaded classes, and none among DumperTest's reachable
-> structs either. Two reasons, and both are structural rather than bad luck: `list_classes` returns
-> **UClass** objects only, so a `UScriptStruct` is not enumerable that way at all (struct addresses
-> have to be harvested from `walk_instance` field rows); and a whole-pool walk only ever sees what
-> is **LOADED**, which `FEmptyPayload` (an editor-adjacent AnimData type) is not at runtime.
->
-> ▶ **FIXTURE WRITTEN, awaiting a package build.** `FDumperTestEmptyBase` (empty `USTRUCT`) plus
-> `FDumperTestBracketPayload : FDumperTestEmptyBase` with a single `FString Description` at offset 0,
-> reachable through a new `UPROPERTY() FDumperTestBracketPayload EmptyBasePayload` on the actor and
-> initialised to `A7EmptyBase`. `check_ue_sample_values` green. It needs a DumperTest cook/pack
-> before it can be walked — **ask the maintainer, and name the configuration**; source edits and
-> `Build.bat` are theirs to accept, `RunUAT BuildCookRun` is not something to start unasked.
-
-*UE reports an empty native `USTRUCT`'s `PropertiesSize` as **1**, so the emitter's `Offset >= superPropsSize` split dropped a derived struct's offset-0 field and the trailing-pad pass wrote padding in its place. The floor is now lowered by a new wire field, and the empty base is emitted empty so EBO applies: `Ubel.cpp:1004-1007` captures `OwnPropertiesStart` after the own-chain walk and **before** the super chain is prepended at `:1015-1017`; `Ubel.h:72` defaults it `-1`; `Fern.cpp:2117` sends `own_props_start` from the serialiser shared by `walk_class` and `walk_class_batch`; `DumpService.cs:377` parses it with a load-bearing `?? -1`; `SdkExportService.cs:446` lowers the floor and `:495-496` suppresses the pad.*
-
-**Why the suite cannot close it — and why the obvious observable is illegal here.** The five C# tests (`SdkExportServiceTests.cs:340, 371, 398, 423, 447`) hand-construct `ClassInfoModel { OwnPropertiesStart = 0 / -1 / 0x18 }` and pin the emitter arithmetic in **both** directions. There is **zero** DLL-side coverage — `grep -rn "OwnPropertiesStart|own_props_start" dll/tests/` returns nothing. But the generated header **alone cannot be the paired observable**: `DumpService.cs:377` defaults a missing field to `-1`, so a pre-fix DLL with a correct UI and a correct DLL with a stale UI produce a **byte-identical wrong header**. That is precisely the ambiguity the register charter exists to break, so the DLL leg must be read off the wire.
-
-**Acceptance test** — rides along on any live session; no dedicated launch. Vehicle: `FEmptyPayload` (`vendor/UnrealEngine/.../Animation/AnimData/AnimDataNotifications.h:88`, Engine module, **outside** the file's only `#if WITH_EDITOR` at `:281-296`, byte-identical in the installed UE 5.4 tree) and a child such as `BracketPayload` (`FString Description`) or `AnimationTrackPayload` (`FName Name`).
-
-| side | where | expect |
-|---|---|---|
-| DLL | `py tools/verify/pipe_client.py walk_class --args '{...}'` | on the derived struct: `own_props_start` **present and == 0**, `super_props_size == 1`, `props_size == 0x10`, `Description` at offset 0. On `EmptyPayload` itself: `props_size == 1`, no fields, `own_props_start == -1`. ⚠ There is **no log line** — `own_props_start` occurs once in `dll/src`, at `Fern.cpp:2117`, and `Fern` logs the request, never the reply body |
-| UI | the generated `.h` | `struct BracketPayload : public EmptyPayload`, then `    FString Description; // 0x0000 (0x0010) StrProperty`, then `}; // Size: 0x0010` — **no** leading `Pad_0001[…]`. And the base emitted as `struct EmptyPayload` / `}; // Size: 0x0001` with **no** `Pad_0000[0x0001]` |
-
-⚠ **Names carry no `F` prefix.** `SdkExportService.cs:380-386` appends `classInfo.Name` and `superName` raw, and a `UScriptStruct`'s FName has no `F`. Grep for `EmptyPayload`, never `FEmptyPayload` — the latter has zero hits in the packaged fixture.
-
-**Negative controls, two, both free in the same export run**: (1) **the W2 guard** — a class with a **non-empty** super must still split at `superPropsSize` and must **not** re-emit the inherited chain (`SdkExportService.cs:443-447`; this is the failure the fix could *cause*, and is the load-bearing one); (2) **narrowness** — an opaque field-less struct with `PropertiesSize > 1` must still receive its `Pad_0000[…]`, proving the `emptyBase` suppression (`:495`, `own.Count == 0 && ownStart == 0 && propsSize == 1`) stayed narrow.
-
------
+> 📦 **Archived 2026-11-20:** 2 closed unit(s) moved byte-identical to [archive/verification-register-closed-2026-11-20-build-3776.md](archive/verification-register-closed-2026-11-20-build-3776.md): `[A2-ES2-506-2026-09-05]`, `[A7-EMPTYBASE-2026-09-05]`. Grep the tag; tags resolve across files.
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A3-FUNCFLAGS-2026-09-05]` — audit A3: closed on a **4.18** host, without the 4.21 title the row was gated on
+
+✅ **The `Mimic: FIND_FUNCTION` leg, run 2026-11-20** `[LIVEPASS-2026-11-20]`, headless -- the mailbox written by
+WriteProcessMemory as CE's script writes it (`invoke_template_live.py`'s `cmd()`), no CE. OCTOPATH (UE 4.18, winmm
+proxy 3776, `trigger_scan`, 273,956 objects), on the live PlayerController, at native 418, then
+`set_ue_version_override` **421** and **422** (`persist:false`), then 0 (Auto): every round logged the same
+`Mailbox: FIND_FUNCTION` lines -- `K2_DestroyActor` **parmsSize=0 numParms=0** flags=0x4020400 (Native | Public |
+BlueprintCallable), `K2_GetActorLocation` 12 / 1 flags=0x54820401, `K2_SetActorLocation` 154 / 5 flags=0x4C20401.
+421 is sane, as the row requires. ⚠ **The 422 negative control no longer degrades, and that is by design now:**
+FunctionFlags is no longer re-derived from the version on each read -- `DetectFunctionFlags` votes it from sampled
+UFunctions and latches it (*"64 UFunction samples -> FunctionFlags=+0x88 tailExtra=+0 (64/64 votes; measured primary
++0x88, version table +0x88)"*), and an override moves only what is keyed to the version. So the premise of this row's
+override A/B ("not latched; recomputed per call") is out of date; the discriminating half lives in that vote, which
+dll_core_test pins. The hint cache kept no override afterwards.
 
 > **CLOSED on the verification PC, build 3372.** Rig:
 > [`tools/verify/a3_funcflags_override.py`](../tools/verify/a3_funcflags_override.py).
@@ -2030,6 +1710,15 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 -----
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[A4-508MARKER-2026-09-06]` — audit A4: the raise fires, on a genuine UE 5.8.2 binary
+
+✅ **The UI badge leg on a RAISED run, CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776,
+DumperTest58 **Shipping**): `tools/verify/a4_raise_ladder.py --flavour shipping58 --hold 150` (the `--hold` added for
+this leg, `0d382298`) seeded the cache at 504 (rev 12): `FindAll: UE Version = 504 (cached, rev=12 …)`, then the
+506, 507 and **`… FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508`** rungs and
+`UE5_Init: Complete (UE508, …, Objects=34570)`; offsets-0.log `FFieldClass::Name=+0x08`. In that SAME process (pid
+41472) the UI connected during the hold: header **`Connected — UE508 (34570 objects)`**, the System tab's UE Version
+card **508 ✓ Detected**. The rig then killed the game and reported `cache restored byte-for-byte: OK` and `A4 half 2:
+PASS`.
 
 > **CLOSED on the verification PC, build 3374.** The row was blocked on *content* — "a title that
 > is UE 5.8 **and** string-stripped", which the corpus did not contain. The maintainer built a
@@ -2473,7 +2162,7 @@ artefact leaves this program entirely and is pasted into another tool.
 
 -----
 
-### ⬜ SHIPPED 2026-09-10, NEEDS A LIVE CHECK — the audit-#4 fix pass's three unreachable arms: FP1 attached-pose · FP2 landing re-read · FP3 See-through untick race
+### 🟡 SHIPPED 2026-09-10 — FP1 and FP3 CLOSED, FP2 still owed: the audit-#4 fix pass's three unreachable arms: FP1 attached-pose · FP2 landing re-read · FP3 See-through untick race
 
 The `[A4-ASSESS-2026-09-09]` fix pass closed **eight** defect rows. Five are done: `[B30-REOPEN]`,
 `[SOLIDE-REFUSAL]` and `[BADGEPRIME]` were verified on DumperTest **Shipping** with a real
@@ -2496,6 +2185,19 @@ something the DLL never sent.
 | **FP1** | `[POSEATTACH-2026-09-10]` (`242d48c4`) — on an **attached** pawn whose `K2_GetActorLocation` invoke fails, the pose degrades to a parent-relative `RelativeLocation` read. `teleport-spec.md:218-220` requires a warning flag with it; the fallback shipped in 2026-07 and the flag did not, so a degraded read was byte-identical to a healthy one and those numbers were saved into markers and later driven back as a WORLD destination. Only the *absence* on a healthy pawn is measured. | **DLL side:** `teleport_get_pose` must carry `parent_relative: true` **and** the WALK log must show `Teleport: attached pawn but K2_GetActorLocation failed — falling back to RelativeLocation (parent-relative!)` (`Wirbel.cpp:443`) in the same second. **UI side:** the Teleport tab's status must read `⚠ PARENT-RELATIVE, not world coordinates` and name the marker consequence — not merely `Pose read (raw).` ⭐ **The pairing is the test**: `source` must still be `"raw"` while `parent_relative` is `true`, because that combination is exactly what used to be indistinguishable from a healthy read. **Staging:** possess a pawn attached to a vehicle / mount / moving platform, then make the invoke fail — the game thread idle (alt-tab on a title that pauses unfocused) or a title that cooks `K2_GetActorLocation` out of reflection, the shape Octopath is already recorded for. ⚠ **The CE mailbox carries it in its own byte**, pose flags `[178]` bit0 (contract 4, `[W2-MARKER-PARENTREL]`), never by widening `[176] source (0=raw, 1=invoke)`, which would change the MEANING of a contract field that `Mimic.h` says the surface hash cannot see. A CE-side row is separate work, not part of closing this one. |
 | **FP2** | `[TPREL-ZEROPOSE-2026-09-10]` (`5058e971`) — when the post-move pose re-read fails, `TeleportRelative` used to publish a landing of exactly `(0,0,0,0,0,0)`, indistinguishable from arriving at the world origin, and the panel overwrote its live X/Y/Z with zeros the user could copy or save. It now emits `landing_unknown` and publishes no coordinates. Only the healthy path is measured. | **DLL side:** `teleport_relative` must return `code: 0` **with `landing_unknown: true` and NO `x`/`y`/`z` keys at all** — the absence of the coordinate keys is the assertion, not a zero in them. **UI side:** the status must say the move happened but the coordinates are unchanged, and the panel's live X/Y/Z must still hold their PREVIOUS values — capture them before the move and compare, because "not zero" is a weaker claim than "unchanged". ⛔ **The negative control is mandatory**: an ordinary relative teleport in the same session must publish real coordinates and NO `landing_unknown`, or the row proves only that the field can be set. **Staging:** the re-read fails when `ResolveChain` or the `RelativeLocation` read fails *inside the same locked call* as the move — a large jump that puts the pawn into the void and gets it destroyed/unpossessed is the realistic trigger, which is exactly what this feature invites. |
 | **FP3** | ✅ **CLOSED 2026-09-10 `[FP3-SEETHRU-UNTICK-2026-09-10]`** — `[R3-SEETHRU-2026-09-10]` (`0fac36e9`) — See-through's `[DISABLE]` block wrote the mailbox with **no** bounded wait-for-IDLE, because the `AppendIdleWaitOrBail` call sat inside `if (enable)` while the `cmd` store below is emitted for both blocks. Unticking while another command was in flight could clobber it. The emitted script and the source shape are now pinned by a Theory over all 11 generators and by gate 17c; **the RACE itself has never been observed either way.** | **CE side:** with `UE5_DEBUG = 1`, untick the See-through record while a long command is in flight (a full `walk_world` or a snapshot started from the UI) and the Lua Engine must show the idle wait actually spinning — `_idleCmd` non-zero at least once before the operand write — rather than falling straight through. **DLL side:** the in-flight command must complete with its OWN result in the pipe log; the failure this guards is Mimic's `cmd` being overwritten mid-flight, which surfaces as the first command reporting a status that belongs to the second, or timing out with "the DLL never saw this command". ⚠ **A quiet pass proves nothing here** — if the mailbox was idle at the moment of the untick the wait exits immediately and the run is VACUOUS. The rig must show the wait was entered, or report the attempt as undecided. **Staging:** `UE5_DEBUG=1`, start a long command from the UI, untick the CE record inside its window. |
+
+✅ **FP1 CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` on DumperTest Shipping (UE 504, DLL and AOT UI 3776), staged as
+L78 did (`tools/verify/l78_parentrel_arm.py`), since the fixture has no vehicle: `attach` ran `K2_AttachToActor` on
+the live `BP_ThirdPersonCharacter_C` (`0x1858D8E3990`) onto a StaticMeshActor, KeepWorld x3, ReturnValue 01.
+**Control:** `teleport_get_pose` → `source: "invoke"`, world (900, 1110, 92.01), no `parent_relative`. `degrade`
+(invoke timeout 200 ms, not persisted; the game thread, tid 3708, suspended; `get_diagnostics` game_thread
+*stalled*): **`source: "raw"` with `parent_relative: true`**, (30.0, 31.71, 284.03) -- and walk-0.log gained its first
+`Teleport: attached pawn but K2_GetActorLocation failed — falling back to RelativeLocation (parent-relative!)` at
+15:08:21.648, the same second. **UI:** Current Pose → Refresh showed the `raw` tag and a **⚠ parent-relative** badge,
+and the tab's status line *"Pose read (raw) -- ⚠ PARENT-RELATIVE, not world coordinates: this pawn is attached
+(vehicle / platform) and the world-space read failed. Do not save these as a marker."* Then `heal`, `detach`,
+`restore`: the pose read the world (900, 1110, 92.01) again with no flag, and the hint cache holds no invoke timeout
+for this game. Not covered: the CE mailbox's pose-flags byte (a separate row, as above).
 
 ⭐ **FP3 is the one to attempt first**, and not because it is the most severe — it is the only one of
 the three whose staging needs no special game: a long command and a well-timed untick on the same
@@ -2970,6 +2672,20 @@ only thing that makes the per-leaf cost matter, and today's cap is far above any
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L11 (U1/U4 + stragglers): V8 / V10 / V11 / W8 / Y10 / Y11 / Y12 / Y13 / F5
 
+✅ **V10 (row 5) CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`: the "no sample" verdict of 2026-08-22 is superseded --
+since build 3775 a GObjects that reads no objects is a sample, and the staged decoy makes one. DumperTest Shipping
+(UE 504) with `out\staged\rescan-decoy-reinit\UE5Dumper.dll` restaged at HEAD `7f6fcbc0` (sha256 `13aa4a06`…; the
+3776 DLL sources plus the decoy), AOT UI 3776: header `Connected — UE504 (0 objects)`, the System tab's GObjects
+`0x7FFC21CA8EB0` (the decoy), Total Objects 0, Extra Scan offered. **Extra Scan** pressed; one second later, with the
+progress bar on *"Scanning GObjects (.data heuristic)…"*, the UE version override was changed to 5.0: the button
+stayed **disabled** through the sweep (`RunRescan: started` 15:21:45 → `finished` 15:22:00, 14 candidates). The
+result *"GObjects replaced: 0x7FF63F9AA450 (24,530 objects). The offsets probe and the version check ran again."*
+was **still on screen 16 s later**, after the refresh the scan triggered (header `Connected — UE504 (24530 objects)`,
+Total Objects 24530); scan-0.log `Rescan: GObjects 0x7FFC21CA8EB0 -> 0x7FF63F9AA450 (Count=24530 …)`. The mid-scan
+override (`set_ue_version_override 500`, persisted) reached the DLL during the sweep, and the apply's version check
+overruled it to 504 from the structural markers (`User override = 500 overruled`); the override was set back to
+**Auto** afterwards and the hint cache logged `Cleared user UE-version override`.
+
 *L11 was the LAST LOW batch. **V9** (the Object Tree's Cancel button could not cancel a search) and
 **Y14** (the baked export announced N params over values it had failed to parse) need NO live check —
 both are driven end to end by the real ViewModel / real generator in `AuditL11HonestyTests`, and both
@@ -3425,7 +3141,19 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > Still open: the CE-side half — watching the Before/After dump appear in the Lua Engine window.
 > can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
-> ### 🟡 Y11 — the container half is evidenced (baked path); the FText half is NOT run `[Y11-2026-08-20]` 2026-08-20
+> ### ✅ Y11 — CLOSED 2026-11-20: the FText half and FIRE's container half run; the baked path evidenced 2026-08-20 `[Y11-2026-08-20]`
+>
+> ✅ **Run through FIRE 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504). The FText
+> host is stock engine, not the fixture: `KismetTextLibrary::Conv_TextToString` (ParmsSize 32, `InText [FText, 16B,
+> off=0, out]`) on `Default__KismetTextLibrary`, from Live Walker's Functions → **PIPE**. FIRE with the box as opened
+> (`0`), emptied, and holding `hello` was refused all three times, by name: *"ERROR: InText: FText parameters cannot be
+> invoked from this dialog — … a zeroed one is not an empty FText … Invoke a wrapper that takes an FString instead."*
+> Control, `KismetStringLibrary::JoinStringArray` (ParmsSize 48, `SourceArray [Array, 16B, off=0, out]`): untouched,
+> FIRE ran -- `ProcessEvent OK (result=0)`, `SourceArray (out)` 16 zero bytes, `ReturnValue (return) = ""`; with `5`
+> typed into SourceArray it was refused: *"ERROR: SourceArray: Array parameters cannot be built from a textbox — … the
+> value you typed would be dropped. Clear the box to send an empty/zeroed value instead."* Second witness: across the
+> five FIREs the UI's `pipe-0.log` and the DLL's both hold exactly **one** `invoke_function` (the untouched
+> JoinStringArray, `params_hex` all zero up to the separator), so neither refusal reached the game.
 >
 > **A function with the right shape was found and its emitted script inspected.**
 > `LocalizableMessageLibrary::Conv_LocalizableMessageToText` (ParmsSize=72) takes
@@ -4426,6 +4154,18 @@ documented at that call site: the search highlight is painted from `LoadingRow` 
 
 ### 🟡 L3 steps 2 + 3 — step 3's CONDITION HAS NEVER FIRED; step 2 is CE-only `[L3-AD10-2026-08-20]` 2026-08-20
 
+✅ **Step 1 CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`, headless, and step 3 re-swept. A sweep of every `scan-*` /
+`init-*` log on the machine (**1,529** files, 30 process folders) found ONE win among the four patterns:
+`GWLD_TQ_4 … -> 0x7FF66F6E6208 [WINNER]` on `ThirdPerson53-Win64-Shipping` (UE 5.3, DLL build 3732, 2026-11-17;
+`GOBJ_PS1` hit there too, *not validated*; `GWLD_TQ_3` and `GOBJ_PS6` 0 hits). No earlier run of that title exists to
+compare with, so the address was checked against the binary's own PDB instead (`tools/pe/pdb_globals.py`):
+`?GWorld@@3VUWorldProxy@@A` is at **RVA 0x69C6208**; the run's image base, from its logged entry point
+`0x7FF66DB5D870` minus the PE's `AddressOfEntryPoint` 0x4E3D870, is 0x7FF668D20000, so the winner's RVA is
+**0x69C6208** -- the exact `&GWorld` (GNames agrees the same way, RVA 0x67B2F80 both sides). That run read 0 objects
+because the reference copy carries no paks (`reference-builds.md`), which does not affect a static address. **Step 3:**
+the AD10 WARN (`replaying its published AOB triple does not reproduce it`, or any "withhold") has **0** hits in the
+same 1,529 files; it stays a line to watch for.
+
 **Step 3 — answerable headlessly, and the answer is "never".** Sweeping **437** `scan-*.log` +
 `init-*.log` files across every process on the machine for the new WARN
 (`replaying its published AOB triple does not reproduce it`, or any "withhold"): **0 hits**. So no
@@ -5048,6 +4788,14 @@ Same probe, same address, opposite answer. Without it, "0x02 came back" is only 
 > (`seethrough_arm_a.py:97-99`, `teleport_relative` over the same pipe connection that owns the
 > See-through session) and the posted close (`seethrough_arm_b.py:147-148`). No person required.
 > Recorded here rather than dropped with the section.
+>
+> ✅ **CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` with exactly that concatenation (a scratch rig, DumperTest
+> **Development**, UE 504, 25,264 objects, DLL 3776 injected, no UI): `seethrough_set enable=true` → `active`,
+> `hidden_count` 1; then `teleport_relative(60, horizontal)` every 0.15 s on the SAME connection, and after 5 steps a
+> posted **WM_CLOSE** to the game window while the steps kept coming (14 in all, until the pipe closed). The process
+> exited **1.8 s** after the close with exit code **0x00000000** (not 0xC0000409); no new `DumperTest*.dmp` in
+> `%LOCALAPPDATA%\CrashDumps`; the DLL's logs after the watermark hold **0** `tick threw` and **0** `[ERROR]`, and end
+> on `PipeServer: Stop entry (process exit — skipping drain/joins, the OS reclaims this)`.
 ℹ️ ✅ **Step 1 (See-through's four disable arms) is CLOSED 2026-08-23** — arms (c)+(d) passed
 2026-08-22, arms **(a)** and **(b)** on 2026-08-23, see `[SEETHRU-ARMS-AB-2026-08-23]` below.
 ✅ **Step 3 (close the game with a Solide hold live) is CLOSED 2026-08-23
@@ -6071,6 +5819,29 @@ its own table covers 500-508). 5.5 has Lushfoil's witness (above). Still without
 ✅ **5.0 added 2026-11-18 on 3733**: Light Maze (Steam, UE 5.0.3, injected, 14,958 objects) `0x258`, Add_IntInt = 7,
 `validation OK — hook fired 1800 times in 1500ms`, no fallback, no VALIDATION FAILED (`out/register/pehook500.log`).
 Still without one: 5.2 (no 5.2 host is installed) and the 4.x rows other than 4.23 and 4.27.
+✅ **4.15 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: Extinction (Steam, UE 4.15, its version.dll proxy
+refreshed to 3776, `trigger_scan`, 200,569 objects) `DetectProcessEvent (pattern): match at vtable+0x1D0` -- the
+table's `case 415: return 0x1D0` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 2160 times in 1500ms`, 0
+fallback and 0 VALIDATION FAILED lines (the rig's one FAIL is again only its 500-508 table).
+⚠ **4.18 on DQ XI S, 2026-11-20 on 3776 — the pattern and the table DISAGREE, and the pattern is right there.**
+DQ XI S (Steam, UE 4.18 by `'++UE4+Release-4.18'`, publisher Square Enix, injected, 293,050 objects):
+`DetectProcessEvent (pattern): match at vtable+0x210`, Add_IntInt(3,4) = 7, `validation OK — hook fired 810 times in
+1500ms`, 0 fallback, 0 VALIDATION FAILED. The table's `case 417: case 418: case 419: return 0x1F8` is the STOCK
+4.18 slot; this licensee build has 0x18 more (three virtuals) before ProcessEvent. So it is NOT a witness for the 4.18
+row, and it is not a table error either: the pattern is the primary path and answered correctly. What it shows is
+that on this title the fallback row would be wrong, and only the hook validation (which ACTS since
+`[PEHOOK-2026-08-17]`) would catch it. A stock 4.18 witness is still owed (OCTOPATH is also Square Enix; EVERSPACE is
+4.20).
+✅ **4.20 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: EVERSPACE (Steam, UE 4.20, exe `RSG-Win64-Shipping`, its
+version.dll proxy refreshed to 3776, `trigger_scan`, 187,712 objects) `DetectProcessEvent (pattern): match at
+vtable+0x208` -- the table's `case 420: return 0x208` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 63443
+times in 1500ms`, 0 fallback, 0 VALIDATION FAILED. Still without a live witness: 5.2 and the 4.x rows other than
+4.15, 4.20, 4.23 and 4.27.
+✅ **4.18 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: OCTOPATH TRAVELER (Steam, UE 4.18, publisher Square
+Enix, its winmm.dll proxy refreshed to 3776, `trigger_scan`, 273,956 objects) `DetectProcessEvent (pattern): match at
+vtable+0x1F8` -- the table's 4.17-4.19 row -- Add_IntInt(3,4) = 7, `validation OK — hook fired 5400 times in
+1500ms`, 0 fallback, 0 VALIDATION FAILED. So the 4.18 row holds on a shipped title, and DQ XI S's 0x210 above is that
+build's own fork. Still without a live witness: 5.2 and the 4.x rows other than 4.15, 4.18, 4.20, 4.23 and 4.27.
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
@@ -8560,9 +8331,23 @@ spill time, which is the thing `Set_Big` was built to catch.
 straight past it. The substance of that clause (the shown count follows the cap) was measured in the
 **other** direction instead, 128 → 64, which is the same claim and is reachable.
 
-#### ⚠ NEW FINDING `[CAPREFRESH-2026-08-24]` (LOW) — **Refresh** updates only ONE of the three truncation disclosures
+#### ✅ CLOSED 2026-11-20 `[CAPREFRESH-2026-08-24]` (LOW) — **Refresh** now updates all three truncation disclosures (it updated only ONE)
 
-Found while running step 3, by pressing **Refresh** instead of re-opening. Both directions measured
+✅ **Measured fixed 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504,
+`DumperTestActor_0.Set_Big`, 199 entries). The fix came with `dbb989b2` `[WALK-REFRESH-SCALAR-SHRINK]` ("a Refresh
+inside a container view shows and says what the drill would"), extended by `[LW-EMPTIED-CONTAINER-REFRESH]`: Refresh
+now rewrites the current crumb's label and the status line from the same reading as the header. Both sequences of the
+table below, re-run:
+
+| sequence | breadcrumb | header | status line |
+|---|---|---|---|
+| drilled at 64, Array Limit raised to 256, **Refresh** | no badge | no badge | absent; rows run to `[199]` (value 9199) |
+| at 256, lowered to 64, **Refresh** | `⚠ showing 64 of 199` | `⚠ showing 64 of 199` | `Showing the first 64 of 199 entries — raise the "Array Limit" slider …` |
+
+The three agreed already when the slider moved, before Refresh, and Refresh kept them agreeing. The slider was left at
+64, its value before the check.
+
+*Was:* found while running step 3, by pressing **Refresh** instead of re-opening. Both directions measured
 on the same container:
 
 | sequence | breadcrumb | header | status line |
@@ -10016,7 +9801,14 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   two lines above. To provoke the original race: register the plugin but leave it **unticked**,
   then start CE.
 
-- ⬜ **Extra Scan can be cancelled** (build 2603, B18). Needs a game where GObjects does NOT
+- ✅ **Extra Scan can be cancelled — CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (build 2603, B18), on the staged
+  decoy (DumperTest Shipping, `out\staged\rescan-decoy-reinit\UE5Dumper.dll` restaged at HEAD `7f6fcbc0`, sha256
+  `13aa4a06`…): `get_pointers` object_count 0 at the decoy `0x7FFC1FE08EB0`; `rescan` started 15:27:48.111;
+  `rescan_status` 2.5 s later `running`, *"Scanning GObjects (.data heuristic)..."*; then `UE5_Shutdown` through
+  `tools/verify/call_export.py` (`--process DumperTest-Win64-Shipping`), which **returned in 0.152 s**. pipe-0.log:
+  `Stop entry` 15:27:51.210 → `RunRescan: finished (…, cancelled)` and **`Stop watches+scan joins done (4 ms)`** at
+  15:27:51.214; scan-0.log `ExtraScanGObjects: cancelled (228352 candidates tested)`. The CE untick is that same
+  export on CE's thread, so CE is not needed for the latency. The original text: needs a game where GObjects does NOT
   resolve by AOB, so Extra Scan actually runs long. Start it, then untick the CE record (or close
   the UI) while it is still going. **PASS** = `pipe-0.log` shows `PipeServer: Stop watches+scan
   joins done` within a second or so of `Stop entry`. **FAIL** = seconds of gap, or CE's window
@@ -10276,6 +10068,13 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 
   **This closes the one open item that could show the user WRONG DATA.** The counter-check on
   STVoyager's UTF-8 FText is a separate, licensee-specific case and stays open.
+  ✅ **The STVoyager counter-check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (Steam offline, UE 506, 58,050 objects,
+  DLL 3776 injected, title screen, a Traditional-Chinese mod installed): 575 live owners of the 50 classes with a live
+  TextProperty walked over the pipe, 1,616 FText values read. **`TextBlock.Text` reads `版本\r\n2-2-28310-84ace731`**
+  -- CJK, not mojibake, not empty. The rest read English source text (`New`, `4 Cycles`, `Damaged`, …; the mod
+  translates at display time) or `(empty)`. ⚠ **10 values read pointer bytes as text** (`✨翶`, `剠憽Ǆ`, …) --
+  not B28's decoder: the scan window ran past a 0x60-byte ITextData into its heap neighbour; filed as
+  `[FTEXT-NEIGHBOR-GARBAGE]` in todo.md's census.
 
   > **Two observations from the same screen, neither of them B28:**
   > 1. `Text_Empty` renders as **`No`**. An `FText::GetEmpty()` should read as empty; `No` looks
@@ -11838,6 +11637,16 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   selected. *The remaining half is a UX judgement, not a defect: whether the result volume for a
   1-byte value is usable. The panel's own orange warning says it will flood, and this sample cannot
   settle "usable" — that needs a real game's object count.*
+  ✅ **Measured on a real game 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, Avowed through its dxgi proxy, UE
+  503, 92,031 objects, main menu; Max 50,000, Game classes only, Parallel scan, Timeout 25 s). With NumericAll chosen
+  the orange warning showed (*"NumericAll includes 1-byte fields — small values (e.g. 0 / 1 / 255) will match a very
+  large number of fields and can flood the results. Use a larger / more specific value, or pick NumericNoByte to skip
+  1-byte fields."*). **Exact 1**: *"First Scan: 50000 candidates in 1281 ms (scanned 85667 objects, 5014 classes with
+  matching fields) ⚠ truncated (25s deadline / result cap)"* -- the cap reached in 1.3 s, the grid paging 100 at a time
+  (Load More), the panel responsive throughout. **Exact 255**: *"679 candidates in 204 ms"*, all shown. So a value of 1
+  floods to the cap fast and stays usable only as the start of a refine; 255 is directly usable -- the warning is
+  accurate. ⚠ The truncation note's advice names the Timeout although here the RESULT cap ended it (1.3 s of a 25 s
+  deadline); raising Max would be the lever.
 - **Value Search `TSet<T>` / `TMap<K,V>` scan — original instructions** (build 927). Scan a known value held
   in a `TSet<int>` / `TMap<K,int>` UPROPERTY → rows must render as `Set[idx]` / `Map.Key[idx]` /
   `Map.Value[idx]`, and a Next Scan must prune. The sparse-walk geometry
@@ -12325,14 +12134,7 @@ post 側三次都選 `0x7FF74B0BC264`,pre 側選過 `0x7FF74B0CAC34` 和 `0x7FF7
 
 還要開 CE 並載入 .CT。
 
-### ✅ U16 —— 大型 enum 的成員清單 — **CLOSED 2026-08-22**，證據見上一節 `[U16-ENUM65-2026-08-22]`
-
-*優先度 **中** · 需要：有 `EPhysicalSurface` 規模（數十個成員）enum 欄位的遊戲*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | ✅ **2026-08-22 在 DQ7R 上通過**：`DefaultPhysicalMaterial` → `SurfaceType`（`EPhysicalSurface`，**65 個成員**）。四個互相獨立的見證都一致：DLL log `read 65 of 65`、匯出的 CE XML 65 行且 index `0..64` 連續、CE 自己在 Lua Engine 裡回報 `n=65 offby0=0 dups=0`（**負控制有開火**：同一圈對 `i+1` 記分得到 `CTRLoffby1=65`）、以及 CE 畫出來的 dropdown 展開到底是 `64 : EPhysicalSurface_MAX`。 | 成員完整，沒有缺尾。<br>⚠⚠ **原本寫在這裡的「DumperTest 的天花板就是 26」是錯的 —— 它其實到 113**（`DumperTest/walk-0.log:212`）。26 從來不是宿主的性質，只是「那一次走訪剛好碰到哪些 class」。<br>▶ 連帶地，原本建議的篩選指令只 grep `walk-0.log`（**只有當次執行**），旁邊還躺著 127 個 `walk-*.log`。要篩就篩整個資料夾，指令見上一節。 |
-| 2 | ✅ **2026-08-22 重新在整個 log corpus 上量過**（294 個 walk log、5 個宿主）：**4,919** 次 `ResolveEnumValue`，`N != M` **0 個**，`truncated read` **0 個**，最大的表 **212**（DQ7R）。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
+> 📦 **Archived 2026-11-20:** 1 closed unit(s) moved byte-identical to [archive/verification-register-closed-2026-11-20-build-3776.md](archive/verification-register-closed-2026-11-20-build-3776.md): `[U16-ENUM65-2026-08-22]`. Grep the tag; tags resolve across files.
 
 ### ⛔ NO SAMPLE ON THIS MACHINE 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]` — B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
 
@@ -12948,6 +12750,11 @@ restructure that existed nowhere else — checked before the move (`V8_DataTable
 -----
 
 ### ⛔ V10 and B18 have NO SAMPLE on this machine — measured 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]`
+
+✅ **Superseded 2026-11-20** `[LIVEPASS-2026-11-20]`: since build 3775 Extra Scan replaces a GObjects that reads no
+objects, and the staged decoy (`tools/verify/staging/rescan-decoy-reinit.json`) makes that session on DumperTest. V10
+closed in audit L11's batch and B18 in the ① log-derivable list, both on that decoy. What follows is the 2026-08-22
+measurement.
 
 Both rows state their own precondition: V10 needs *"a game where GObjects or GWorld is still
 unresolved after the first scan — if both resolve there is nothing to test"*, and B18 needs *"a game

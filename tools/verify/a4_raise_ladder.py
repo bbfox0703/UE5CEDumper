@@ -4,6 +4,7 @@
     py tools/verify/a4_raise_ladder.py --flavour shipping58
     py tools/verify/a4_raise_ladder.py --flavour shipping56   # a real 5.6 binary: 504 -> 505 -> 506, and no further
     py tools/verify/a4_raise_ladder.py --restore-only  # if a previous run died mid-way
+    py tools/verify/a4_raise_ladder.py --flavour shipping58 --hold 180   # keep the game up for the UI's badge leg
 
 THE ROW. `UE5_Init` runs a raise-ONLY ladder every init: 503 (tagged FFieldVariant) -> 504
 (CMC::SetGravityDirection) -> 505 (UEnum::EnumPackage) -> 506 (UStruct::StructStateFlags) -> 507
@@ -98,6 +99,9 @@ def main():
     ap.add_argument("--restore-only", action="store_true",
                     help="put the cache back from the .a4bak snapshot and exit")
     ap.add_argument("--wait", type=int, default=30)
+    # The UI leg reads the badge from the SAME process the log lines came from, so the game stays up this long after
+    # the log is read and before the kill; the cache is still restored in the finally.
+    ap.add_argument("--hold", type=int, default=0, help="seconds to keep the game running after the log is read")
     a = ap.parse_args()
 
     bak = CACHE.with_suffix(".json.a4bak")
@@ -240,6 +244,10 @@ def main():
                 print("  %-5s %s (must NOT fire on this fixture)" % ("BAD" if want[k] else "OK", labels[k]))
                 if want[k]:
                     fails.append("false raise: " + labels[k])
+        if a.hold > 0:
+            print("\nholding the game for %d s: connect the UI now and read the Pointers card and the header" % a.hold,
+                  flush=True)
+            time.sleep(a.hold)
     finally:
         # ---- kill the game, then put the cache back --------------------------
         subprocess.run(["taskkill", "/F", "/IM", FLAVOUR_EXE[a.flavour]],

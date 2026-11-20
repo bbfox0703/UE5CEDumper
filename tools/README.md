@@ -30,6 +30,31 @@ py tools/verify/pipe_client.py find_instances --args '{"class_name":"DumperTestA
 The batch it exists for is planned in
 [docs/auto-verification-session-plan.md](../docs/auto-verification-session-plan.md).
 
+## `docs_archive/` — move closed units out of `todo.md` / `verification-register.md`, byte-identical
+
+The periodic archive pass ([docs/archive/README.md](../docs/archive/README.md) is the convention; the newest
+`todo-closed-*.md` header states the selection rule in full). Nothing is edited, only moved, and each step asserts it:
+
+1. `py tools/docs_archive/unit_index.py docs/todo.md out/docs_archive/todo_units.tsv` -- every heading's unit range
+   (the same for the register). Proposers read these.
+2. Proposers judge units against the selection rule and adversarial refuters judge each proposal (a workflow); its
+   output is `{"proposals": [...], "verdicts": [...]}`.
+3. `approve.py <workflow output> out/docs_archive` -- only a unit a refuter judged `move: true` is approved.
+4. `check_bounds.py <doc> <approved json> <units tsv>` must print `0 bad`; `summarize.py` (same arguments) tallies
+   the approved units per `##` section for the archive header and the commit message.
+5. Write the archive file's header, then `move_units.py <doc> <approved json> docs/archive/<name>.md <header.md>
+   <date> --dry-run`, and again without `--dry-run`. It refuses an overlap, a partial section or a stray table row,
+   and asserts that the moved lines interleaved back rebuild the original.
+6. Before committing: `verify_split.py <doc> docs/archive/<name>.md "> 📦 **Archived <date>:**" <approved json>`
+   rebuilds both files from git's HEAD copy, independently of the move.
+7. A row in `docs/archive/README.md`, `py tools/check_md_links.py`, the gates, one commit per doc.
+
+`docs/dev-log.md` is split differently -- whole days off its old end, past the 400 KB trigger:
+`split_devlog.py split docs/dev-log.md <cut YYYY-MM-DD> docs/archive/dev-log-<YYYY-MM>-pre-build-<first kept>.md
+<header file> --dry-run`, then without `--dry-run`; edit the live header's archived-builds list and its
+`## Older entries` pointer to name the new file; then `split_devlog.py verify docs/dev-log.md <archive file>` before
+committing.
+
 ## `ghidra/` — Ghidra scripts
 
 Run headless via `support/analyzeHeadless.bat` (or in the Script Manager GUI).
