@@ -509,6 +509,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - B18, Extra Scan cancelled by `UE5_Shutdown` mid-sweep (2026-11-20, the staged decoy, a 4 ms join; verification-register.md).
 - `[L3-AD10-2026-08-20]` step 1 (2026-11-20, headless: `GWLD_TQ_4`'s one win checked exact against the PDB; step 3 re-swept, 0 hits).
 - `[LIVEFUNCS-TIMELINE-2026-10-04]`'s load log line (2026-11-20, DumperTest58 Development; the low-memory load stays open).
+- `[A4-508MARKER-2026-09-06]`'s UI badge leg on a raised run (2026-11-20, DumperTest58 Shipping; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 

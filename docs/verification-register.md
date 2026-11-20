@@ -2058,6 +2058,15 @@ process: `walk_class` gives `AnimDataModelNotifPayload` props_size 16 with 0 fie
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-06 `[A4-508MARKER-2026-09-06]` — audit A4: the raise fires, on a genuine UE 5.8.2 binary
 
+✅ **The UI badge leg on a RAISED run, CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776,
+DumperTest58 **Shipping**): `tools/verify/a4_raise_ladder.py --flavour shipping58 --hold 150` (the `--hold` added for
+this leg, `0d382298`) seeded the cache at 504 (rev 12): `FindAll: UE Version = 504 (cached, rev=12 …)`, then the
+506, 507 and **`… FFieldClass::Name@+0x08 = vfptr, UE5.8+) but version=507 — raising floor to 508`** rungs and
+`UE5_Init: Complete (UE508, …, Objects=34570)`; offsets-0.log `FFieldClass::Name=+0x08`. In that SAME process (pid
+41472) the UI connected during the hold: header **`Connected — UE508 (34570 objects)`**, the System tab's UE Version
+card **508 ✓ Detected**. The rig then killed the game and reported `cache restored byte-for-byte: OK` and `A4 half 2:
+PASS`.
+
 > **CLOSED on the verification PC, build 3374.** The row was blocked on *content* — "a title that
 > is UE 5.8 **and** string-stripped", which the corpus did not contain. The maintainer built a
 > stock **UE 5.8.2** sample on 2026-09-05 (`DumperTest58`, Development + Shipping,
