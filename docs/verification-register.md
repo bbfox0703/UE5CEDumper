@@ -1236,7 +1236,11 @@ add an lld note. Unit tests: dll_core_test's SCAN-LINKER-LOG block.
     module linker = msvc (Rich header yes, linker 14.38, 4 debug entries, VC_FEATURE / POGO among them)`; no Wine line;
     the scan completed by AOB. `linker_survey.py` on the same exe file: msvc, Rich, 14.38, debug [2, VC_FEATURE, POGO,
     16]. The game was closed afterwards.
-2. ⬜ **An lld build.** Avowed is the one on this machine (`linker_survey.py`: lld, 14.00, debug [2, 16]). Acceptance:
+2. ✅ **An lld build. CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`: Avowed through its dxgi.dll proxy (refreshed to
+    3776; `load_mode proxy:dxgi.dll`), `trigger_scan` at the main menu, UE 503, 92,031 objects. scan-0.log reads
+    **`FindAll: main module linker = lld (Rich header no, linker 14.00, 2 debug entries)`**, with no Wine line; every
+    global resolved, so no failed-pattern warning carried the lld note (as expected). The game was closed afterwards.
+    The original text: Avowed is the one on this machine (`linker_survey.py`: lld, 14.00, debug [2, 16]). Acceptance:
     its scan log reads `main module linker = lld (Rich header no, linker 14.00, 2 debug entries)`. Its AOBs hit today,
     so the lld note on a failed-pattern warning is not expected there.
 3. ⬜ **Wine / Proton.** No Linux here. Acceptance: under Proton, the scan log has `running under Wine <version> on
@@ -11972,6 +11976,16 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   selected. *The remaining half is a UX judgement, not a defect: whether the result volume for a
   1-byte value is usable. The panel's own orange warning says it will flood, and this sample cannot
   settle "usable" — that needs a real game's object count.*
+  ✅ **Measured on a real game 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, Avowed through its dxgi proxy, UE
+  503, 92,031 objects, main menu; Max 50,000, Game classes only, Parallel scan, Timeout 25 s). With NumericAll chosen
+  the orange warning showed (*"NumericAll includes 1-byte fields — small values (e.g. 0 / 1 / 255) will match a very
+  large number of fields and can flood the results. Use a larger / more specific value, or pick NumericNoByte to skip
+  1-byte fields."*). **Exact 1**: *"First Scan: 50000 candidates in 1281 ms (scanned 85667 objects, 5014 classes with
+  matching fields) ⚠ truncated (25s deadline / result cap)"* -- the cap reached in 1.3 s, the grid paging 100 at a time
+  (Load More), the panel responsive throughout. **Exact 255**: *"679 candidates in 204 ms"*, all shown. So a value of 1
+  floods to the cap fast and stays usable only as the start of a refine; 255 is directly usable -- the warning is
+  accurate. ⚠ The truncation note's advice names the Timeout although here the RESULT cap ended it (1.3 s of a 25 s
+  deadline); raising Max would be the lever.
 - **Value Search `TSet<T>` / `TMap<K,V>` scan — original instructions** (build 927). Scan a known value held
   in a `TSet<int>` / `TMap<K,int>` UPROPERTY → rows must render as `Set[idx]` / `Map.Key[idx]` /
   `Map.Value[idx]`, and a Next Scan must prune. The sparse-walk geometry
