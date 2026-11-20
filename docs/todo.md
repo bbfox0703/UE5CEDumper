@@ -550,9 +550,10 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 **Not run yet, and why** (as of the end of 2026-11-20's session):
 
 - Waits for the maintainer: Locate in GWorld via the level list (Elliot), and the gameplay hosts the surveys point at
-  (`[W3-XREF-CAP]`, L46 Phase J on DQ XI S), need a loaded save, which can autosave over the maintainer's progress;
-  L66 `[W1-PARTIAL-MARK]` leaves inflated snapshots whose deletion is the maintainer's call. (`[LIVEFUNCS-STEP2]` item
-  2 and B28 were run once the maintainer cleared them.)
+  (`[W3-XREF-CAP]`, L46 Phase J on DQ XI S), need a loaded save, which can autosave over the maintainer's progress.
+  (`[LIVEFUNCS-STEP2]` item 2 and B28 were run once the maintainer cleared them.) ⚠ Corrected: L66 `[W1-PARTIAL-MARK]`
+  leaves nothing to delete -- its four inflated snapshots went on 2026-09-23 at the maintainer's request (the row
+  records it), and no DB of that build's PE remains under `Snapshots\`; listing it here was a stale copy.
 - Triaged, not run: census Table B's `INV-TOOLTIP-CLIPBOARD` and `QUERYPTR-LOG-ABSENT-LABEL` are AOBMaker rows (on
   hold); `METHODE-STALE-LOGPATH` is read off the CE plugin's injection dialog, so it waits for Cheat Engine;
   `PIVOT-ARRAY-LOADID` is a race of milliseconds (L59 could not open it live), carried by its red / green unit test.
