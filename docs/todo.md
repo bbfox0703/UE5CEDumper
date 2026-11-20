@@ -4,11 +4,11 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** `[LIVEPASS-2026-11-20]` (the maintainer, 2026-11-20): run the live checks that can run on
-> this PC now -- `[OPEN-CENSUS-2026-10-28]` Table B, the pending rows of verification-register.md and
-> `[FIXPASS-2026-09-10]`'s live-check backlog (fixpass-low-live-plan.md); a check that needs the MCP server waits.
-> Each row closes as the register's "How to close a row" says, with its census Table B entry edited in the same
-> commit, one commit per row; the pass's own record is its section below the census. · Before it,
+> ▶ **Current programme:** none chosen yet. `[LIVEPASS-2026-11-20]` (the maintainer, 2026-11-20: run the live checks
+> this PC can run -- `[OPEN-CENSUS-2026-10-28]` Table B, the pending rows of verification-register.md and
+> `[FIXPASS-2026-09-10]`'s live-check backlog) ran its course the same day, gameplay rows included once the maintainer
+> cleared loading saves; one commit per row. What it could not run -- the MCP checks, the Cheat Engine and AOBMaker
+> rows, the hosts this PC lacks -- is listed in its section below the census. · Before it,
 > `[RESCAN-DECOY-REINIT]` was done in build 3775 and its follow-ups in build 3776 (released as v3776, 2026-11-20): when
 > GObjects was found but reads no objects and init's recoveries missed, Extra Scan searches the game's .data for the
 > object array, keeps the largest candidate whose first objects are densely named, and measures the offsets, GEngine
