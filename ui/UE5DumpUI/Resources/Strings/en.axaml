@@ -481,7 +481,7 @@
     <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>
     <sys:String x:Key="str.Pointers.AobAllFailed">&#x1F534; All AOB patterns failed</sys:String>
     <sys:String x:Key="str.Pointers.ExtraScan">Extra Scan</sys:String>
-    <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found. Try aggressive scanning techniques (5-20 seconds).</sys:String>
+    <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found, or GObjects reads no objects. Try aggressive scanning techniques (5-20 seconds).</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHex">HEX</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
@@ -507,6 +507,15 @@
     <sys:String x:Key="str.Pointers.Scan.NoResults">No additional pointers found.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.CompleteNoResults">Scan complete — no results.</sys:String>
     <sys:String x:Key="str.Pointers.Scan.Error">Scan error: {0}</sys:String>
+    <!-- [RESCAN-DECOY-REINIT] The result line after apply_rescan ({0} = an address; FoundGObjects / FoundGWorld are joined
+         by ", " into Found's {0}). Replaced: {0} = the GObjects apply chose, {1} = its object count. NotApplied: {0} = the
+         DLL's gobjects_outcome word, shown as sent. -->
+    <sys:String x:Key="str.Pointers.Scan.Found">Found: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.FoundGObjects">GObjects: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.FoundGWorld">GWorld: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Replaced">GObjects replaced: {0} ({1:N0} objects). Offsets and version were re-measured.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NoneQualified">No candidate reads objects whose names resolve — GObjects is unchanged.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NotApplied">GObjects was not replaced ({0}).</sys:String>
 
     <!-- Pointer Panel: Test Extra Scan status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.TestScan.Starting">Starting test scan...</sys:String>
@@ -2221,7 +2230,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <!-- Tooltips: Pointer Panel -->
     <sys:String x:Key="str.Tip.Pointers.Copy">Copy address to clipboard</sys:String>
     <sys:String x:Key="str.Tip.Pointers.CopyScan">Copy AOB scan hit address to clipboard</sys:String>
-    <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers, or for a GObjects that reads no objects</sys:String>
     <sys:String x:Key="str.Tip.Pointers.TestExtraScan">Simulate scan progress UI (dev testing only)</sys:String>
     <sys:String x:Key="str.Tip.Pointers.ClearGameCache">Remove cached scan hints for the current game (next scan will try all patterns)</sys:String>
     <sys:String x:Key="str.Tip.Pointers.ResetAllCache">Rename the entire cache file with a numbered backup (.001-.010) and start fresh</sys:String>

@@ -5,6 +5,8 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// What the Pointers panel says once an Extra Scan's result was applied, from the job's status and apply_rescan's reply.
+/// [RESCAN-DECOY-REINIT] A replace names the GObjects apply chose, which need not be the job's first hit; an apply
+/// that acted on nothing says so instead of "Found".
 /// </summary>
 public static class ExtraScanReport
 {
@@ -15,10 +17,29 @@ public static class ExtraScanReport
 
     public static Report Describe(RescanStatusResult status, ApplyRescanResult applied)
     {
+        string outcome = applied.GObjectsOutcome;
+        string addr = applied.State.GObjectsAddr;
+        if (status.FoundGObjects && (outcome == Constants.RescanOutcomeReplaced || outcome == Constants.RescanOutcomeReinitInPlace))
+            return new Report(Res.Format("str.Pointers.Scan.Replaced", addr, applied.State.ObjectCount),
+                              Res.Get("str.Pointers.Scan.Applied"), true);
+
+        // A fill publishes the job's first hit; a DLL that predates the outcome key only ever filled.
+        bool gobjectsApplied = status.FoundGObjects && (outcome == "" || outcome == Constants.RescanOutcomeFilled);
         var parts = new List<string>();
-        if (status.FoundGObjects) parts.Add($"GObjects: {status.GObjectsAddr}");
-        if (status.FoundGWorld) parts.Add($"GWorld: {status.GWorldAddr}");
-        _ = applied;
-        return new Report($"Found: {string.Join(", ", parts)}", Res.Get("str.Pointers.Scan.Applied"), true);
+        if (gobjectsApplied) parts.Add(Res.Format("str.Pointers.Scan.FoundGObjects", addr));
+        if (status.FoundGWorld) parts.Add(Res.Format("str.Pointers.Scan.FoundGWorld", status.GWorldAddr));
+        if (status.FoundGObjects && !gobjectsApplied)
+        {
+            string why = outcome == Constants.RescanOutcomeNoneQualified
+                ? Res.Get("str.Pointers.Scan.NoneQualified")
+                : Res.Format("str.Pointers.Scan.NotApplied", outcome);
+            if (parts.Count == 0)
+                return new Report(why, Res.Get("str.Pointers.Scan.CompleteNoResults"), false);
+            // GWorld applied in the same run: say both.
+            return new Report(Res.Format("str.Pointers.Scan.Found", string.Join(", ", parts)) + " " + why,
+                              Res.Get("str.Pointers.Scan.Applied"), true);
+        }
+        return new Report(Res.Format("str.Pointers.Scan.Found", string.Join(", ", parts)),
+                          Res.Get("str.Pointers.Scan.Applied"), true);
     }
 }

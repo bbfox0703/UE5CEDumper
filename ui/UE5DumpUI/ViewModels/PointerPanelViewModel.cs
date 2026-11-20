@@ -509,17 +509,24 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool IsGEngineNotFound => HasData && !IsVersionTooOld && GEngineMethod == "not_found";
 
     /// <summary>
-    /// True when Extra Scan button should be visible:
-    /// connected, not already scanning, and some pointer is missing.
+    /// True when Extra Scan can run: <see cref="ExtraScanOffered"/>, and no scan is running.
     /// Never on a refused engine — Extra Scan probes the same UE4/UE5 presets and the same
     /// hardcoded UObject::Class chain, so it is a guaranteed no-op there, and offering it would
     /// contradict the banner that says it cannot help. The DLL refuses the command too.
     /// </summary>
-    public bool CanExtraScan => HasData && !IsScanning && !IsVersionTooOld
-        && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
+    public bool CanExtraScan => ExtraScanOffered && !IsScanning;
 
-    /// <summary>The Extra Scan section: offered, or showing the result of the scan that just ran.</summary>
-    public bool ShowExtraScanSection => CanExtraScan;
+    /// <summary>Extra Scan has something to look for (<see cref="CanExtraScan"/> without the running scan):
+    /// a missing pointer, or [RESCAN-DECOY-REINIT] a published GObjects that reads no objects, which the DLL replaces
+    /// when GNames is up (it judges the candidates by the names their heads resolve) and it is new enough.</summary>
+    public bool ExtraScanOffered => HasData && !IsVersionTooOld
+        && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found"
+            || (IsNonZeroAddr(GObjectsAddress) && IsNonZeroAddr(GNamesAddress) && TotalObjects <= 0
+                && DllBuildNumber >= Constants.RescanReplaceMinDllBuild));
+
+    /// <summary>The Extra Scan section: offered, running, or showing the result of the scan that just ran -- which the
+    /// refresh after a successful apply would otherwise hide with the button.</summary>
+    public bool ShowExtraScanSection => ExtraScanOffered || IsScanning || ScanComplete;
 
     // --- AOBMaker button enable state ---
     /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data), or
@@ -587,6 +594,16 @@ public partial class PointerPanelViewModel : ViewModelBase
                                 ILogCompressionService? logCompression = null,
                                 IAobMakerUiClient? aobMakerUi = null)
     {
+        // [RESCAN-DECOY-REINIT] The section's visibility follows the offer and the scan's own state, wherever those are
+        // raised from.
+        PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(CanExtraScan) or nameof(ScanComplete) or nameof(IsScanning))
+            {
+                OnPropertyChanged(nameof(ExtraScanOffered));
+                OnPropertyChanged(nameof(ShowExtraScanSection));
+            }
+        };
         _platform = platform;
         _dump = dump;
         _log = log;
