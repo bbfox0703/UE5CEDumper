@@ -517,6 +517,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[SOLIDEHOLD-2026-08-22]` arm (a) re-scoped, a close while moving with See-through on (2026-11-20, DumperTest Development; verification-register.md).
 - `[PEHOOK-2026-08-17]`'s 4.15 ProcessEvent-slot witness (2026-11-20, Extinction through its proxy; verification-register.md).
 - `[OVERRIDE-REVIEW2-LOWS]` (2026-11-20, DQ XI S with a persisted 4.17 override; Auto cleared it at once).
+- `[PEHOOK-2026-08-17]`'s 4.20 ProcessEvent-slot witness (2026-11-20, EVERSPACE through its proxy; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 

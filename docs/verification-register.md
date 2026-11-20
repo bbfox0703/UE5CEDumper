@@ -6179,6 +6179,11 @@ row, and it is not a table error either: the pattern is the primary path and ans
 that on this title the fallback row would be wrong, and only the hook validation (which ACTS since
 `[PEHOOK-2026-08-17]`) would catch it. A stock 4.18 witness is still owed (OCTOPATH is also Square Enix; EVERSPACE is
 4.20).
+✅ **4.20 added 2026-11-20 on 3776** `[LIVEPASS-2026-11-20]`: EVERSPACE (Steam, UE 4.20, exe `RSG-Win64-Shipping`, its
+version.dll proxy refreshed to 3776, `trigger_scan`, 187,712 objects) `DetectProcessEvent (pattern): match at
+vtable+0x208` -- the table's `case 420: return 0x208` -- Add_IntInt(3,4) = 7, `validation OK — hook fired 63443
+times in 1500ms`, 0 fallback, 0 VALIDATION FAILED. Still without a live witness: 5.2 and the 4.x rows other than
+4.15, 4.20, 4.23 and 4.27.
 ⚠ The oracle is a **non-editor** dump. UE 5.8's `Object.h` declares 33 `WITH_EDITOR` virtuals
 *before* `ProcessEvent`, so an editor process does not share these slots; the templates simply
 contain none of those entries. Do not extend the table to an editor build.
