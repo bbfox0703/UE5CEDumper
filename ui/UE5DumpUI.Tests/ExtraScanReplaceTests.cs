@@ -86,12 +86,29 @@ public class ExtraScanReplaceTests
         vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
         vm.ScanComplete = true;
         vm.ScanResultText = "result";
+        raised.Clear();   // what follows must come from Update itself
         vm.Update(Found(153466));
         Assert.False(vm.CanExtraScan);
         Assert.True(vm.ShowExtraScanSection);
         Assert.Contains(nameof(PointerPanelViewModel.ShowExtraScanSection), raised);
+        Assert.Contains(nameof(PointerPanelViewModel.ExtraScanOffered), raised);
         vm.ResetScanState();
         Assert.False(vm.ShowExtraScanSection);
+    }
+
+    [Fact]
+    public void TheOffer_AppearsThroughNotificationsAlone()
+    {
+        // The view's compiled bindings re-read only what is raised: a pool that stops reading objects must raise both.
+        var vm = NewVm();
+        vm.Update(Found(153466));
+        Assert.False(vm.ShowExtraScanSection);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.Update(Found(0));
+        Assert.True(vm.ExtraScanOffered);
+        Assert.Contains(nameof(PointerPanelViewModel.ExtraScanOffered), raised);
+        Assert.Contains(nameof(PointerPanelViewModel.ShowExtraScanSection), raised);
     }
 
     private static RescanStatusResult Status(bool gobjects, bool gworld = false) => new()
@@ -129,9 +146,13 @@ public class ExtraScanReplaceTests
         Assert.Equal(Res.Format("str.Pointers.Scan.Replaced", "0x7FF60000B000", 153466), r.ResultText);
         Assert.DoesNotContain("0x7FF600009000", r.ResultText);
         Assert.True(r.Applied);
+        // Kept where it was: not a replacement.
         r = ExtraScanReport.Describe(Status(true), Applied(Constants.RescanOutcomeReinitInPlace, "0x7FF600001000", 153466));
-        Assert.Equal(Res.Format("str.Pointers.Scan.Replaced", "0x7FF600001000", 153466), r.ResultText);
+        Assert.Equal(Res.Format("str.Pointers.Scan.ReinitInPlace", "0x7FF600001000", 153466), r.ResultText);
         Assert.True(r.Applied);
+        // The probe re-ran; whether it measured is the offsets banner's to say.
+        Assert.DoesNotContain("measured", Res.Get("str.Pointers.Scan.Replaced"));
+        Assert.DoesNotContain("measured", Res.Get("str.Pointers.Scan.ReinitInPlace"));
     }
 
     [Fact]
@@ -152,8 +173,24 @@ public class ExtraScanReplaceTests
     [Fact]
     public void TheNewTexts_AreInTheDictionary()
     {
-        foreach (string key in new[] { "str.Pointers.Scan.Replaced", "str.Pointers.Scan.NoneQualified", "str.Pointers.Scan.NotApplied",
+        foreach (string key in new[] { "str.Pointers.Scan.Replaced", "str.Pointers.Scan.ReinitInPlace",
+                                       "str.Pointers.Scan.NoneQualified", "str.Pointers.Scan.NotApplied",
                                        "str.Pointers.Scan.Found", "str.Pointers.Scan.FoundGObjects", "str.Pointers.Scan.FoundGWorld" })
             Assert.False(string.IsNullOrEmpty(Res.Get(key)), key);
+    }
+
+    [Fact]
+    public void EveryApply_RefreshesThePanels()
+    {
+        // An apply that replaced nothing can still find the DLL moved ("changed": the pool reads objects now;
+        // "already_applied": another client's apply), and the refresh is one get_pointers.
+        string vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs"))
+            .Replace("\r\n", "\n");
+        int at = vm.IndexOf("var report = ExtraScanReport.Describe(status, applied);", StringComparison.Ordinal);
+        Assert.True(at > 0, "the apply branch was not found");
+        int end = vm.IndexOf("break;", at, StringComparison.Ordinal);
+        string branch = vm[at..end];
+        Assert.Contains("\n                        RescanApplied?.Invoke();", branch);
+        Assert.DoesNotContain("if (report.Applied)", branch);
     }
 }
