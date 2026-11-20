@@ -421,7 +421,7 @@ Open work only. **Read this when deciding what to do next.**
   a full buffer; budgets on a busier game), LIVEFUNCS-STEP3 (a frame-time hitch trace; the rig's mutations on a real DLL).
 - Teleport: TPREL-ZEROPOSE / FP2 (a relative teleport whose
   landing cannot be re-read says "landing unknown"; hard to stage).
-- `verification-register.md` batches: audit L11 V10; L1 A9 (deep group-scan budget); L2 AB12
+- `verification-register.md` batches: L1 A9 (deep group-scan budget); L2 AB12
   (more than 1,024 modules) and AB13 (a non-ASCII CE plugin path); L8 Z8 (probably exercised by L60, never recorded);
   the b719 freeze on respawning NPCs; FreezeOutcome step 4; Locate in GWorld's drill to HP through level-list
   recovery; the dinput8 proxy in a game.
@@ -501,6 +501,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - FP1 `[POSEATTACH-2026-09-10]` (2026-11-20, an attachment staged with L78's rig; pipe flag, log line and UI status; verification-register.md).
 - `[FIXPASS-2026-09-10]` L26 `[W2-TPREL-MAP]` step 3 (2026-11-20, no pawn via `ClientRestart(nullptr)` on DumperTest).
 - `[LW-DISCONNECT-STALE-STATUS]` (2026-11-20, the game killed and relaunched under a connected UI).
+- audit L11 V10, Extra Scan's result survives its own refresh (2026-11-20, the staged decoy; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 

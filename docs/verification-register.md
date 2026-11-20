@@ -3010,6 +3010,20 @@ only thing that makes the per-leaf cost matter, and today's cap is far above any
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L11 (U1/U4 + stragglers): V8 / V10 / V11 / W8 / Y10 / Y11 / Y12 / Y13 / F5
 
+✅ **V10 (row 5) CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]`: the "no sample" verdict of 2026-08-22 is superseded --
+since build 3775 a GObjects that reads no objects is a sample, and the staged decoy makes one. DumperTest Shipping
+(UE 504) with `out\staged\rescan-decoy-reinit\UE5Dumper.dll` restaged at HEAD `7f6fcbc0` (sha256 `13aa4a06`…; the
+3776 DLL sources plus the decoy), AOT UI 3776: header `Connected — UE504 (0 objects)`, the System tab's GObjects
+`0x7FFC21CA8EB0` (the decoy), Total Objects 0, Extra Scan offered. **Extra Scan** pressed; one second later, with the
+progress bar on *"Scanning GObjects (.data heuristic)…"*, the UE version override was changed to 5.0: the button
+stayed **disabled** through the sweep (`RunRescan: started` 15:21:45 → `finished` 15:22:00, 14 candidates). The
+result *"GObjects replaced: 0x7FF63F9AA450 (24,530 objects). The offsets probe and the version check ran again."*
+was **still on screen 16 s later**, after the refresh the scan triggered (header `Connected — UE504 (24530 objects)`,
+Total Objects 24530); scan-0.log `Rescan: GObjects 0x7FFC21CA8EB0 -> 0x7FF63F9AA450 (Count=24530 …)`. The mid-scan
+override (`set_ue_version_override 500`, persisted) reached the DLL during the sweep, and the apply's version check
+overruled it to 504 from the structural markers (`User override = 500 overruled`); the override was set back to
+**Auto** afterwards and the hint cache logged `Cleared user UE-version override`.
+
 *L11 was the LAST LOW batch. **V9** (the Object Tree's Cancel button could not cancel a search) and
 **Y14** (the baked export announced N params over values it had failed to parse) need NO live check —
 both are driven end to end by the real ViewModel / real generator in `AuditL11HonestyTests`, and both
