@@ -1,13 +1,6 @@
 {
  "name": "l41-step2-prefix-stall",
- "why": "L41 step 2 red: the same one-shot 3 s stall as l41-step2-first-search-stall, on the pre-fix enum detection -- 7e5a71fc reversed in Aura/Fern/Genau, and in Ubel.cpp (where defcb56e edited the same hunk, so a reverse does not apply) both fixes' guards removed by subs -- so a raw pipe close mid-search latches FAILED for the process.",
- "reverse_commit": "7e5a71fc",
- "paths": [
-  "dll/src/Aura.cpp",
-  "dll/src/Aura.h",
-  "dll/src/Fern.cpp",
-  "dll/src/Genau.cpp"
- ],
+ "why": "L41 step 2 red: the same one-shot 3 s stall as l41-step2-first-search-stall, on the pre-fix enum detection, so a raw pipe close mid-search latches FAILED for the process. Re-anchored at HEAD 2026-11-20 ([STAGING-STALE-RECIPES]): 7e5a71fc no longer reverses, so its Genau half is the sub that removes DetectUEnumNames' cancelled-search early return (with it the search falls through to the FAILED latch, the pre-fix outcome), and both fixes' Ubel.cpp guards are removed at their current wording. 7e5a71fc's other parts (ForEach's abort report, list_enums' enum_names_failed) stay: neither changes what this rig sees.",
  "subs": [
   {
    "file": "dll/src/Genau.cpp",
@@ -22,14 +15,20 @@
    "count": 1
   },
   {
+   "file": "dll/src/Genau.cpp",
+   "old": "    // [P1-ENUMNAMES] A CANCELLED search found nothing because it did not look -- latching FAILED on it would disable\n    // enum names for the whole process. Leave both flags alone so the next call retries.\n    if (searchAborted) {\n        Sein::Warn(\"DYNO:Enum\", \"DetectUEnumNames: search cancelled (client gone / shutdown) -- \"\n            \"not latching FAILED; the next enum lookup retries\");\n        return false;\n    }\n",
+   "new": "    // STAGING (stage_dll.py l41-step2): a cancelled search latches FAILED, as before 7e5a71fc\n",
+   "count": 1
+  },
+  {
    "file": "dll/src/Ubel.cpp",
-   "old": "    // [P1-ENUMNAMES] review 5: a CANCELLED detection sets neither flag. The Names offset and format are then still the\n    // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this\n    // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.\n    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n        return \"\";\n",
+   "old": "    // [P1-ENUMNAMES] A CANCELLED detection sets neither flag. The Names offset and format are then still the\n    // DEFAULTS, and reading with them -- then caching the answer below, which nothing ever erases -- would poison this\n    // enum for the whole process. Read nothing, cache nothing: the next lookup retries the detection.\n    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n        return \"\";\n",
    "new": "",
    "count": 1
   },
   {
    "file": "dll/src/Ubel.cpp",
-   "old": "        // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes\n        // that. The line below claimed \"retry pending\" here, falsely, once per enum field per walk.\n        if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))\n            return {};\n        // [P1-ENUMNAMES] review 5: nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call\n        // retries it. Not a truncated table either.\n        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n            return {};\n",
+   "old": "        // [P1-ENUMNAMES] Not a truncated read: UEnum::Names was never located on this build, and list_enums publishes\n        // that. The \"retry pending\" warning below would be false here, once per enum field per walk.\n        if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))\n            return {};\n        // [P1-ENUMNAMES] Nor after a CANCELLED detection -- ResolveEnumValue read nothing, and the next call\n        // retries it. Not a truncated table either.\n        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))\n            return {};\n",
    "new": "",
    "count": 1
   }
