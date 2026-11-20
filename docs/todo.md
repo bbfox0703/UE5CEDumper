@@ -423,7 +423,7 @@ Open work only. **Read this when deciding what to do next.**
   a full buffer; budgets on a busier game), LIVEFUNCS-STEP3 (a frame-time hitch trace; the rig's mutations on a real DLL).
 - Teleport: W2-TPREL-MAP step 3 (main menu, no pawn; needs ES2); TPREL-ZEROPOSE / FP2 (a relative teleport whose
   landing cannot be re-read says "landing unknown"; hard to stage).
-- `verification-register.md` batches: audit L11 V10 and the Y11 FText half; L1 A9 (deep group-scan budget); L2 AB12
+- `verification-register.md` batches: audit L11 V10; L1 A9 (deep group-scan budget); L2 AB12
   (more than 1,024 modules) and AB13 (a non-ASCII CE plugin path); L8 Z8 (probably exercised by L60, never recorded);
   the b719 freeze on respawning NPCs; FreezeOutcome step 4; Locate in GWorld's drill to HP through level-list
   recovery; the dinput8 proxy in a game.
@@ -491,6 +491,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[A1-ENVELOPE-2026-09-05]`'s CE-XML leg (2026-11-20, DumperTest Shipping `Arr_SoftMesh`; verification-register.md).
 - `[CAPREFRESH-2026-08-24]` (LOW; 2026-11-20: measured fixed by `[WALK-REFRESH-SCALAR-SHRINK]`'s Refresh; verification-register.md).
 - `[PARAMSSORT-2026-08-22]`'s Live Walker Params column (2026-11-20, AOT 3776; verification-register.md).
+- `[Y11-2026-08-20]`'s FText half and FIRE's container half (2026-11-20, stock `Conv_TextToString` / `JoinStringArray`; verification-register.md).
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 

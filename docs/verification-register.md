@@ -3443,7 +3443,19 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > Still open: the CE-side half — watching the Before/After dump appear in the Lua Engine window.
 > can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
-> ### 🟡 Y11 — the container half is evidenced (baked path); the FText half is NOT run `[Y11-2026-08-20]` 2026-08-20
+> ### ✅ Y11 — CLOSED 2026-11-20: the FText half and FIRE's container half run; the baked path evidenced 2026-08-20 `[Y11-2026-08-20]`
+>
+> ✅ **Run through FIRE 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504). The FText
+> host is stock engine, not the fixture: `KismetTextLibrary::Conv_TextToString` (ParmsSize 32, `InText [FText, 16B,
+> off=0, out]`) on `Default__KismetTextLibrary`, from Live Walker's Functions → **PIPE**. FIRE with the box as opened
+> (`0`), emptied, and holding `hello` was refused all three times, by name: *"ERROR: InText: FText parameters cannot be
+> invoked from this dialog — … a zeroed one is not an empty FText … Invoke a wrapper that takes an FString instead."*
+> Control, `KismetStringLibrary::JoinStringArray` (ParmsSize 48, `SourceArray [Array, 16B, off=0, out]`): untouched,
+> FIRE ran -- `ProcessEvent OK (result=0)`, `SourceArray (out)` 16 zero bytes, `ReturnValue (return) = ""`; with `5`
+> typed into SourceArray it was refused: *"ERROR: SourceArray: Array parameters cannot be built from a textbox — … the
+> value you typed would be dropped. Clear the box to send an empty/zeroed value instead."* Second witness: across the
+> five FIREs the UI's `pipe-0.log` and the DLL's both hold exactly **one** `invoke_function` (the untouched
+> JoinStringArray, `params_hex` all zero up to the separator), so neither refusal reached the game.
 >
 > **A function with the right shape was found and its emitted script inspected.**
 > `LocalizableMessageLibrary::Conv_LocalizableMessageToText` (ParmsSize=72) takes
