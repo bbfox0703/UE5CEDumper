@@ -15804,7 +15804,10 @@ int main() {
             DynOff::bUEnumNamesDetected.store(true); DynOff::bUEnumNamesFailed.store(true);
             DynOff::UENUM_NAMES = 0x58; DynOff::UENUM_VALUE_SIZE = 1; DynOff::UENUM_PAIR_STRIDE = 0x10;
             DynOff::bEnumNamesNewContainer = true;
+            const uint32_t enumGen = DynOff::UENUM_DETECT_GEN.load();
             Genau::ResetUEnumNamesDetection();
+            check("RESCAN ⭐: the reset moves the detection generation, so a table parsed across it is not cached",
+                  DynOff::UENUM_DETECT_GEN.load() != enumGen);
             check("RESCAN: the UEnum names reset forgets the latch, the failure and the layout",
                   !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load() && DynOff::UENUM_NAMES == 0x40
                   && DynOff::UENUM_VALUE_SIZE == 8 && DynOff::UENUM_PAIR_STRIDE == 0 && !DynOff::bEnumNamesNewContainer);

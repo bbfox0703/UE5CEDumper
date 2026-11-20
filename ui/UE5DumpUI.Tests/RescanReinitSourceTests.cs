@@ -140,6 +140,19 @@ public sealed class RescanReinitSourceTests
     }
 
     [Fact]
+    public void AnEnumTableParsedAcrossAReset_IsNotCached()
+    {
+        // ResetUEnumNamesDetection rewrites the layout a reader may be parsing with; s_enumCache is never erased.
+        var resolve = Between(DllSrc("Ubel.cpp"), "static std::string ResolveEnumValue(", "\n}\n");
+        InOrder(resolve, "const uint32_t gen = DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire);",
+                "bUEnumNamesDetected.load(", "ParseEnumTable(",
+                "if (!tableComplete || DynOff::UENUM_DETECT_GEN.load(std::memory_order_acquire) != gen) {",
+                "s_enumCache.emplace(");
+        var reset = Between(DllSrc("Genau.cpp"), "void ResetUEnumNamesDetection() {", "\n}\n");
+        InOrder(reset, "DynOff::bEnumNamesNewContainer = false;", "DynOff::UENUM_DETECT_GEN.fetch_add(1");
+    }
+
+    [Fact]
     public void GodModeTargets_AreKeyedByTheFamilyEpoch()
     {
         // A replace's probe re-measures the offsets the cached targets were read under; the epoch it retires is the key.

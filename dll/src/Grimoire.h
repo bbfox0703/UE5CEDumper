@@ -1554,6 +1554,9 @@ inline std::atomic<bool> bUEnumNamesDetected{false};
 // Set when detection was attempted but FAILED — prevents retry storm and
 // skips enum resolution entirely (raw int values shown instead).
 inline std::atomic<bool> bUEnumNamesFailed{false};
+// [RESCAN-DECOY-REINIT] Bumped by Genau::ResetUEnumNamesDetection after it rewrites the layout above. An enum table
+// parsed across a reset may have read the reset's defaults, so the reader caches it only when this did not move.
+inline std::atomic<uint32_t> UENUM_DETECT_GEN{0};
 
 // === Detection state ===
 // ⛔ sizeof(FName) under CasePreservingName is 0xC, NOT 0x10: three int32
