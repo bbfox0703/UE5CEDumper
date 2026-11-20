@@ -29,6 +29,21 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — The census keeps only what is not done `[OPEN-CENSUS-2026-10-28]`
+
+- **The decision:** the maintainer ruled that a done item leaves the open-work census for `docs/archive/` and an
+  item not done stays (the charter used to keep fixed rows in place, and the census had grown to 192 KB).
+- **The first move:** 73 Table A rows and 3 Table B / C bullets (125,556 bytes) to
+  `archive/todo-census-closed-2026-11-20-build-3776.md`; 48 Table A rows stay. `todo.md` is now 1.37 MB.
+  `move_units.py` moves list bullets too, and `verify_split.py` matches a marker anywhere in a pointer line, so two
+  passes on one day can be told apart.
+- **Filed first:** six open items from the Stage C review notes (a machine-local scratch file), checked against
+  HEAD, became census rows -- among them a refine that holds Radar's manager lock and blocks other clients.
+- **Rigs kept:** `tools/verify/stark_drain_suspend.py` (forces `[STARK-DRAIN-OFF-GAME-THREAD]`'s worker-thread
+  case) and the two UE 4.15 census Lua rigs in `tools/verify/ce/`, out of the scratch folder before it was cleaned.
+
+-----
+
 ## 2026-11-20 (no build change) — The big docs slimmed, and the archive tools kept in the repo
 
 - **What this is:** the maintainer asked whether `todo.md` and `verification-register.md` needed archiving, then
