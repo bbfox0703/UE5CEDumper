@@ -15637,6 +15637,7 @@ int main() {
             };
             alignas(16) static uint8_t sh[0x100] = {};
             const uintptr_t SB = reinterpret_cast<uintptr_t>(sh) + 0x40;
+            int shapesChecked = 0;
             for (const Shape& s : shapes) {
                 for (int item = 0; item < 2; ++item) {
                     memset(sh, 0, sizeof sh);
@@ -15655,13 +15656,16 @@ int main() {
                     for (int off = -0x20; off <= 0x40; off += 4)
                         if (Genau::ValidateGObjects(SB + off)) anchors.push_back(SB + off);
                     const std::string tag = std::string(" (") + s.name + (item ? ", UObject* at +0x08)" : ")");
-                    if (anchors.empty()) continue;   // a shape these numbers do not validate is not offered at all
+                    if (anchors.empty()) continue;   // counted below: every pair must validate somewhere
+                    ++shapesChecked;
                     won = Genau::ChooseGObjectsCandidate(0, anchors, Genau::kRescanNameSampleSlots);
                     check(("RESCAN control: the choice reads a stock array whole" + tag).c_str(),
                           won.addr != 0 && won.count == kMaster && won.resolved >= Genau::kMinResolvedNames,
                           ("count " + std::to_string(won.count) + ", " + std::to_string(anchors.size()) + " anchor(s)").c_str());
                 }
             }
+            check("RESCAN control: every stock shape and item layout validates somewhere, so each was checked",
+                  shapesChecked == static_cast<int>(sizeof shapes / sizeof shapes[0]) * 2, std::to_string(shapesChecked).c_str());
             for (int i = 0; i < 0x300; ++i) table[i] = reinterpret_cast<uintptr_t>(chunkAt[0]);
 
             // -- the re-init --
@@ -15694,6 +15698,7 @@ int main() {
             std::vector<Step> steps;
             bool probeRanAtPublish = true, voteAtPublish = true, probedAtGEngine = false;
             bool enumClearAtClimb = false, versionAtClimb = false;
+            uint32_t retiresAtClimb = 0;
             uintptr_t published = 0;
             bool inPlace = true;
             Genau::ReplaceHooks hooks;
@@ -15707,6 +15712,12 @@ int main() {
                 enumClearAtClimb = !DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load();
                 versionAtClimb = g_cachedUEVersion == 501;
                 Ubel::FunctionFlagsOffset();   // the CMC rung votes through WalkFunctions, as UE5_Init's ladder does
+                // The ladder's walks latch what walks latch, under the version it is still climbing from.
+                DynOff::bCompactSets.store(true);
+                DynOff::SOFTPTR_PATH = 0x10;
+                DynOff::LAZYPTR_GUID = 0x10;
+                DynOff::UCLASS_INTERFACES.store(-1);
+                retiresAtClimb = DynOff::g_offsetValidations.load();
             };
             hooks.onStep = [&](Step s) { steps.push_back(s); };
             Genau::ReplaceInput in;
@@ -15734,12 +15745,14 @@ int main() {
             check("RESCAN ⭐: UFunction::Func is detected again on next use", !DynOff::bUFunctionFuncDetected.load());
             check("RESCAN ⭐: the validated-gated layout probes run again",
                   !DynOff::bFNameSizeProbed.load() && !DynOff::bFNameAlignProbed.load() && !DynOff::bSoftPathProbed.load());
-            check("RESCAN ⭐: the walk-fed latches and the version-derived envelopes are dropped",
+            check("RESCAN ⭐: the walk-fed latches and the version-derived envelopes are dropped after the ladder's walks",
                   !DynOff::bCompactSets.load() && DynOff::SOFTPTR_PATH == -1 && DynOff::LAZYPTR_GUID == -1
                   && DynOff::UCLASS_INTERFACES.load() == 0);
-            check("RESCAN ⭐: the family epoch is retired after the ladder too (the probe's own retire, then one more)",
-                  DynOff::g_offsetValidations.load() == retiresBefore + 4,
-                  (std::to_string(retiresBefore) + " -> " + std::to_string(DynOff::g_offsetValidations.load())).c_str());
+            // One retire is two bumps of g_offsetValidations (DynOff::RetireFamilyEpoch).
+            check("RESCAN ⭐: the family epoch is retired after the ladder too, once",
+                  retiresAtClimb > retiresBefore && DynOff::g_offsetValidations.load() == retiresAtClimb + 2,
+                  (std::to_string(retiresBefore) + " -> " + std::to_string(retiresAtClimb) + " -> "
+                   + std::to_string(DynOff::g_offsetValidations.load())).c_str());
 
             // None qualifies: nothing but Aura is touched, and it goes back to the decoy.
             decoySession();
