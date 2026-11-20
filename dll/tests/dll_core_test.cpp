@@ -15649,6 +15649,62 @@ int main() {
                 won = Genau::ChooseGObjectsCandidate(D, { S }, Genau::kRescanNameSampleSlots);
                 check("RESCAN ⭐: ...and alone it does not qualify", won.addr == 0 && Aura::GetCount() <= 0);
             }
+            // [RESCAN-STATIC-LAYOUT] The replace scores candidates through Aura::Init only. Every static shape UE5_Init's
+            // static recovery knows (STATICGOBJ's table: Obsidian's packed 20-byte item, the 5.7+ item, the Test item, the
+            // 5.8 array) is read whole that way too, so such an array found by the sweep can win: Aura's item detection
+            // reads the stride from content. Each shape is checked against the static scorer's reading of it.
+            {
+                struct StaticShape { const char* what; bool ue58; int stride; int objOff; };
+                const StaticShape staticShapes[] = {
+                    { "<=5.7 array, classic item, stride 24",           false, 0x18, 0x00 },
+                    { "Obsidian: <=5.7 array, packed 20-byte item",     false, 0x14, 0x00 },
+                    { "<=5.7 array, 5.7+ item (UObject* @+0x08), 24",   false, 0x18, 0x08 },
+                    { "5.8 array (ObjObjects first), 5.7+ item, 24",    true,  0x18, 0x08 },
+                    { "<=5.7 array, 40-byte Test item, UObject* @+0x08", false, 0x28, 0x08 },
+                };
+                constexpr int32_t kStaticNum = 0x3000;
+                for (const StaticShape& k : staticShapes) {
+                    std::vector<uint8_t> stChunk(static_cast<size_t>(kStaticNum) * k.stride + 0x100, 0);
+                    for (int i = 0; i < kStaticNum; ++i) {
+                        const uintptr_t o = reinterpret_cast<uintptr_t>(objs + (i % 64) * 0x40);
+                        memcpy(stChunk.data() + static_cast<size_t>(i) * k.stride + k.objOff, &o, 8);
+                    }
+                    std::vector<uintptr_t> stTable(6, reinterpret_cast<uintptr_t>(stChunk.data()));
+                    // The array at its base, every count field set: Max 33 chunks of 64K, one chunk in use.
+                    alignas(16) static uint8_t st[0xC0] = {};
+                    memset(st, 0, sizeof st);
+                    uint8_t* a = st + 0x40;
+                    const uintptr_t tbl = reinterpret_cast<uintptr_t>(stTable.data());
+                    const int32_t num = kStaticNum, maxE = 33 * 65536, numC = 1, maxC = 33;
+                    memcpy(a + (k.ue58 ? 0x00 : 0x10), &tbl, 8);
+                    memcpy(a + (k.ue58 ? 0x08 : 0x24), &num, 4);
+                    memcpy(a + (k.ue58 ? 0x0C : 0x20), &maxE, 4);
+                    memcpy(a + (k.ue58 ? 0x10 : 0x2C), &numC, 4);
+                    memcpy(a + (k.ue58 ? 0x14 : 0x28), &maxC, 4);
+                    const uintptr_t K = reinterpret_cast<uintptr_t>(a);
+                    int stride = 0, objOff = -1;
+                    bool ue58 = !k.ue58, licensee = true;
+                    const int staticScore = Genau::ScoreGObjectsStaticBase(K, &stride, &objOff, &ue58, &licensee);
+                    const std::string tag = std::string(" (") + k.what + ")";
+                    check(("RESCAN setup: the static scorer reads the array with its own stride and item" + tag).c_str(),
+                          staticScore > 0 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58,
+                          ("score " + std::to_string(staticScore) + " stride " + std::to_string(stride)).c_str());
+                    // What UE5_Init's static recovery reads, from the scorer's recipe (it forces the stride of a classic
+                    // item only, and leaves a 5.7+ item to the item detection).
+                    Aura::InitRecoveredStaticArray(K, stride, objOff, ue58, licensee);
+                    const int32_t initCount = Aura::GetCount();
+                    const int initItem = Aura::GetItemSize(), initObjOff = Aura::GetItemObjOffset();
+                    const uintptr_t initSlot5 = Aura::GetByIndex(5);
+                    won = Genau::ChooseGObjectsCandidate(D, { K }, Genau::kRescanNameSampleSlots);
+                    check(("RESCAN control: the replace reads a static array as UE5_Init's static recovery does" + tag).c_str(),
+                          won.addr == K && won.count == initCount && initCount == kStaticNum
+                          && Aura::GetItemSize() == initItem && Aura::GetItemObjOffset() == initObjOff
+                          && Aura::GetByIndex(5) == initSlot5,
+                          ("replace: item " + std::to_string(Aura::GetItemSize()) + " objOff "
+                           + std::to_string(Aura::GetItemObjOffset()) + "; init: item " + std::to_string(initItem)
+                           + " objOff " + std::to_string(initObjOff)).c_str());
+                }
+            }
             // A published pointer that reads objects now is its own winner (the engine was not up when init ran).
             won = Genau::ChooseGObjectsCandidate(M, { P }, Genau::kRescanNameSampleSlots);
             check("RESCAN: a published GObjects that reads objects now is kept", won.addr == M && Aura::GetCount() == kMaster);
