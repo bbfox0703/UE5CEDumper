@@ -4,42 +4,26 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
-> 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
-> build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
-> build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
-> 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
-> `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
-> (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
-> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
-> `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
-> Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
-> next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
-> Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 and was proven live in 3715 (2026-11-16); the
-> cards' holder labels shipped and were proven live in 3716; Phase 1b (invoke grants) shipped and was proven live in
-> 3717, and Phase 2 (field grants, `write_field`) in 3718 (2026-11-17); Phase 3, the optional "AI sessions" card, is
-> not to be built for now (maintainer, 2026-11-17)** --
-> the route and its decisions are under Stage D below. Before it, none active
-> (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
-> shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
-> active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
-> open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
-> LOW or unrated rows -- `[CEFORM-LUAENGINE-VANISH]`, `[DUMPER-SECOND-COPY-AUTOSTART]` (built 2026-11-17, build 3729: the later copy takes over),
-> `[CADENCEBAND-2026-08-22]`, `[W4-DEEPWALK-750MS]`, `[LEAD-PUBLISH-FAILED-BUT-BUILT]` -- which the maintainer judged not
-> significant (2026-11-04); `[AOBM-CEXML-PUSH]` and `[AOBM-CT-PUSH]` stay on hold. Every open item, ranked:
-> `[OPEN-CENSUS-2026-10-28]` (Tables B–D: live checks owed, feature ideas, open by decision). · Started 2026-11-05: `[I18N-READINESS-2026-11-04]` (moving the UI's hard-coded English into `en.axaml`): P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves. · Before it,
-> `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO) ran batches 1-3 and their reviews and leads through
-> builds 3657–3670 (`[BATCH3-LIVE-3657]`, `[LIVE-3659-2026-10-28]`, `[LIVE-3660-2026-10-28]`; dev-log 3657–3670). · Before it, the
-> known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
-> 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
-> the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
-> (`[SNAPSHOT-CRASH-PARTIAL]`), the Call Trace window-size steps (`[CT-FLOOR-208]`), Auto clearing a contradicted
-> override at once (`[OVERRIDE-REVIEW2-LOWS]`), `[INT8-PREVIEW]`, `[UE4-USTRUCT-GIVEUP]`, `[AOB-SKIP-OWN-DLL]`; open LOW
-> rows it left: `[DUMPER-SECOND-COPY-AUTOSTART]` (built 2026-11-17, build 3729; `[UE4-USTRUCT-GIVEUP-STATS]` and
-> `[UBEL-ASCII-FIRSTCHAR]` fixed 2026-11-02) ·
-> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · the
-> `[VENDOR-UE584-2026-10-26]` fix pass is DONE -- every row fixed in builds 3650-3652 and checked live where a
-> fixture or title exists (dev-log 3650-3652) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
+> ▶ **Current programme:** `[LIVEPASS-2026-11-20]` (the maintainer, 2026-11-20): run the live checks that can run on
+> this PC now -- `[OPEN-CENSUS-2026-10-28]` Table B, the pending rows of verification-register.md and
+> `[FIXPASS-2026-09-10]`'s live-check backlog (fixpass-low-live-plan.md); a check that needs the MCP server waits.
+> Each row closes as the register's "How to close a row" says, with its census Table B entry edited in the same
+> commit, one commit per row; the pass's own record is its section below the census. · Before it,
+> `[RESCAN-DECOY-REINIT]` was done in build 3775 and its follow-ups in build 3776 (released as v3776, 2026-11-20): when
+> GObjects was found but reads no objects and init's recoveries missed, Extra Scan searches the game's .data for the
+> object array, keeps the largest candidate whose first objects are densely named, and measures the offsets, GEngine
+> and the UE version again over it; the Pointers panel offers it in that case (DLL 3775 or later); its check on a real
+> title is a verification-register.md row. Its follow-ups: `[INIT-RECOVERY-SCANADDR]` and `[MCP-READY-DURING-APPLY]`
+> fixed, `[STAGING-STALE-RECIPES]` done, `[RESCAN-STATIC-LAYOUT]` closed after measuring (no change needed), and
+> `[RESCAN-INIT-THIRD-RECOVERY]` not to be done for now (the maintainer). · `[PIPE-PER-PROCESS-2026-11-06]` is done:
+> Stages A-C (builds 3695-3698) and Stage D, the MCP server (builds 3701-3719, with `[MCP-WRITE-GRANTS-2026-11-14]`
+> Phases 1, 1b and 2; Phase 3 is not to be built for now); its verification-register.md item 13 stays open (the
+> maintainer: no machine with another CPU shape), and so do the LOW review leads Stage D left for the DLL side
+> (census Table A). · Idle, with open work: `[OPEN-CENSUS-2026-10-28]` (every open item: defects, live checks owed,
+> ideas, open by decision) · `[I18N-READINESS-2026-11-04]` (P2 comes before any option list moves) ·
+> `[VENDOR-AUDIT10-2026-11-19]` (`VND10-A3` waits for the maintainer's call; `VND10-A1`'s first run on the game is a
+> register row) · `[MH-TRAMPOLINE-PREFLIGHT]`'s minhook bump waits for the triggers in its section. On hold:
+> `[AOBM-CEXML-PUSH]` and `[AOBM-CT-PUSH]`. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
 >
@@ -298,7 +282,7 @@ Open work only. **Read this when deciding what to do next.**
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, three LOW found by the MCP approval evaluation (2026-11-14), two LOW found by the DynOff analysis (2026-11-15) and one LOW found by the ASan build (2026-11-15)
+### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, three LOW found by the MCP approval evaluation (2026-11-14), two LOW found by the DynOff analysis (2026-11-15), one LOW found by the ASan build (2026-11-15) and two LOW leads from Stage D's review, filed as rows 2026-11-20
 
 | tag | sev | what goes wrong | recorded at (grep) |
 |---|---|---|---|
@@ -409,6 +393,8 @@ Open work only. **Read this when deciding what to do next.**
 | 🆕 `[UE58-PREALLOC-NO-ROW]` | **MED**, read from source (reviews `wf_7e04517c-ef7`, `wf_5226089b-636`); predates the relaxed-row fixes | ✅ **FIXED 2026-11-17** (the maintainer asked for it the same day; red `88a97413`, green `03bdc4ea` (build 3726); two review rounds, every finding fixed -- `wf_47eca989-bf9`: red `644a8be1` / green `fca315ad`, `2ef5572d`, `451f99ef`; `wf_a2cdbbd9-859`: `17eccc87`; build 3727). Aura's relaxed tier has row F -- Objects +0x00, Num +0x08, Max +0x0C, the strict UE5.8 row's slots -- between B and D, so a 5.8 array the strict row's range or chunk-consistency checks refuse (more than 20 live chunks, a count at an exact multiple of 64K, preallocation, fewer than 6 max chunks) is read whole. F takes the 0x1000 floor, requires its own chunk slots to hold together as PreAllocate leaves them (1 <= NumChunks <= MaxChunks, MaxElements a whole number of 0x8000-0x80000 chunks) and its Objects to read as a chunk table. 3726's F had no chunk guard and took a TArray<UObject*>-shaped decoy (the Avowed class), which left the count above 0 and skipped Frieren's recovery; 3727 restores that. Live on 3727, no title's own layout moved: DumperTest58 `UE5.8`, DumperTest `UE5-Extended`, Avowed `UE5-Extended` (verification-register.md). ~~Original:~~ **Aura's relaxed tier has no UE 5.8 row** (Genau's relaxed table has `F` {Num +0x08, Max +0x0C, Objects +0x00}), so ANY 5.8 array the strict `UE5.8` row refuses is misread -- not only a preallocated one, which the tag was first named for. The strict row refuses: (1) more than 20 live chunks (`numChunks > 0x14`: above 1,310,720 objects, a large stock game); (2) a count that is an exact multiple of 64K at scan time (NumChunks = N / 64K, the cross-field check expects one more); (3) gc.PreAllocateUObjectArray, which sets NumChunks = MaxChunks (33 at the default 2M objects). Genau's own `UE5.8` row, needing only numC <= maxC, hands such an address over (the static-struct path does too). In Aura every other strict row refuses the 5.8 shape; relaxed A/C reads MaxChunks (under the floor), B's chunk slots fail, and then: relaxed E latches ObjLastNonGCIndex as the count with Objects = NumChunks | MaxChunks at +0x10, an unreadable value -- or, preallocated with the block above 16 TB, relaxed D does the same from the block's high dword; or, with gc.MaxObjectsNotConsideredByGC = 0 (ObjLastNonGCIndex stays -1, so E is skipped), the default layout reads the real table with count = MaxChunks, so 33 objects resolve. In every case the count is above 0, so Frieren's Count == 0 recovery never runs. 4.20-5.7 arrays refused for the same reasons are read right by relaxed A/C or E. **Fix:** a relaxed row mirroring Genau's `F` ahead of D, with the 0x1000 floor and `CountIsHalfOfFirstEntry` (its count is an aligned low dword, so `CountIsHalfAChunkTablePointer`, which reads the qword ending at the count's high half, has nothing to test there). ~~Letting the strict validator accept a preallocated array~~ would cover only trigger (3), and would need a per-preset PreAllocatedObjects offset, a stride derived from table[1] - table[0] (DetectItemSize runs after DetectLayout) and a bypass of the chunk-count bounds. Red tests: a non-preallocated 5.8 array of 21+ chunks, one at an exact multiple of 64K, a preallocated one above 16 TB, and the disregard-off case. | reviews `wf_7e04517c-ef7` (PREALLOC-HALF-UE58-MISS) and `wf_5226089b-636` (UE58-GAP-NOT-PREALLOC-ONLY, UE58-DISREGARD-OFF-OUTCOME, UE58-FIX-CANDIDATES-AS-WRITTEN) |
 | 🆕 `[UE58-ADJ10-WRONG-ANCHOR]` | **MED**, read from source; shown by a synthetic 5.8 array in dll_core_test, not measured on a game | ✅ **FIXED 2026-11-19** (red `13a1814b`; green: the commit that marks this row; no build yet). Genau's relaxed D carries `ue58Early`: it refuses a count above its max that is exactly the +0x24 dword's whole chunks -- D's slots read 0x10 below a 5.8 FUObjectArray are its ObjObjects with each count pair swapped, and AllocateObjectPool leaves MaxElements == MaxChunks * 64K. A genuine D array never has its count above its max. The whole-chunk clause is load-bearing: a plain `num <= max` (Aura's rule) also passes the starred checks but fails two of the controls -- a 4.20-5.7 base that only D validates (PreAllocatedObjects above 16 TB, more than 0x400000 objects, disregard-for-GC off) stops validating, and Phantom Blade Zero's base+0x08 masks move. Controls: nine shapes x four number sets x two item shapes, every address base-0x20..base+0x40 pinned to what it validated at before the fix; only 5.8's base-0x10 moved. Phantom Blade Zero's own -0x10 candidate (base+0x08) still validates at in-range numbers; at its recorded MaxElements (4,259,840, past 0x400000) it does not. Original: on UE 5.8 ObjObjects is the FUObjectArray base, so the five GObjects rows with adjustment -0x10 (`GOBJ_V10` / `AV1` / `AV2` / `RE2` / `V12`, whose RIP target is ObjObjects.Objects) offer base-0x10 first, and `Genau::ValidateGObjects` takes it: relaxed D reads MaxElements as its count, NumElements as its max and the real chunk table as its Objects -- in pass 2 on a default-config array, in pass 1 on a preallocated one (NumChunks == MaxChunks). `TryResolveMatch` hands base-0x10 over; Aura's relaxed D refuses a count above its max, Aura falls to a layout that reads a small non-zero count, and Frieren's Count == 0 recovery never runs. Reached when `GOBJ_ES53_1` (priority 100, where the StackOBot 5.8 oracle lands) misses and a -0x10 row hits first (`GOBJ_V10` is next, at 110). Himmel.h's UE 5.8 paragraph says the opposite ("a MISS, not a wrong answer"). | `dll/src/Genau.cpp` ValidateGObjects; dll_core_test's UE58-ADJ10 block |
 | 🆕 `[UE58-ADJ14-PREALLOC]` | LOW (needs gc.PreAllocateUObjectArray), read from source; pinned by a synthetic 5.8 array in dll_core_test, not measured on a game | ⬜ Open. The GObjects rows with adjustment -0x14 (`GOBJ_DI427_3`, `GOBJ_G427_2`) target ObjObjects.NumElements, which 5.8 moved from ObjObjects+0x14 to +0x08, so on 5.8 the adjusted candidate is base-0x0C (a miss) and the direct arm then offers NumElements itself, base+0x08. On a default-config array that misses too; on a preallocated one Tier 1's `Flat-Base` row takes it -- PreAllocatedObjects (+0x18) read as a flat item array, ObjLastNonGCIndex (+0x24) as its count -- so the row hands over base+0x08 with the frozen disregard-for-GC count. Reached when `GOBJ_ES53_1` and `GOBJ_V10` miss and `GOBJ_DI427_3` (115) hits. Pinned as today's result in dll_core_test's UE58-ADJ10 block (the `-0x14` pins, and "+08" in 5.8's preallocated mask) so a fix moves it on purpose. Himmel.h's UE 5.8 paragraph says -0x14 still lands on ObjObjects on 5.8. | `dll/src/Genau.cpp` ValidateGObjects (Tier 1 `Flat-Base`); dll_core_test's UE58-ADJ10 block |
+| 🆕 `[MCP-DROP-GLOBAL-CANCEL]` | LOW, lead (Stage D review) | ⬜ A dropped pipe connection raises the process-wide per-command cancel (`Tot::RequestPerCommand`, in Fern's monitor) until its orphaned handler unwinds; every thread not bound to a connection reads it, Cheat Engine's remote export calls among them, so one running at that moment returns truncated. The MCP server drops its connection only on a timeout or a client cancel. Fix: raise the global only when unbound work is running. | `[PIPE-PER-PROCESS-2026-11-06]` Stage D, "Open, LOW, found by that review" |
+| 🆕 `[SENSE-COUNTERS-PROCESS-WIDE]` | LOW, lead (Stage D review) | ⬜ The dispatch counters behind `get_diagnostics` (`Sense`) are process-wide, so the UI's PERF line for an operation counts the MCP server's commands that ran meanwhile. | `[PIPE-PER-PROCESS-2026-11-06]` Stage D, "Open, LOW, found by that review" |
 | 🆕 `[MCP-GRANT-USES-RELEASES]` | LOW, measured live | ✅ **FIXED 2026-11-16** (red, then green; ships in the next build after 3715). `McpGrants.Check` counts a use where the grant table passes the call; `Admit` no longer counts, so an admission never sent and an OFF or a reset passed on ownership leave the count alone (`McpGrantsTests.EveryCallTheGrantLetsThrough_IsCounted_AndNothingElse`). ~~Original:~~ `read_grants` reported `uses: 4` for god mode ON, time dilation 0.5, its reset and god mode OFF (verification-register MCP write grants item 1, 2026-11-16): the last two needed no grant, since they ended the server's own holds. `McpWriteTools.Admit` admits a release-shaped request silently so its grant can go along for the case where the hold is not the server's, and `McpGrants.Admit` counts every admission. The count is shown as "how many writes it has let through", so it overstates what the grant did. Fix: count where the grant decides, in `McpGrants.Check` (a grant-backed capability on a request that is not an owned release), and pin it with a test that an owned OFF leaves `uses` alone. | live, build 3714 |
 | 🆕 `[WRITEMEM-OWN-IMAGE]` | LOW, read from source | ✅ **FIXED 2026-11-16** (red, then green: the commit that marks this row). `write_mem` refuses a background client a range inside the DLL's own image, code `-25` (`Grimoire::WRITE_MEM_OWN_IMAGE`), through `Macht::RangeInOwnImage` (`__ImageBase` + `SizeOfImage`) over the pure `Lager::RangeOverlapsImage` (dll_helpers_test: inside, both straddles, covering, both adjacent edges, empty range, empty image, a wrapping range). dll_core_test checks it on its own exe's global, code and a heap block. The UI's and CE's writes are not refused. **Checked live 2026-11-16**, DumperTest Shipping, DLL 3713: `mcp_client.py raw` 28/28 -- an MCP `write_memory` at the DLL's own `g_invokeMailbox` (resolved by `mailbox_addr.py`, written with the bytes it held) answered -25, and `write_invoke K2_SetTimer` was refused as a call by name (`[INVOKE-DENY-INDIRECTION]`). ~~Original:~~ A background client's `write_mem` passes the data-page check for the DLL's own writable data, e.g. the exported `g_invokeMailbox`; a write there hands an invoke to the CE-owned mailbox poller, past the background deny list. Each such MCP write is still a per-call prompt. Fix: the DLL refuses a background `write_mem` into its own image (S; a UE5Dumper target build, Fern.cpp is in no test target). | mcp-write-approval-eval.md §9 |
 | 🆕 `[CEPTR-OBJECTS-2026-11-19]` | MED, read from source and CE's own resolver | ✅ **FIXED 2026-11-19** (red `3d57a4be`; green: the commit that marks this row; ships in the next build). `get_ce_pointer_info` now sends `objects_offset` and builds its chain through `Aura::BuildCeChunkedChain`; `docs/pipe-protocol.md` shows the new shape. Live CE check owed: verification-register.md `[CEPTR-OBJECTS-2026-11-19]`. ~~Original:~~ `get_ce_pointer_info` -- which the MCP tool `read_ce_pointer` forwards as is -- hands Cheat Engine a chain with one dereference too many on every chunked direct-layout array. CE reads `[base]` before it adds the first offset, so N offsets are N reads (CE's `MemoryRecordUnit.pas` `TMemoryRecord.GetRealAddress`; [ce-plugin-api-reference.md](ce-plugin-api-reference.md) `GetAddressFromPointer`). The chain is base = GObjects, offsets `[field, item, chunk*8, 0]`: four reads where the array has three (the chunk table, the chunk, the UObject*). It also never uses the latched row's Objects offset (`s_layout.objectsOffset`: 0x10 UE4-/UE5-Extended, UE5.7-Mistfall and Back4Blood; 0x18 MindsEye, Multiversus and PBZ-Base; 0x28 MindsEye-Extended; 0x08 PBZ), so pushing it as the outermost hop in place of the 0 would still read `[GObjects]` first. **Fix:** base = GObjects + the Objects offset (a new `Aura::GetObjectsOffset`), offsets `[field, item, chunk*8]`, assembled by the pure `Aura::BuildCeChunkedChain`. Tests: `dll_helpers_test` `Test_Aura_CeChunkedChain_ResolvesAsCheatEngineReadsIt` (seven rows and item shapes, CE's algorithm over fake memory with a decoy table in every other qword); `dll_core_test` VND10-A1-01's `CEPTR-OBJECTS` checks (Aura latches each PBZ and stock row on a fake array, then the chain must reach `Aura::GetByIndex`). | `Fern.cpp` `get_ce_pointer_info`, `Aura.h` `BuildCeChunkedChain` |
@@ -430,7 +416,9 @@ Open work only. **Read this when deciding what to do next.**
   skip** seen live, `left N queued request(s) for the game thread`, followed by the request answering as asked.
   Rig: `tools/verify/stark_game_thread_drain.py`.
 - `[BOOL-NATIVE-SEARCH]` (MED): a Freeze from Property Search / Interesting Properties must not write a whole byte
-  around a bool. Shipped in 3561, never checked over the pipe on a game.
+  around a bool. Step 1 closed 2026-11-17 and step 2's Interesting Properties half 2026-11-18 (verification-register.md);
+  left: step 2's Property Search -> Freeze half (it needs the AOBMaker bridge, on hold) and step 3 (no host whose
+  probe misses: neither stock 5.4 nor DQ XI S).
 - Live Funcs: LIVEFUNCS-TIMELINE (the load log line; a load with little memory free), LIVEFUNCS-STEP2 (UI memory with
   a full buffer; budgets on a busier game), LIVEFUNCS-STEP3 (a frame-time hitch trace; the rig's mutations on a real DLL).
 - Teleport: W2-TPREL-MAP step 3 (main menu, no pawn; needs ES2); TPREL-ZEROPOSE / FP2 (a relative teleport whose
@@ -462,8 +450,9 @@ Open work only. **Read this when deciding what to do next.**
   can be found and its UFunctions called (one Allow each), commands only, no per-frame input. Next would be a
   no-code proof of concept on DumperTest; then grants plus an `FInputActionValue` layout for held stick directions:
   [mcp-player2-eval.md](mcp-player2-eval.md).
-- `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
-  (Stage D3: Phases 1, 1b and 2 shipped in builds 3714-3718; Phase 3 optional): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
+- ✅ `[MCP-WRITE-GRANTS-2026-11-14]` **BUILT (builds 3714-3718)**: a grant per kind of risk or per target instead of a
+  prompt on every MCP write (Stage D3: Phases 1, 1b and 2); Phase 3, the "AI sessions" card, not for now (maintainer,
+  2026-11-17): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
 - `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns (batch 2
   done 2026-11-17), ✅
   race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
@@ -482,6 +471,19 @@ Open work only. **Read this when deciding what to do next.**
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
 the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1 · a Rust
 rewrite of any part of the DLL (maintainer, 2026-11-14: not worth it, [rust-rewrite-eval.md](rust-rewrite-eval.md)).
+
+## 🧭 Maintainer request 2026-11-20 — run the live checks this PC can run now `[LIVEPASS-2026-11-20]`
+
+**Scope (the maintainer, 2026-11-20: 實機驗證可做的部份開始做):** census Table B, the pending rows of
+verification-register.md and `[FIXPASS-2026-09-10]`'s live-check backlog, on the fixtures and games installed here.
+**Not in this pass:** a check that needs the MCP server (the maintainer: 如有要測 MCP 的部份先不測), the AOBMaker rows
+(on hold), and a check that needs Cheat Engine itself while another session uses it (a mailbox-only check runs
+headless through `tools/verify/mailbox_poke.py`). A row closes where it is recorded, as the register's "How to close a
+row" says, one commit per row; its census Table B entry is edited in the same commit.
+
+**Findings the pass raises** (a new defect gets a census Table A row too):
+
+- none yet.
 
 ## 🧭 Maintainer request 2026-11-14 — cheap C++ hardening instead of a Rust rewrite `[CPP-HARDENING-2026-11-14]`
 
@@ -589,8 +591,10 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
-**Status: Stage A shipped in build 3695, Stage B in build 3696, Stage C in build 3698 (2026-11-10; dev-log). Stage D
-is active since 2026-11-11** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
+**Status: done.** Stage A shipped in build 3695, Stage B in build 3696, Stage C in build 3698 (2026-11-10; dev-log),
+Stage D, the MCP server, in builds 3701-3719 (2026-11-11 to 2026-11-17; `[MCP-WRITE-GRANTS-2026-11-14]` Phase 3 not
+for now) (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). Still open: verification-register.md
+`[PIPE-PER-PROCESS-2026-11-06]` item 13 and the LOW leads Stage D left for the DLL side (census Table A). What the
 live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
 `[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
 readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
@@ -742,7 +746,7 @@ An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
   may read the pipe, and any open takes an instance). This needs a policy before a slot count is relied on.
 - **Small:** Flamme rewrites its per-game JSON unlocked, so it needs one mutex.
 
-### Stage D — MCP (active since 2026-11-11)
+### Stage D — MCP ✅ builds 3701-3719 (2026-11-11 to 2026-11-17)
 
 **Decisions (maintainer, 2026-11-11)**, chosen from a read-only survey of the commands, the client code and the MCP
 spec. Each was the recommended option:
@@ -778,7 +782,7 @@ spec. Each was the recommended option:
 
 **D1 — how it came out, build 3701** (the code is `ui/UE5DumpUI/Mcp/`, the user guide [mcp.md](mcp.md); its live
 checks are verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18: 15 (Claude Code itself) and 18 (SSH,
-an elevated game) closed 2026-11-11; 16 (a large game) and 17 (the UI itself beside the server) open):
+an elevated game) closed 2026-11-11; 16 (a large game) and 17 (the UI itself beside the server) closed 2026-11-12):
 
 - **Non-interference, the maintainer's requirement (2026-11-11):** an AI working beside the UI must not disturb the
   UI's long operations (value scan, snapshot) or the user's writes. D1 sends no command whose state another client
@@ -925,7 +929,7 @@ findings, all fixed in build 3713: `[MCP-INSTR-CLAIMS]`, `[INVOKE-DENY-INDIRECTI
 `read_grants` / `revoke_grants`, refused out-of-range values, the "Block AI writes" switch (server and window), the
 `--mcp-agent-guard` hook, and See-through's own-claim OFF in the DLL. A fresh-context review's two MED and two LOW were
 fixed before the build (an OFF of what the server does not hold is no release; See-through's OFF ends only the AI's
-claim; a release needs `if_free`; the time-dilation wording). Open, in order:
+claim; a release needs `if_free`; the time-dilation wording). Its follow-ups, each closed or decided by 2026-11-17:
 - ~~**Live checks**~~ ✅ all five closed 2026-11-16 (build 3715; verification-register.md, "MCP write grants, Phase
   1"). The default (Manual) permission mode stays with Phase 0's M2-M5: the maintainer runs auto mode.
 - ~~`[MCP-GRANT-USES-RELEASES]`~~ ✅ fixed 2026-11-16 (the uses count no longer counts releases).
@@ -936,12 +940,12 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
   functions.
 - ~~**Phase 1b, invoke grants**~~ ✅ shipped in build 3717 (dev-log 3717): one UFunction per grant, the AI's invoke
   deny list from a scan of the UE 4.18-5.8 sources; proven live (verification-register.md, "MCP invoke grants, Phase
-  1b": items 1 and 3 closed -- a Blueprint function included, 2026-11-17; the Claude Code prompt open).
+  1b": all three rows closed 2026-11-17, the Claude Code prompt and a Blueprint function included).
 - ~~**Phase 2's `write_field`**~~ ✅ shipped in build 3718 (dev-log 3718): one field of one class per grant, written
   on that class's live instances and its subclasses'; `get_object` names the DLL's template verdict, which the server
   refuses a class default and an archetype by. Two review rounds (26 and 22 rows) fixed; proven live
-  (verification-register.md, "MCP field grants, Phase 2": items 1, 3 and 4 closed -- a Blueprint class's field and a
-  packed bool on a live object included; the Claude Code prompt open).
+  (verification-register.md, "MCP field grants, Phase 2": all four rows closed 2026-11-17, row 3 narrower than
+  written; a Blueprint class's field, a packed bool on a live object and the Claude Code prompt included).
 - **Phase 3 (optional)**: an "AI sessions" card (the eval's §7). **Not for now** (maintainer, 2026-11-17: the
   holder labels and "Block AI writes" already let the user see and stop an AI; decide again after real use).
 - **Phase 2's shipped choices, accepted as they are** (maintainer, 2026-11-17): the grant's `field` / `class` names;
@@ -975,7 +979,7 @@ Aura's workers read the global cancel flag.
 
 ## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
 
-**Status: scheduled as `[PIPE-PER-PROCESS-2026-11-06]` Stage D (go-ahead 2026-11-11).** The route chosen there
+**Status: built as `[PIPE-PER-PROCESS-2026-11-06]` Stage D (builds 3701-3719).** The route chosen there
 (direct to the DLL pipe, `UE5DumpUI.exe --mcp`) replaces the sketch below, which is kept as the idea's record. It was
 an idea until then (maintainer, 2026-11-06: "先記進 todo，之後再說").
 
