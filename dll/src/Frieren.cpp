@@ -666,6 +666,7 @@ bool UE5_Init() {
                     g_cachedGObjectsPatternId = nullptr;
                     g_cachedGObjectsExport    = nullptr;   // a recovered array is not the export either
                     g_cachedGObjectsAdjustment = 0;      // ...nor the signature's
+                    g_cachedGObjectsScanAddr = 0;        // ...nor its code site: Asm / SYM would point at the decoy's
                     Flamme::UpdateGObjectsMethod(g_cachedPeHash, "static_struct_recovery");
                 }
             }
@@ -732,6 +733,7 @@ bool UE5_Init() {
                 g_cachedGObjectsPatternId = nullptr;
                 g_cachedGObjectsExport    = nullptr;
                 g_cachedGObjectsAdjustment = 0;
+                g_cachedGObjectsScanAddr = 0;
                 Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_scan_recovery");
             } else {
                 LOG_WARN("UE5_Init: Recovery failed — no candidate qualified as an object array; "

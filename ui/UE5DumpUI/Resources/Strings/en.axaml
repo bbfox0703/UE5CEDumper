@@ -488,6 +488,8 @@
     <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
     <!-- [AOBM-SYSTAB-ASM-SILENT] What the ASM status line calls the address it moved to ({0} = the pointer, e.g. GObjects). -->
     <sys:String x:Key="str.Pointers.ScanHitLabel">{0} AOB scan hit</sys:String>
+    <!-- The GObjects method a Count == 0 recovery publishes: UE5_Init's static-struct recovery found a static array no AOB matched. -->
+    <sys:String x:Key="str.Pointers.Method.StaticStructRecovery">static struct recovery</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbol">SYM</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin). When the DLL found GWorld through the game's export rather than an AOB (modular builds such as Satisfactory), the symbol is defined from that export, which Cheat Engine resolves by name.</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGEngineSymbolTip">Create CE AA Script that registers the &amp;GEngine SLOT as 'gengine_addr' symbol — the slot is restart-stable, so a GameEngine-rooted record auto-follows engine recreation (via AOBMaker CE Plugin). When the DLL found &amp;GEngine through the game's export rather than an AOB (modular builds such as Satisfactory), the symbol is defined from that export, which Cheat Engine resolves by name.</sys:String>

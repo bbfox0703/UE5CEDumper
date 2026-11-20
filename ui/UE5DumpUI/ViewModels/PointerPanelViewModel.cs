@@ -1029,6 +1029,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         "instance_scan" => "instance scan",
         "instance_scan_recovery" => "instance scan recovery",
         "engine_recovery" => "engine recovery",
+        "static_struct_recovery" => Res.Get("str.Pointers.Method.StaticStructRecovery"),
         "string_ref" => "string ref",
         "pointer_scan" => "pointer scan",
         "not_found" => "not found",
