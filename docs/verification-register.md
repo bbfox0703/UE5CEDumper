@@ -10427,6 +10427,13 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 
   **This closes the one open item that could show the user WRONG DATA.** The counter-check on
   STVoyager's UTF-8 FText is a separate, licensee-specific case and stays open.
+  ✅ **The STVoyager counter-check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (Steam offline, UE 506, 58,050 objects,
+  DLL 3776 injected, title screen, a Traditional-Chinese mod installed): 575 live owners of the 50 classes with a live
+  TextProperty walked over the pipe, 1,616 FText values read. **`TextBlock.Text` reads `版本\r\n2-2-28310-84ace731`**
+  -- CJK, not mojibake, not empty. The rest read English source text (`New`, `4 Cycles`, `Damaged`, …; the mod
+  translates at display time) or `(empty)`. ⚠ **10 values read pointer bytes as text** (`✨翶`, `剠憽Ǆ`, …) --
+  not B28's decoder: the scan window ran past a 0x60-byte ITextData into its heap neighbour; filed as
+  `[FTEXT-NEIGHBOR-GARBAGE]` in todo.md's census.
 
   > **Two observations from the same screen, neither of them B28:**
   > 1. `Text_Empty` renders as **`No`**. An `FText::GetEmpty()` should read as empty; `No` looks
