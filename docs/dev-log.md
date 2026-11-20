@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-20 (no build change) — Live checks on build 3776, continued: four more rows closed, three host surveys `[LIVEPASS-2026-11-20]`
+
+- **What this is:** the rest of the day's pass, after the maintainer cleared gameplay on Avowed, Star Trek
+  Voyager's Chinese mod and the test snapshot's deletion. Each row is its own commit; the lists are the
+  `[LIVEPASS-2026-11-20]` section of todo.md.
+- **Closed:** B28 on Star Trek Voyager (`版本` reads as CJK); the `Mimic: FIND_FUNCTION` leg of
+  `[A3-FUNCFLAGS-2026-09-05]` on OCTOPATH, headless through a WriteProcessMemory mailbox; `[CT-FLOOR-208]`'s
+  window-size steps on DumperTest58 Shipping (the Call Trace list holds 208 at 1000, 1400 and the 800 minimum); and
+  L28 `[W5-CEXML-FSTRING]`'s FString-valued map on Avowed, its CE chain followed through the pipe.
+- **Re-run:** `[LIVEFUNCS-STEP2]` item 2 on Avowed in gameplay; the 10,000-a-second total was not reached again.
+- **Surveys, no host here:** `[W3-XREF-CAP]` (no field above 53 functions at any title screen), L46 Phase J
+  (the < 4.25 titles' unicast delegate arrays are CDO-only and empty), `[VND9-01]` / `[VND9-04]` (Star Trek
+  Voyager's title screen). Each names the gameplay host that could close it.
+- **Finding:** `[FTEXT-NEIGHBOR-GARBAGE]` (LOW, census Table A): 10 of 1,616 FTexts read a heap neighbour's
+  pointer bytes as text.
+- The EVERSPACE 2 test snapshot the first entry left behind was deleted; `ui-options.json` and the window state
+  were put back after the window-size run; every game and UI was closed.
+
+-----
+
 ## 2026-11-20 (no build change) — Live checks on build 3776: 39 rows closed, three findings filed `[LIVEPASS-2026-11-20]`
 
 - **What this is:** the maintainer's "run the live checks this PC can run" pass on the released build 3776,

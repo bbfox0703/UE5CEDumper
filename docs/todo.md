@@ -553,8 +553,9 @@ row" says, one commit per row; its census Table B entry is edited in the same co
   (`[W3-XREF-CAP]`, L46 Phase J on DQ XI S), need a loaded save, which can autosave over the maintainer's progress;
   L66 `[W1-PARTIAL-MARK]` leaves inflated snapshots whose deletion is the maintainer's call. (`[LIVEFUNCS-STEP2]` item
   2 and B28 were run once the maintainer cleared them.)
-- Not triaged in this pass: census Table B's `INV-TOOLTIP-CLIPBOARD`, `QUERYPTR-LOG-ABSENT-LABEL`,
-  `METHODE-STALE-LOGPATH`, `PIVOT-ARRAY-LOADID`.
+- Triaged, not run: census Table B's `INV-TOOLTIP-CLIPBOARD` and `QUERYPTR-LOG-ABSENT-LABEL` are AOBMaker rows (on
+  hold); `METHODE-STALE-LOGPATH` is read off the CE plugin's injection dialog, so it waits for Cheat Engine;
+  `PIVOT-ARRAY-LOADID` is a race of milliseconds (L59 could not open it live), carried by its red / green unit test.
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
