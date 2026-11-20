@@ -63,8 +63,8 @@ std::atomic<bool> s_workerStop{false};
 
 // Generic scan: cached protection-bool targets for the current pawn class —
 // bCanBeDamaged + every reflected invincibility bool matched by
-// MatchProtectionBool. Rebuilt only when the resolved pawn class changes (the
-// offsets/masks are class-stable, so the worker reuses them across ticks).
+// MatchProtectionBool. Rebuilt when the resolved pawn class or the property family's
+// epoch changes (s_targetsKey); between those the worker reuses them across ticks.
 // Guarded by s_mutex (only touched inside ApplyGodNowLocked).
 struct BoolTarget {
     int32_t     fieldOffset = 0;        // Offset_Internal of the property in the object
@@ -208,7 +208,7 @@ std::string ToLower(const std::string& s) {
 // Generic scan: walk the pawn class (incl. inherited fields) for damage /
 // invincibility FBoolProperty fields and cache them as protection targets.
 // Universal keyword table (MatchProtectionBool) — no per-game config. Rebuilt
-// only when the pawn class changes. Logs the discovered flags when verbose
+// when s_targetsKey changes (ApplyGodNowLocked). Logs the discovered flags when verbose
 // (so the user sees exactly what generic analysis found on their game).
 void BuildTargets(uintptr_t pawnClass, bool verbose) {
     s_targets.clear();
