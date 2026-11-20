@@ -404,7 +404,7 @@ Open work only. **Read this when deciding what to do next.**
 - ~~`[INVOKE-NONSTATIC-ON-CDO]` (build 3676): the Debug Camera **Force's template note**~~ -- superseded by `[DEBUGCAM-FORCEON-CDO]` (2026-11-03): a DLL that refuses that ON can no longer produce the note; the unit tests keep it for a DLL from builds 3676-3681.
 - `[FIXPASS-2026-10-27]` batch 1: FABRICATE-DEFAULT-UNSEEDED (MED), INV-TOOLTIP-CLIPBOARD, WALK-NULLCLASS-SILENT,
   SNAPDIFF-SHADOWED-PROP (Diff/SPC half), STEALTH-RESET-STALE-HELD (restart case), WALK-REFRESH-SCALAR-SHRINK (Array
-  Limit case), LW-DISCONNECT-STALE-STATUS, QUERYPTR-LOG-ABSENT-LABEL, METHODE-STALE-LOGPATH, QUOTA-NONPRESET-LOWER,
+  Limit case), LW-DISCONNECT-STALE-STATUS, QUERYPTR-LOG-ABSENT-LABEL, METHODE-STALE-LOGPATH,
   PIVOT-ARRAY-LOADID (a race, possibly only unit-provable).
 - Hover / text checks on the AOT build: LW-SEARCH-TIP, WIKI-TIPS-B2, WIKI-TIPS-B3;
   FLY-EXPORT-EXPERIMENTAL (Experimental off: the .CT holds no Fly records).
@@ -484,6 +484,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 **Closed in this pass** (each row's own record says how):
 
 - `[OBJTREE-SEARCH-TIP]` (2026-11-20, AOT 3776).
+- `[QUOTA-NONPRESET-LOWER]` (2026-11-20, AOT 3776, DumperTest Shipping).
 
 **Findings the pass raises** (a new defect gets a census Table A row too):
 
@@ -4327,7 +4328,7 @@ lose snapshots.**
 ⚠ **This machine's `experimental.json` currently reads `"snapshotQuotaMb": 5120` — one preset below
 the trigger.** ⬜ Widen the W1 row rather than filing anew; the fix is the same one line.
 
-✅ `[QUOTA-NONPRESET-LOWER]` **FIXED 2026-10-27** (red `bffacdee` / green `c86a876c`): the quota combo is built from `AutoSnapshotPlanner.QuotaPresetBytes` (a test holds the lists equal), a non-preset quota gets its own label, and MbToLabel / LabelToMb are exact inverses. Live check owed. Was:
+✅ `[QUOTA-NONPRESET-LOWER]` **FIXED 2026-10-27** (red `bffacdee` / green `c86a876c`): the quota combo is built from `AutoSnapshotPlanner.QuotaPresetBytes` (a test holds the lists equal), a non-preset quota gets its own label, and MbToLabel / LabelToMb are exact inverses. ✅ **Live check CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (AOT UI 3776, DumperTest Shipping, UE 504, 24,530 objects): with `experimental.json` hand-edited to `snapshotQuotaMb: 3000` before the start, the Snapshot tab's Per-game quota read **3000 MB**, listed in size order (512 MB · 1 GB · 2 GB · 3000 MB · 5 GB · Unlimited), and the usage line `103.7 MB / 3000 MB`; Auto snapshot with **Auto-adjust quota** on captured one snapshot (719 objects, 17,040 fields), so `ApplyAutoQuota` ran, and the combo and the file both still read 3000 afterwards (the file was restored to its value before the check). Was:
 ⚠ **And a second, latent hazard in the same pair of methods:** `MbToLabel`
 (`SnapshotViewModel.cs:545-553`) maps anything not exactly 512/1024/2048/5120/0 to `"1 GB"` and
 `OnSelectedQuotaLabelChanged` writes that back — so `ApplyAutoQuota`, whose own doc says *"Raise
