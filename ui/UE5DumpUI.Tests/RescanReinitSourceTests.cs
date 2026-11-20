@@ -40,7 +40,9 @@ public sealed class RescanReinitSourceTests
         // The decision reads Aura's count, which an apply's scoring moves candidate by candidate: deciding and starting
         // under the lock the apply fence holds keeps a rescan from reading a candidate's count.
         var rescan = Between(DllSrc("Fern.cpp"), "if (cmd == Renge::CMD_RESCAN) {", "if (cmd == Renge::CMD_RESCAN_STATUS) {");
-        InOrder(rescan, "FrierenInit::TryHoldInit()", "Genau::PlanRescan(g_cachedGObjects, g_cachedGNames, g_cachedGWorld, Aura::GetCount())",
+        InOrder(rescan, "if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {",
+                "FrierenInit::TryHoldInit()", "if (!initHold.held) {", "return Renge::MakeError(",
+                "Genau::PlanRescan(g_cachedGObjects, g_cachedGNames, g_cachedGWorld, Aura::GetCount())",
                 "m_rescan.job.TryStart(");
         Assert.Contains("RunRescanBody(plan.seekGObjects, plan.seekGWorld, plan.replace, plan.avoid, plan.maxCandidates)", rescan);
         Assert.Contains("data[\"replacing\"]", rescan);
@@ -64,9 +66,11 @@ public sealed class RescanReinitSourceTests
         // A client that drops mid-apply does not cut the re-init short.
         InOrder(apply, "Tot::CancelContextScope immune{Tot::CancelContext{nullptr, true}}", "FrierenInit::BeginApply()");
         // Planned under the fence, after a re-check that no rescan started on another connection since the first one.
-        InOrder(apply, "FrierenInit::BeginApply()", "m_rescan.Results()", "if (m_rescan.job.Running())",
+        InOrder(apply, "FrierenInit::BeginApply()", "if (m_rescan.job.Running())", "m_rescan.Results()",
                 "Genau::PlanRescanApply(", "m_rescan.MarkConsumed();", "FrierenInit::ReplaceDecoyGObjects(",
-                "// the init fence ends here", "FrierenInit::CheckAndRecoverGWorld(\"apply_rescan\")",
+                "// the init fence ends here", "bool gworldRecovered = false;",
+                "kind == Genau::RescanApply::Fill && Aura::GetCount() > 0",
+                "FrierenInit::CheckAndRecoverGWorld(\"apply_rescan\")",
                 "Flamme::UpdateGObjectsMethod(g_cachedPeHash, \"data_heuristic\")", "data[\"gobjects_outcome\"]");
         // A fill: an empty pool latched UFunction::Func and UEnum names, which its first probe re-detects.
         InOrder(apply, "Aura::Init(g_cachedGObjects);", "Aura::ResetUFunctionFuncDetection();");
@@ -99,6 +103,11 @@ public sealed class RescanReinitSourceTests
         var init = Between(frieren, "bool UE5_Init() {", "\n}\n");
         Assert.Contains("g_cachedPreLadderUEVersion = ptrs.UEVersion;", init);
         Assert.Contains("g_cachedPreLadderLowConfidence = ptrs.bLowConfidence;", init);
+        // The lock is also held, briefly, by an apply_rescan and by pipe commands that read what init settles; the
+        // wait says so, and keeps the words tools/verify/b5_mailbox_race.py and l54_init_fastpath.py count.
+        Assert.Contains("init already in progress on another thread", init);
+        Assert.Contains("an apply_rescan or a pipe command", init);
+        Assert.Contains("resumed after waiting", init);
         InOrder(init, "FrierenInit::CorrectVersionStructurally(", "FrierenInit::CheckAndRecoverGWorld(\"UE5_Init\")",
                 "ptrs.GWorld = g_cachedGWorld;");
         // One GWorld recovery, shared by init and apply_rescan.
@@ -112,7 +121,8 @@ public sealed class RescanReinitSourceTests
         // read taken before the replace would bring back the version it replaced.
         var fern = DllSrc("Fern.cpp");
         var over = Between(fern, "if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE) {", "json data;\n            data[\"ue_version\"]");
-        InOrder(over, "FrierenInit::TryHoldInit()", "Ubel::CheckVersionOverrideTail(");
+        InOrder(over, "FrierenInit::TryHoldInit()", "if (!initHold.held) {", "return Renge::MakeError(",
+                "Ubel::CheckVersionOverrideTail(");
         Assert.Equal(2, Regex.Matches(over, @"g_cachedPreLadderUEVersion\s*=").Count);
         var get = Between(DllSrc("Frieren.cpp"), "uint32_t UE5_GetVersion() {", "\n}\n");
         Assert.Contains("const uint32_t current = g_cachedUEVersion;", get);
@@ -134,9 +144,11 @@ public sealed class RescanReinitSourceTests
     [Fact]
     public void ReassertWorkers_SkipATickWhileAnInitRuns()
     {
-        Assert.Contains("g_initInProgress", Between(DllSrc("Routine.h"), "inline void ReassertLoop(", "\n}\n"));
-        Assert.Contains("g_initInProgress", Between(DllSrc("Dunste.cpp"), "void WorkerLoop() {", "\n}\n"));
-        Assert.Contains("g_initInProgress", Between(DllSrc("Schlacht.cpp"), "void WorkerLoop() {", "\n}\n"));
+        var skip = new Regex(@"if \((::)?g_initInProgress\.load\(std::memory_order_acquire\)\) continue;");
+        static string Code(string s) => Regex.Replace(s, @"//[^\n]*", "");
+        Assert.Matches(skip, Code(Between(DllSrc("Routine.h"), "inline void ReassertLoop(", "\n}\n")));
+        Assert.Matches(skip, Code(Between(DllSrc("Dunste.cpp"), "void WorkerLoop() {", "\n}\n")));
+        Assert.Matches(skip, Code(Between(DllSrc("Schlacht.cpp"), "void WorkerLoop() {", "\n}\n")));
     }
 
     [Fact]
