@@ -1796,6 +1796,14 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 ### ✅ FIXED + LIVE-VERIFIED 2026-09-05 `[A2-ES2-506-2026-09-05]` — audit A2: the 506 row is CORROBORATED at `0x260` on a retail UE 5.6.1 build
 
+✅ **The UI legs, CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (DLL and AOT UI 3776; EVERSPACE 2 from Steam, injected --
+no proxy is deployed there now -- UE 506, 79,835 objects). Same process: `a2_es2_pehook.py ES2-Win64-Shipping` →
+`DetectProcessEvent (pattern): match at vtable+0x260`, Add_IntInt(3,4) = 7, `validation OK — hook fired 840 times in
+1500ms`, table 0x260, **PASS**. The UI: header **`Connected — UE506 (79835 objects)`**; the System tab's UE Version
+card **506 ✓ Detected**; Live Funcs Start/Stop recorded **2,694 calls of 4 functions** (361 calls/s, a 5,388-record
+trace), i.e. the hook active and firing (this build shows the hook through the recording it feeds rather than a
+HookActive/fire-count line).
+
 > **CLOSED on the verification PC, build 3371, 2026-09-05 21:00.** Rig:
 > [`tools/verify/a2_es2_pehook.py`](../tools/verify/a2_es2_pehook.py) (written for this row; it
 > re-runs from one command). Every observable this row asked for was captured in one session, and

@@ -521,6 +521,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[FIXPASS-2026-09-10]` L11 `[A2-UFUNC-TAIL-4X]`'s ret_offset readout (2026-11-20, NEKOPALIVE 4.11, corroboration).
 - `[SCAN-LINKER-LOG-2026-11-19]` item 2, an lld build (2026-11-20, Avowed; verification-register.md).
 - Value Search NumericAll's result-volume half (2026-11-20, Avowed: 1 floods to the cap in 1.3 s, 255 gives 679; verification-register.md).
+- `[A2-ES2-506-2026-09-05]`'s UI legs (2026-11-20, EVERSPACE 2 injected; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
