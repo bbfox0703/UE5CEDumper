@@ -10096,7 +10096,14 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   two lines above. To provoke the original race: register the plugin but leave it **unticked**,
   then start CE.
 
-- ⬜ **Extra Scan can be cancelled** (build 2603, B18). Needs a game where GObjects does NOT
+- ✅ **Extra Scan can be cancelled — CLOSED 2026-11-20** `[LIVEPASS-2026-11-20]` (build 2603, B18), on the staged
+  decoy (DumperTest Shipping, `out\staged\rescan-decoy-reinit\UE5Dumper.dll` restaged at HEAD `7f6fcbc0`, sha256
+  `13aa4a06`…): `get_pointers` object_count 0 at the decoy `0x7FFC1FE08EB0`; `rescan` started 15:27:48.111;
+  `rescan_status` 2.5 s later `running`, *"Scanning GObjects (.data heuristic)..."*; then `UE5_Shutdown` through
+  `tools/verify/call_export.py` (`--process DumperTest-Win64-Shipping`), which **returned in 0.152 s**. pipe-0.log:
+  `Stop entry` 15:27:51.210 → `RunRescan: finished (…, cancelled)` and **`Stop watches+scan joins done (4 ms)`** at
+  15:27:51.214; scan-0.log `ExtraScanGObjects: cancelled (228352 candidates tested)`. The CE untick is that same
+  export on CE's thread, so CE is not needed for the latency. The original text: needs a game where GObjects does NOT
   resolve by AOB, so Extra Scan actually runs long. Start it, then untick the CE record (or close
   the UI) while it is still going. **PASS** = `pipe-0.log` shows `PipeServer: Stop watches+scan
   joins done` within a second or so of `Stop entry`. **FAIL** = seconds of gap, or CE's window
@@ -13028,6 +13035,11 @@ restructure that existed nowhere else — checked before the move (`V8_DataTable
 -----
 
 ### ⛔ V10 and B18 have NO SAMPLE on this machine — measured 2026-08-22 `[EXTRASCAN-NOSAMPLE-2026-08-22]`
+
+✅ **Superseded 2026-11-20** `[LIVEPASS-2026-11-20]`: since build 3775 Extra Scan replaces a GObjects that reads no
+objects, and the staged decoy (`tools/verify/staging/rescan-decoy-reinit.json`) makes that session on DumperTest. V10
+closed in audit L11's batch and B18 in the ① log-derivable list, both on that decoy. What follows is the 2026-08-22
+measurement.
 
 Both rows state their own precondition: V10 needs *"a game where GObjects or GWorld is still
 unresolved after the first scan — if both resolve there is nothing to test"*, and B18 needs *"a game

@@ -502,6 +502,7 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 - `[FIXPASS-2026-09-10]` L26 `[W2-TPREL-MAP]` step 3 (2026-11-20, no pawn via `ClientRestart(nullptr)` on DumperTest).
 - `[LW-DISCONNECT-STALE-STATUS]` (2026-11-20, the game killed and relaunched under a connected UI).
 - audit L11 V10, Extra Scan's result survives its own refresh (2026-11-20, the staged decoy; verification-register.md).
+- B18, Extra Scan cancelled by `UE5_Shutdown` mid-sweep (2026-11-20, the staged decoy, a 4 ms join; verification-register.md).
 
 **Measured not producible here** (the row says what would close it):
 
@@ -511,6 +512,11 @@ row" says, one commit per row; its census Table B entry is edited in the same co
 
 - `[LW-REFRESH-STATUS-DUP]` (LOW, 2026-11-20, while closing `[WALK-REFRESH-SCALAR-SHRINK]`): overlapping Live Walker
   Refreshes each append the container's status sentence.
+- `[CALLEXPORT-PROCESS-NAME]` (tools, 2026-11-20, while running B18): `tools/verify/call_export.py --process DumperTest`
+  matches only `DumperTest.exe`, so on a Shipping fixture it finds nothing, and under `py -X utf8` the localized
+  `tasklist` "no tasks" text fails to decode, so it dies with `'NoneType' object has no attribute 'splitlines'`
+  instead of "no process named …". Pass `--process DumperTest-Win64-Shipping`; a fix would decode with the console
+  codepage and match the exe stem.
 
 ## 🧭 Maintainer request 2026-11-14 — cheap C++ hardening instead of a Rust rewrite `[CPP-HARDENING-2026-11-14]`
 
