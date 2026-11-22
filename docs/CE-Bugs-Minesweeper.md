@@ -536,14 +536,23 @@ Unaffected (7.7): mandatory `F2`/`F3`/`66` on `0F`-map opcodes; `pause` (prints 
 to `66 90`, still a NOP hint); `rep ret`, `bnd`, branch hints; ModRM and moffs `fs:`/`gs:` (printed
 and kept).
 
-*x64 RIP-relative rewrite.* The handler passes `is64Bit` as `farjmp` (`autoassembler.pas:2523`),
-so every RIP-relative instruction is rewritten through a borrowed register
-(`frmautoinjectunit.pas:1145-1272`).
+*x64 RIP-relative rewrite.* `reassemble()` never keeps a RIP-relative operand RIP-relative. The
+handler passes `is64Bit` as `farjmp` (`autoassembler.pas:2523`), so every such instruction is
+rewritten with an absolute address (`frmautoinjectunit.pas:1145-1272`). Plain moves and SSE loads
+and stores come out right, near and far (measured):
+
+- A load into a 32/64-bit GPR becomes `mov <dest64>,address / mov dest,[dest64]`.
+- Everything else becomes `push R / mov R,address / op ...[R]... / pop R`. R is the first of rax,
+  rbx, rcx, rdx and r8 whose name the instruction text does not contain, so an instruction that
+  names `eax` gets `rbx`. Example: `vmovsd xmm3,[rip+X]` becomes
+  `push rax / mov rax,address / vmovsd xmm3,[rax] / pop rax`.
+
+The defects are only the forms below.
 
 | Defect | Seen | Where |
 |--------|------|-------|
-| Two operands with a 32/64-bit GPR destination → `mov <dest64>,address` + `op dest,[dest64]`: right when the instruction only writes dest (mov, movzx, movsxd, cvttss2si), wrong when it reads it (add, cmp, `imul r,m`, crc32) or writes it conditionally (cmovcc, bsf, lar), because the address becomes the operand | 7.7 | `frmautoinjectunit.pas:1172-1176`, register test `:1015` |
-| Anything else → `push rax / mov rax,address / op …[rax]… / pop rax` (rbx, rcx, rdx or r8 when the text names the rax family): wrong when the instruction uses rax implicitly (`imul`/`mul`/`div m`, cmpxchg: the pop overwrites the result) or the stack (`push`/`pop [rip]`) | 7.7 | `frmautoinjectunit.pas:1181-1248` |
+| Instructions that READ their 32/64-bit GPR destination (add, cmp, adc, `imul r,m`, crc32) or write it conditionally (cmovcc, bsf, lar). CE puts the address into the destination itself, so the old value is lost: `add ecx,[rip+X]` becomes `mov rcx,address / add ecx,[rcx]` | 7.7 | `frmautoinjectunit.pas:1172-1176`, register test `:1015` |
+| Instructions that use the borrowed register implicitly (`imul`/`mul`/`div m`, cmpxchg: the pop overwrites the result) or use the stack (`push`/`pop [rip]`). CE picks R from the names in the text only, so implicit uses are not seen | 7.7 | `frmautoinjectunit.pas:1181-1248` |
 | In that fallback, text naming `rsp` emits only the original-code comment, so the instruction vanishes from the cave: the register picks are one if/else chain and `usedreg2` is never set | 7.5 src | comment `frmautoinjectunit.pas:1150`; picks `:1186-1239`; rsp branch `:1250-1270` |
 
 On a real fixture (7.7, 3/3 runs each), add/cmp 32/64-bit, `cmovne r64`, `imul m32`,
