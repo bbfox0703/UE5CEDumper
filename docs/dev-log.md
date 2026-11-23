@@ -29,6 +29,30 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (build 3778) — The proxies build into their own folder; the Cheat Engine plugin has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** nothing in the UI or the DLL's behaviour. The four proxy DLLs build into `build\dll\proxy\`
+  instead of `build\dll\`, and `build.ps1` takes each one from there by name, deleting one an older tree left in
+  `build\dll\`. Until now a C++ test that imports `version.dll` (`dll_core_test`) loaded our proxy from its own
+  folder, and the proxy's DllMain ran inside the test: a MinHook block, a pipe server, and logs plus a retention
+  sweep in the user's Logs folder (working-lessons §3.xg).
+- **New test target `methode_plugin_test`:** it #includes `Methode.cpp` and drives the Cheat Engine plugin through a
+  fake Cheat Engine: GetVersion, InitializePlugin (a short table, a refused registration), the menu click with no
+  process, with CE reporting failure, success with nothing mapped (the ambiguous force-load message), and success
+  with the built UE5Dumper.dll mapped without running its DllMain; a second click with it loaded; the ProductName
+  identity rule; DisablePlugin. 61 checks. Negative controls: identity by file name only fails 18, no ambiguous
+  branch fails 5. Its three C# text pins of the dialogs are gone. 13 of the 33 `dll/src` .cpp files now reach a
+  test target.
+- **Also since build 3777 (docs and tests):** CLAUDE.md's rule "Everything testable is tested" was already in;
+  `dll_core_test`'s SCANSIBLING runs `ScanForValue` over two Vector fields (the A3 verification row's steps 1-2
+  close offline); rows that called Ubel / Genau / Flamme .cpp untestable carry a correction; census rows for the test
+  gap, the unfixed DLL cache wipe `[CACHEWIPE-DLL-2026-08-19]` and a CEPTR failure seen once.
+- **Tests:** C# 8544 (1 skipped), headless 74, the six C++ self-tests (`methode_plugin_test` also under ASan, its
+  negative control reported); 40 gates; the nodiscard probe.
+- AOT UI 62,980,608 bytes (sha256 bd7a4930c2a2555f...); UE5Dumper.dll 3,882,496 bytes (sha256 325c3a28dc8ec0b5...).
+
+-----
+
 ## 2026-11-23 (build 3777) — Avalonia 12.1.6
 
 - **What changes:** Avalonia 12.1.3 → 12.1.6 (Avalonia, Win32, Skia, HarfBuzz, Themes.Fluent, Fonts.Inter and,
