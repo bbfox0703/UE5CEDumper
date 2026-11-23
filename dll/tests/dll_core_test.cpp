@@ -4073,6 +4073,107 @@ int main() {
         DynOff::bUseFProperty = savedFPropCE;
     }
 
+    // -- SCANSIBLING -- ScanForValue indexes EVERY field of one struct type in a class --------------------------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). The value scan expands a class's struct fields under a guard
+    // scoped to the CURRENT path, so a struct type met again on a sibling branch is expanded again: Location and
+    // Velocity are both a Vector, and both must contribute leaves. A guard over the whole walk would index
+    // Location's leaves and drop Velocity's subtree, and the scan would report "no match" for a value that is there.
+    {   blk("SCANSIBLING - ScanForValue indexes every field of one struct type, not only the first");
+        static uint8_t ssEntry[10][0x40] = {};
+        const char* ssNames[10] = { "", "StructProperty", "FloatProperty", "Location", "Velocity", "X", "Y", "Z",
+                                    "SsActor", "Vector" };
+        static uintptr_t ssChunk[11] = {};
+        for (int i = 1; i <= 9; ++i) {
+            memcpy(ssEntry[i] + 0x10, ssNames[i], strlen(ssNames[i]) + 1);
+            ssChunk[i] = reinterpret_cast<uintptr_t>(ssEntry[i]);
+        }
+        static uintptr_t ssChunks[2] = { reinterpret_cast<uintptr_t>(ssChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ssChunks), 0x10);
+
+        const bool savedFPropSS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t ssFC[3][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            put32(ssFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx);
+            return reinterpret_cast<uintptr_t>(ssFC[nameIdx]);
+        };
+        auto prop = [&](uint8_t* p, int fcIdx, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fclass(fcIdx));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(next));
+        };
+
+        // The struct: Vector { float X, Y, Z; }.
+        static uint8_t ssX[0x100] = {}, ssY[0x100] = {}, ssZ[0x100] = {};
+        prop(ssX, 2, 5, 0, 4, ssY);
+        prop(ssY, 2, 6, 4, 4, ssZ);
+        prop(ssZ, 2, 7, 8, 4, nullptr);
+        static uint8_t ssVec[0x100] = {};
+        put32(ssVec, Grimoire::OFF_UOBJECT_NAME, 9);
+        put32(ssVec, DynOff::USTRUCT_PROPSSIZE, 12);
+        putP(ssVec, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ssX));
+
+        // The class: two fields of that one struct type, siblings.
+        static uint8_t ssLoc[0x100] = {}, ssVel[0x100] = {};
+        prop(ssLoc, 1, 3, 0x30, 12, ssVel);
+        putP(ssLoc, DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(ssVec));
+        prop(ssVel, 1, 4, 0x40, 12, nullptr);
+        putP(ssVel, DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(ssVec));
+        static uint8_t ssCls[0x100] = {};
+        put32(ssCls, Grimoire::OFF_UOBJECT_NAME, 8);
+        put32(ssCls, DynOff::USTRUCT_PROPSSIZE, 0x4C);
+        putP(ssCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ssLoc));
+
+        // The instance: Location (1, 2, 3), Velocity (10, 20, 30) -- distinct after the scan's rounding.
+        static uint8_t ssObj[0x60] = {};
+        putP(ssObj, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ssCls));
+        const float loc[3] = { 1.0f, 2.0f, 3.0f }, vel[3] = { 10.0f, 20.0f, 30.0f };
+        memcpy(ssObj + 0x30, loc, sizeof(loc));
+        memcpy(ssObj + 0x40, vel, sizeof(vel));
+
+        FakePool ssPool;
+        ssPool.Build(4);                    // the other three objects have no class, so the scan skips them
+        const uintptr_t ssO = reinterpret_cast<uintptr_t>(ssObj);
+        memcpy(ssPool.chunks[0].data(), &ssO, sizeof(ssO));
+        Aura::InitWithExtendedLayout(ssPool.Addr(), FakePool::kItemSize);
+        ResetCancel();
+
+        auto fieldsFound = [](const Aura::ValueScanResult& r) {
+            std::string s;
+            for (const auto& c : r.candidates) {
+                if (!s.empty()) s += ", ";
+                s += r.descriptors[c.descriptorIdx].fieldName;
+            }
+            return s;
+        };
+        auto scanFloat = [](float v) {
+            return Aura::ScanForValue(Radar::DataType::Float, Radar::ScanType::Exact,
+                                      reinterpret_cast<const uint8_t*>(&v), nullptr, /*gameOnly=*/false, 100,
+                                      Radar::RoundMode::Round, "", false, nullptr, nullptr, /*parallel=*/false);
+        };
+        const auto rv = scanFloat(20.0f);
+        check("SCANSIBLING ⭐: the second field of the struct type is indexed -- Velocity.Y found",
+              rv.candidates.size() == 1 && fieldsFound(rv) == "Velocity.Y", fieldsFound(rv).c_str());
+        const auto rl = scanFloat(2.0f);
+        check("SCANSIBLING control: the first field of the struct type -- Location.Y found",
+              rl.candidates.size() == 1 && fieldsFound(rl) == "Location.Y", fieldsFound(rl).c_str());
+        // A vector scan takes the struct fields whole and never recurses, so the guard is not what it rests on.
+        const double velD[3] = { 10.0, 20.0, 30.0 };
+        const auto rvec = Aura::ScanForValue(Radar::DataType::FVector, Radar::ScanType::Exact,
+                                             reinterpret_cast<const uint8_t*>(velD), nullptr, /*gameOnly=*/false, 100,
+                                             Radar::RoundMode::Round, "", false, nullptr, nullptr, /*parallel=*/false);
+        check("SCANSIBLING control: an FVector scan matches the Velocity field whole",
+              rvec.candidates.size() == 1 && fieldsFound(rvec) == "Velocity", fieldsFound(rvec).c_str());
+
+        DynOff::bUseFProperty = savedFPropSS;
+    }
+
     // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
     //
     // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [USMAP-ENUM-SIGNEDNESS] The .usmap cannot take an enum's
