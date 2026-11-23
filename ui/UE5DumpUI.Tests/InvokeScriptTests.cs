@@ -2492,7 +2492,8 @@ public class InvokeScriptTests
         // it and GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0
         // a call to UE5_Init returns at once (initialised, no fence up YET), and a re-read of the globals then catches them
         // as the apply publishes them. (1) is an order of two loads no single-threaded test can observe, so it is
-        // pinned in source; (2) is also mimic_mailbox_test's INITGATE.
+        // pinned in source. (2) is mimic_mailbox_test's INITGATE: globals published while the fence stays up are
+        // refused after four more asks.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
         Assert.True(settled >= 0, "InitSettled not found");
@@ -2503,14 +2504,6 @@ public class InvokeScriptTests
         int readFlag = body.IndexOf("g_initInProgress.load", StringComparison.Ordinal);
         Assert.True(readGObjects >= 0 && fence > readGObjects && readFlag > fence,
                     "the globals must be read first, then an acquire fence, then the flag");
-
-        int ensure = mimic.IndexOf("static bool EnsureInitialized() {", StringComparison.Ordinal);
-        int ensureEnd = mimic.IndexOf("\n}\n", ensure, StringComparison.Ordinal);
-        var ensureBody = mimic[ensure..ensureEnd];
-        int call = ensureBody.IndexOf("UE5_Init();", StringComparison.Ordinal);
-        Assert.True(call >= 0 && ensureBody.IndexOf("InitSettled()", call, StringComparison.Ordinal) > call,
-                    "the result after UE5_Init must be the same settled check, not a bare re-read of the globals");
-        Assert.DoesNotContain("return (g_cachedGObjects != 0 && g_cachedGNames != 0);", ensureBody);
 
         // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
@@ -2677,9 +2670,10 @@ public class InvokeScriptTests
     {
         // [FINDINSTANCE-SUBSTRING-USERFACING] The C ABI export, the pipe's invoke_function class_name and the mailbox's
         // FIND_INSTANCE / LIST_FUNCTIONS each matched a class-name SUBSTRING and took the first non-CDO match, else the
-        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance; no test target compiles Frieren,
-        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the source's comments name the call
-        // it must not make.
+        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance, and mimic_mailbox_test's FINDLIST
+        // shows the mailbox's FIND_INSTANCE and LIST_FUNCTIONS picking by derivation. Frieren and Fern reach no test
+        // target yet, so this pins that they USE it. Comments are stripped: the source's comments name the call it
+        // must not make.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -2695,14 +2689,6 @@ public class InvokeScriptTests
         var frieren = Body(CodeOnly(DllSource("Frieren.cpp")), "uintptr_t UE5_FindInstanceOfClass(const char* className) {");
         Assert.Contains("Aura::ResolveUserInstance(", frieren, StringComparison.Ordinal);
         Assert.DoesNotContain("FindInstancesByClass(", frieren, StringComparison.Ordinal);
-
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        foreach (var handler in new[] { "static void HandleFindInstance() {", "static void HandleListFunctions() {" })
-        {
-            var body = Body(mimic, handler);
-            Assert.Contains("Aura::ResolveUserInstance(", body, StringComparison.Ordinal);
-            Assert.DoesNotContain("FindInstancesByClass(", body, StringComparison.Ordinal);
-        }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
@@ -3203,8 +3189,10 @@ public class InvokeScriptTests
     {
         // [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and Force (Solide) write into every object their
         // pool lists. A template there -- a class default object, one of its default subobjects, a Blueprint component
-        // template -- passes its value to every later spawn, and the freeze helper never restores. Mimic.cpp and
-        // Solide.cpp reach no C++ test target, so their source is pinned here; dll_core_test pins the walkers.
+        // template -- passes its value to every later spawn, and the freeze helper never restores. dll_core_test pins
+        // the walkers, and mimic_mailbox_test's FINDLIST the freeze pool: the templates take no slot under either cap,
+        // and one that slips through the walk is left out when the pool is published. Solide.cpp reaches no test
+        // target yet, so its source is pinned here.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3219,12 +3207,6 @@ public class InvokeScriptTests
 
         // A working copy may hold CRLF (git config is per machine); Body looks for "\n}\n".
         static string Lf(string s) => s.Replace("\r\n", "\n");
-        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
-        Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
-        Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
-        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
-        Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
-
         var solide = Body(CodeOnly(Lf(DllSource("Solide.cpp"))), "void ApplyJobLocked(");
         Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
@@ -3252,10 +3234,12 @@ public class InvokeScriptTests
             "a script that relies on FIND_INSTANCE passing over destroyed objects must claim contract 9");
 
         // The Force reply and the forced-fields list say how many templates the pool passed over, so a hold
-        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
+        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do. The memo is a cache
+        // and changes no answer, so no behaviour test can see it: its use in the freeze pool is read here too.
         var fern = CodeOnly(Lf(DllSource("Fern.cpp")));
         Assert.Contains("data[\"templates_skipped\"]", fern, StringComparison.Ordinal);
         Assert.Contains("j[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", list, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", solide, StringComparison.Ordinal);
         var dumpSvc = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
