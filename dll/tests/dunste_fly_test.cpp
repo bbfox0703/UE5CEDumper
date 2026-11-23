@@ -327,6 +327,35 @@ int main() {
         check("REFUSED: the pawn collides again", collisionOn());
     }
 
+    // The MovementMode write IS the effect, so a write that fails must not read as a pawn flying, nor a restore that
+    // fails as a clean disable. A CharacterMovement on a read-only page makes the write fail: Macht writes data only.
+    {   blk("WRITEFAIL - a MovementMode write that fails is reported, never a pawn claimed flying or landed");
+        uint8_t* page = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        check("setup: a page for the CharacterMovement", page != nullptr);
+        if (page) {
+            memcpy(page, cmc, sizeof(cmc));          // the same object: its class, mode and velocity
+            page[0x30] = 1;
+            DWORD old = 0;
+            VirtualProtect(page, 0x1000, PAGE_READONLY, &old);
+            putP(pawn, 0x30, A(page));
+            int32_t rc = Dunste::SetEnabled(true);
+            check("WRITEFAIL ⭐: an enable whose MovementMode write fails returns FR_ERR_WRITE", rc == Dunste::FR_ERR_WRITE,
+                  num(rc));
+            check("WRITEFAIL: ...and Fly is not active", !Dunste::IsActive());
+            VirtualProtect(page, 0x1000, PAGE_READWRITE, &old);
+            rc = Dunste::SetEnabled(true);
+            check("WRITEFAIL control: the same page, writable -- enabled", rc == 1, num(rc));
+            VirtualProtect(page, 0x1000, PAGE_READONLY, &old);
+            rc = Dunste::SetEnabled(false);
+            check("WRITEFAIL ⭐: a disable whose restore fails says so -- FR_ERR_WRITE, not 0", rc == Dunste::FR_ERR_WRITE,
+                  num(rc));
+            check("WRITEFAIL: ...and the worker is stopped all the same", !Dunste::IsActive());
+            VirtualProtect(page, 0x1000, PAGE_READWRITE, &old);
+            putP(pawn, 0x30, A(cmc));
+            VirtualFree(page, 0, MEM_RELEASE);
+        }
+    }
+
     {   blk("KNOBS - speed is clamped to the slider's range, a preset must exist");
         std::ignore = Dunste::SetSpeed(1.0);
         Dunste::FlyStatus st;
