@@ -732,6 +732,8 @@ if(BUILD_DLL_TESTS)
     #              ProcessEvent hook and has no place in a headless test.
     #   * g_cachedUEVersion -- defined in Frieren.cpp (the C ABI layer). Defined in the
     #              test instead, which is a FEATURE: the test picks the UE version.
+    #   * g_cachedGWorld / g_initInProgress -- also Frieren.cpp's, read by Solitar and its
+    #              re-assert loop; the test points the first at a fake world.
     #   * Zydis (Denken) and version.lib (Genau's PE version-info reads).
     add_executable(dll_core_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/dll_core_test.cpp
