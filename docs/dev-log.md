@@ -29,6 +29,29 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — The Cheat Engine mailbox has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests and the test build only. `mimic_mailbox_test` #includes `Mimic.cpp`, links
+  `ue5_testcore`, and calls `Mimic::ServeOne` (one pass of the polling thread) against a mailbox in its own memory.
+  The C ABI and the modules the mailbox dispatches to are faked; the hold ledger is the real one, so "CE now holds
+  it" is read back from it. No polling thread runs, so each command is served exactly when the test says.
+- **Covered, 41 checks:** an unknown command is answered, never left processing; the offsets verdict needs no init
+  and a success carries no earlier error text; a command that walks reflection waits for an init and refuses
+  without one, while Foreground and the offsets verdict are exempt; the retry while another init scans; God Mode's
+  state bytes; every handler that changes a hold records CE as its holder; the debug camera's queued and blocked
+  texts, in each direction, and a pending ON kept as its sender's; a handler that throws loses its command, not the
+  mailbox; an adopted mailbox is answered in place; a mailbox another poller is busy with is left to it;
+  see-through's count and toggle. Negative controls: the earlier error text kept fails 2 checks, no command exempt
+  5, a throw not answered 1, no retry 1, a pending ON taken over 1, a busy mailbox served 1, CE never recorded 13.
+- Two C# text pins are gone and four keep only their other files' halves. The 20 reads of `Mimic.cpp` that remain
+  pin CMD_INVOKE, CMD_TELEPORT and StopThread's hand-over, which this test does not drive yet; their comments say so
+  instead of saying that `Mimic.cpp` reaches no test target. 16 of the 33 `dll/src` .cpp files reach a test target.
+- **Tests:** `mimic_mailbox_test` 41 checks, 0 failures, and under ASan (its negative control reported); every
+  other self-test green; C# 8532 (1 skipped); 40 gates. build.ps1 runs the new test in its C++ list; that line was
+  not run locally (a local run republishes dist\), so the next publish or CI run is its first.
+
+-----
+
 ## 2026-11-23 (no build change) — Fly's failed MovementMode write is tested, not only read `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `dunste_fly_test`'s WRITEFAIL reaches the CharacterMovement through a read-only view
