@@ -36,12 +36,14 @@ A quick look at what you can *do* with it — the full table-maker feature list 
 - **Value Search** — CE-style First Scan / Next Scan over every UE property (numbers, strings, vectors, arrays / maps / sets), so you cheat without knowing offsets. A **Group** mode finds the object holding *several* values at once (e.g. `Str + Def + Dex + Int`), and an opt-in **Deep** mode reaches into nested containers.
 - **Teleport** — 3 save/recall markers (BugItGo-style), **teleport-to-cursor** for top-down / 2.5D games, custom global hotkeys, and a read-only **camera POV** readout.¹
 - **Player tuning** — **Super Jump / Move Speed / Gravity** sliders, **God Mode**, and **Time Dilation** (global or player-only slow-mo / freeze / fast-forward) — all reflection-forced and held against per-tick overwrites, so they survive respawns. Hotkeys or CE on/off records.
+- **Experimental extras** (opt-in) — **Fly / Noclip**, **See-through** (hide what blocks the camera), **Keep Foreground** and more.
 - **Debug Camera** — force the free-fly debug camera on/off, even on Shipping builds that normally get stuck (needs a live CheatManager; UE 5 Shipping builds have none by default, and Force On then says so).
 - **Console** — discover and one-click invoke the `fly` / `god` / `ghost` / game-specific exec commands many games leave in.
 - **Live function profiler** — record *one* in-game action (open a shop, dash) and see exactly which UFunctions fired, ranked with baseline-diff + noise filters. Behaviour-first, when name search can't.
 - **One-click CE export** — pointer-chain XML, Structure Dissect (CSX), SDK headers, AA scripts, multi-row `.CT` batches.
 - **Dump Explorer** — browse an exported "Dump All" `.jsonl` offline, one keyword search across classes, structs, enums, their members and function parameters. **Compare…** diffs it against another dump of the same game and writes an HTML report of what a patch moved, retyped, added or removed.
-- **No Cheat Engine needed to inject** — a `version.dll` **proxy DLL**, in-UI **Inject into running game…**, or the **`inject-ue.ps1`** CLI (auto-elevates for admin games). Proxy Deploy **suggests the right proxy per game**.
+- **AI assistant (MCP)** — let an AI client such as Claude Code look through a running game for you, and change it only after you approve. See *Optional: an AI assistant (MCP)* below.
+- **No Cheat Engine needed to inject** — a **proxy DLL**, in-UI **Inject into running game…**, or the **`inject-ue.ps1`** CLI (auto-elevates for admin games). Proxy Deploy **suggests the right proxy per game**.
 
 > ¹ A few heavily-stripped Shipping builds (e.g. Titan Quest II) can't do *cursor* teleport — they remove the standard cursor / viewport / line-trace APIs and use a custom virtual cursor. See [docs/teleport-spec.md](docs/teleport-spec.md).
 
@@ -54,7 +56,7 @@ Games grouped by UE version range. Per-game detail — layout quirks, proxy note
 | **4.11 – 4.14** | ✅ | ✅ | ✅ | NEKOPALIVE |
 | **4.15 – 4.17** | ✅ | ✅ | ✅ | Extinction |
 | **4.18 – 4.20** | ✅ | ✅ | ✅ | FF7 Remake Intergrade, The Occupation, DQ XI S, Octopath Traveler |
-| **4.21 – 4.24** | ✅ | ✅ | ✅ | Star Wars Jedi, IDOLM@STER STARLIT SEASON |
+| **4.21 – 4.24** | ✅ | ✅ | ✅ | Star Wars Jedi: Fallen Order, IDOLM@STER STARLIT SEASON |
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | FF7 Rebirth, DQ I&II / III HD-2D Remake, Stellar Blade (劍星), Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 RotS, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, MOBILE SUIT GUNDAM SEED Battle Destiny Remastered, Persona 3 Reload |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1), Colossal, Avowed, Echoes of Aincrad Demo, MindsEye, DragonSword Awakening, The Outer Worlds 2 |
@@ -96,6 +98,10 @@ After that: browse the object tree, find a class or an instance, and export what
 
 [AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) and its Cheat Engine plugin let UE5CEDumper send what it finds straight into the open CE table: memory records, AA scripts, symbols for GObjects / GNames / GWorld, and a Live Walker structure into Structure Dissect. It also moves CE's memory view and disassembler to an address. Everything else works without it.
 
+### Optional: an AI assistant (MCP)
+
+An AI client such as Claude Code or Claude Desktop can read the game you loaded the DLL into, and with your approval change it; **Block AI writes** on the Teleport tab stops it. How to set it up is in `MCP-Setup.html`, next to `UE5DumpUI.exe` in every release.
+
 ## Requirements
 
 - Windows 10/11 x64
@@ -111,8 +117,9 @@ To build from source: `bootstrap.cmd` shows what the machine needs, then `build.
 * **Data outside `UObject`s**: some games (*FF7 Rebirth*, for one) keep important values such as HP in their own structures. The Live Walker can help you look at those regions, but it cannot find them for you.
 * **When *Start from GWorld* does not work** on a game that is not in the table above, use **Object Tree** or **Instance Finder** as the way in.
 * **Games started through the EA app** load no proxy DLL. Use Option A or C once the game is running.
-* **Games that pause in the background** make anything that calls into the game time out. The UI shows a "game thread stalled" banner when that happens, and the experimental **Keep Foreground** toggle works around it.
-* **Large arrays, maps and sets** are read up to the **Array Limit** slider in the Live Walker.
+* **Games that pause in the background** make anything that calls into the game time out. The UI shows a "Game thread paused" banner when that happens, and the experimental **Keep Foreground** toggle works around it.
+* **A game running as administrator** needs **UE5DumpUI.exe** run as administrator too.
+* **Large arrays, maps and sets** are read up to the **Array Limit** slider under **⚙ Options** in the toolbar.
 
 Per-game notes are in [docs/test-games.md](docs/test-games.md). Issues and limitations that last across releases are in [docs/known-issues.md](docs/known-issues.md).
 
