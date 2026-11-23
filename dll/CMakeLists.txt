@@ -295,6 +295,12 @@ set_target_properties(UE5Dumper PROPERTIES
     OUTPUT_NAME "UE5Dumper"
 )
 
+# The proxies build into their own folder, never beside the test executables: a test that imports
+# version.dll would load our proxy from its own folder first (the DLL search order a proxy exists to use),
+# and its DllMain would start a pipe server and log inside the test. dist\ keeps them in proxy\ for the
+# same reason. build.ps1 takes each one from here.
+set(UE5_PROXY_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/proxy)
+
 # ============================================================
 # Proxy DLL targets — version.dll / dinput8.dll / dxgi.dll
 #
@@ -358,6 +364,7 @@ if(BUILD_PROXY_DLL)
     set_target_properties(UE5Dumper_Proxy PROPERTIES
         PREFIX ""
         OUTPUT_NAME "version"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -387,6 +394,7 @@ if(BUILD_PROXY_DINPUT8)
     set_target_properties(UE5Dumper_ProxyDinput8 PROPERTIES
         PREFIX ""
         OUTPUT_NAME "dinput8"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -450,6 +458,7 @@ if(BUILD_PROXY_DXGI)
     set_target_properties(UE5Dumper_ProxyDxgi PROPERTIES
         PREFIX ""
         OUTPUT_NAME "dxgi"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -510,6 +519,7 @@ if(BUILD_PROXY_WINMM)
     set_target_properties(UE5Dumper_ProxyWinmm PROPERTIES
         PREFIX ""
         OUTPUT_NAME "winmm"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
