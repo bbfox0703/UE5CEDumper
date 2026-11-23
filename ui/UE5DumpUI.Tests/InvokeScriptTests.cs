@@ -3800,8 +3800,7 @@ public class InvokeScriptTests
 
         Assert.Matches(@"TP_ERR_PARENT_RELATIVE\s*=\s*-16\s*,", DllSource("Wirbel.h"));
         Assert.Equal(-16, TeleportCodes.ParentRelative);
-        // Control: the mailbox handler still passes BugItGo's code straight through, with no field of its own.
-        Assert.Contains("rc = Wirbel::BugItGo(&tier);", DllSource("Mimic.cpp"), StringComparison.Ordinal);
+        // The mailbox passing BugItGo's code through is mimic_mailbox_test's TELEPORT block.
     }
 
     [Fact]
@@ -3864,49 +3863,24 @@ public class InvokeScriptTests
         Assert.Contains("return TP_ERR_PARENT_RELATIVE;", rel, StringComparison.Ordinal);
         Assert.Contains("&landingParentRelative", rel, StringComparison.Ordinal);
         Assert.Contains("!landingParentRelative", rel, StringComparison.Ordinal);
-
-        // Control: the transports still pass Wirbel's code straight through.
-        var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("rc = Wirbel::RecallMarker(slot, op == TP_OP_RECALL_FORCE, &tier);", mimic, StringComparison.Ordinal);
+        // The mailbox passing the slot, the force bit and Wirbel's code through is mimic_mailbox_test's TELEPORT block.
     }
 
     [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
-        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. Frieren.cpp reaches no test target
-        // yet and mimic_mailbox_test does not drive CMD_TELEPORT, so this pins their source; the generated scripts must
-        // claim the contract that carries the byte.
-        var mimic = DllSource("Mimic.cpp");
-        // Box(): the mailbox the command came from, this copy's or one it took over ([DUMPER-SECOND-COPY-AUTOSTART]).
-        Assert.Contains("Box().paramsData[178] = flags;", mimic, StringComparison.Ordinal);
-        Assert.Contains("writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);", mimic, StringComparison.Ordinal);
-        Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown)", mimic,
-            StringComparison.Ordinal);
+        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the C ABI half. The mailbox half -- each op's flags byte, an
+        // unknown landing published as NaN with bit1 -- is mimic_mailbox_test's TELEPORT block. Frieren.cpp reaches no
+        // test target yet, so its source is pinned here; the generated scripts must claim the contract that carries
+        // the byte.
         var frieren = DllSource("Frieren.cpp");
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown)", frieren,
             StringComparison.Ordinal);
-
-        // The pins above alone would let one-line mutants through -- a shared substring that matches any of three
-        // writes, and nothing on the GET_POSE / BUGIT_SAVE flags, the NaN landing or bit1.
-        static int CountOf(string s, string sub)
-        {
-            int n = 0;
-            for (int i = s.IndexOf(sub, StringComparison.Ordinal); i >= 0;
-                 i = s.IndexOf(sub, i + sub.Length, StringComparison.Ordinal)) n++;
-            return n;
-        }
-        Assert.Equal(2, CountOf(mimic, "writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);"));              // GET_POSE, BUGIT_SAVE
-        Assert.Equal(3, CountOf(mimic, "writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);"));    // SAVE, GET_MARKER, GET_LAST
-        Assert.Contains("if (rc == 0) writePoseBlock(p, nullptr, 0, tier, landingKnown ? 0 : 0x02);", mimic,
-            StringComparison.Ordinal);                                                                          // bit1
-        foreach (var (name, src) in new[] { ("Mimic.cpp", mimic), ("Frieren.cpp", frieren) })
-        {
-            int unknown = src.IndexOf("if (rc == 0 && !landingKnown) {", StringComparison.Ordinal);
-            int nan = src.IndexOf("const uint64_t nanBits = 0x7FF8000000000000ull;", Math.Max(unknown, 0),
-                StringComparison.Ordinal);
-            Assert.True(unknown >= 0 && nan > unknown && nan - unknown < 400,
-                name + ": an unknown landing must publish NaN, never the zero-initialised pose");
-        }
+        int unknown = frieren.IndexOf("if (rc == 0 && !landingKnown) {", StringComparison.Ordinal);
+        int nan = frieren.IndexOf("const uint64_t nanBits = 0x7FF8000000000000ull;", Math.Max(unknown, 0),
+            StringComparison.Ordinal);
+        Assert.True(unknown >= 0 && nan > unknown && nan - unknown < 400,
+            "Frieren.cpp: an unknown landing must publish NaN, never the zero-initialised pose");
         Assert.Contains("if (outParentRelative) *outParentRelative = m.ParentRelative;", DllSource("Wirbel.cpp"),
             StringComparison.Ordinal);
         Assert.Contains("if poseFlags % 2 == 1 then",
