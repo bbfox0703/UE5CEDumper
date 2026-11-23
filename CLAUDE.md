@@ -102,11 +102,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
 # Run tests only
-# ⚠ -Target Test does NOT compile the whole DLL. It builds 6 test executables, and
-#   **14 of the 33** dll/src .cpp files reach a test target so far: dll_core_test #includes
+# ⚠ -Target Test does NOT compile the whole DLL. It builds 7 test executables, and
+#   **15 of the 33** dll/src .cpp files reach a test target so far: dll_core_test #includes
 #   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme / Linie / Solitar into one TU,
 #   dll_helpers_test compiles Falsch, and grausam_window_test / sein_retention_test /
-#   methode_plugin_test take one each. A green -Target Test says nothing about the other 19
+#   methode_plugin_test take one each, and dunste_fly_test compiles Dunste against ue5_testcore
+#   (those core files as a library). A green -Target Test says nothing about the other 18
 #   (Fern.cpp and Stark.cpp among them). That is a gap to close, not a kind of file that
 #   cannot be tested: see "Everything testable is tested" under ## Code Changes. Build the
 #   DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before claiming a C++ change

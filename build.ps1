@@ -1309,6 +1309,12 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # dunste_fly_test compiles Dunste.cpp (Fly / Noclip) against ue5_testcore, the core files built as a library,
+    # and drives it over a fake world and a fake game thread.
+    if (-not (Invoke-CppSelfTest -TargetName "dunste_fly_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the

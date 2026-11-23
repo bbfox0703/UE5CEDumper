@@ -51,6 +51,8 @@ TARGET_OBJECT_MARKERS = {
     "grausam_window_test": "grausam_window_test.dir",
     "sein_retention_test": "sein_retention_test.dir",
     "methode_plugin_test": "methode_plugin_test.dir",
+    "ue5_testcore": "ue5_testcore.dir",
+    "dunste_fly_test": "dunste_fly_test.dir",
     "dll_core_test": "dll_core_test.dir",
 }
 
