@@ -706,7 +706,8 @@ static void QueueBlocks() {
               && Out() == Outs{ { kOwnerA, 1 } } && A.queued.valid() && !Ready(A.queued),
               F("rc=%d elapsed=%llu", A.rc, (unsigned long long)A.elapsed).c_str());
         g_game.Pump();
-        check("QUEUE shutdown: the cut request still runs on the next ProcessEvent", Get(A.queued) == 0 && b.out == 5);
+        check("QUEUE shutdown: the cut request still runs on the next ProcessEvent, on its own copy",
+              Get(A.queued) == 0 && Calls(kFuncAdd).size() == 1 && b.out == 0);
 
         ResetStark();
         Stark::SetInvokeTimeoutMs(200);
