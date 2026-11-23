@@ -257,19 +257,13 @@ public class DebugCameraScriptGeneratorTests
 
     // [DEBUGCAM-QUEUED-OFF-NOESCALATE] The DLL's own -5 texts must give each direction its own advice. The mailbox writes
     // one of them into errorMsg, which a CE script renders verbatim, so one shared "it will run ... do not re-send" would
-    // tell a script that sent OFF not to re-send over a camera that stays on. Mimic.cpp is in no C++ test target.
+    // tell a script that sent OFF not to re-send over a camera that stays on. The mailbox's texts are
+    // mimic_mailbox_test's DEBUGCAM; this keeps the headers and the spec from saying otherwise.
     [Fact]
     public void The_DLLs_queued_texts_tell_a_queued_OFF_to_be_sent_again_and_never_claim_a_second_toggle_undoes_the_first()
     {
         string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
-        var mimic = Src("dll/src/Mimic.cpp");
-        int at = mimic.IndexOf("static void HandleSetDebugCamera() {", System.StringComparison.Ordinal);   // not the declaration
-        Assert.True(at >= 0, "HandleSetDebugCamera is gone");
-        var body = mimic.Substring(at, mimic.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
-        Assert.Contains("Debug Camera: OFF did not complete", body);
-        Assert.Contains("send OFF again once the game responds", body);
-        Assert.Contains("Debug Camera: ON queued", body);                      // the ON keeps "do not re-send"
-
+        // The mailbox's own texts are mimic_mailbox_test's DEBUGCAM; the headers and the spec must not say otherwise.
         foreach (var file in new[] { "dll/src/Frieren.h", "dll/src/Stark.h", "dll/src/Mimic.h", "docs/dll-spec.md" })
         {
             var text = Src(file);
@@ -307,17 +301,4 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("s_dbgCamSetMutex", fr);
     }
 
-    // [DBGCAM-OFF-OVER-QUEUED-ON] A Set refused over an opposite queued toggle sends nothing; the mailbox says so
-    // in each direction, where a CE script shows it verbatim.
-    [Fact]
-    public void The_mailbox_says_a_toggle_refused_over_an_opposite_queued_one_was_not_sent()
-    {
-        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
-        var mimic = Src("dll/src/Mimic.cpp");
-        int at = mimic.IndexOf("static void HandleSetDebugCamera() {", System.StringComparison.Ordinal);
-        var body = mimic.Substring(at, mimic.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
-        Assert.Contains("Stark::kToggleBlockedByQueued", body);
-        Assert.Contains("Debug Camera: OFF not sent -- an earlier ON is still queued", body);
-        Assert.Contains("Debug Camera: ON not sent -- an earlier OFF is still queued", body);
-    }
 }

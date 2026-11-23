@@ -272,6 +272,8 @@ int main() {
               Voll::Holds().Owner(worldTime) == 0);
     }
 
+    // [W3-DEBUGCAM-QUEUED] [DBGCAM-OFF-OVER-QUEUED-ON] A queued toggle runs later and a blocked one never ran: the text
+    // CE shows verbatim says which, in each direction.
     {   blk("DEBUGCAM - a queued or blocked toggle says what to do next, and a pending ON stays its sender's");
         g_debugCameraRc = Stark::kInvokeTimedOutStillQueued;
         Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);

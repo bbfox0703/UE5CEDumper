@@ -2069,10 +2069,9 @@ public class InvokeScriptTests
     [Fact]
     public void SetDebugCamera_PassesAQueuedToggleThrough()
     {
-        // [W3-DEBUGCAM-QUEUED] Frieren and Mimic reach no test target, so their halves are pinned from source; the mapper
-        // itself is dll_helpers_test's DBGCAMQ block.
+        // [W3-DEBUGCAM-QUEUED] Frieren reaches no test target yet, so its half is pinned from source; the mapper is
+        // dll_helpers_test's DBGCAMQ block, and the mailbox passing a queued toggle through is mimic_mailbox_test's DEBUGCAM.
         Assert.Contains("return Stark::StatefulToggleFailure(r);", DllSource("Frieren.cpp"));
-        Assert.Contains("state == Stark::kInvokeTimedOutStillQueued", DllSource("Mimic.cpp"));
     }
 
     [Fact]
@@ -2095,12 +2094,9 @@ public class InvokeScriptTests
     [Fact]
     public void OffsetsVerdict_ReachesTheCeMailbox()
     {
-        // [W5-OFFSETS-MAILBOX] No test target compiles Mimic.cpp and the CE helper is Lua, so the wiring is pinned from
-        // source; the numbering, the contract bump and the init exemption are dll_helpers_test's.
-        string mimic = DllSource("Mimic.cpp");
-        Assert.Contains("case CMD_OFFSETS_VERDICT:", mimic);
-        Assert.Contains("UE5_GetOffsetsVerdict(reason,", mimic);
-
+        // [W5-OFFSETS-MAILBOX] The mailbox's half -- served with no init, the reason in paramsData -- is
+        // mimic_mailbox_test's OFFSETS; the numbering, the contract bump and the init exemption are dll_helpers_test's.
+        // The CE helper is Lua, so its half is read here.
         string lua = HelperLuaResource.Read();
         Assert.Contains("local CMD_OFFSETS_VERDICT = 16", lua);
         Assert.Contains("function getOffsetsVerdict()", lua);
@@ -2192,19 +2188,15 @@ public class InvokeScriptTests
     [Fact]
     public void MailboxInitFastPath_WaitsWhileAnInitIsScanning()
     {
-        // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp and Mimic.cpp reach no test target: the RULE is pinned in dll_helpers_test
-        // (Mimic::InitFastPathOk), and this pins both ends of its wiring. UE5_Init must raise the flag under s_initMutex
-        // BEFORE FindAll publishes the globals, and the mailbox's fast path must read it.
+        // [A3-MIMIC-INIT-FASTPATH] The RULE is dll_helpers_test's (Mimic::InitFastPathOk) and the mailbox waiting on the
+        // flag is mimic_mailbox_test's INITGATE. Frieren.cpp reaches no test target yet: UE5_Init must raise the flag
+        // under s_initMutex BEFORE FindAll publishes the globals.
         var frieren = DllSource("Frieren.cpp");
         int lockAt    = frieren.IndexOf("std::unique_lock<std::mutex> initLock(s_initMutex", StringComparison.Ordinal);
         int scopeAt   = frieren.IndexOf("} initInProgress;", StringComparison.Ordinal);
         int findAllAt = frieren.IndexOf("Genau::FindAll(ptrs", StringComparison.Ordinal);
         Assert.True(lockAt >= 0 && scopeAt > lockAt && findAllAt > scopeAt,
                     "UE5_Init must raise g_initInProgress under s_initMutex, before FindAll publishes the globals");
-        var mimic = DllSource("Mimic.cpp");
-        // [R7-S9] ...through InitSettled, which reads the globals into locals first and the flag last.
-        Assert.Contains("Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress)", mimic, StringComparison.Ordinal);
-        Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
     }
 
     private static string DllSrcDir()
@@ -2499,7 +2491,8 @@ public class InvokeScriptTests
         // load as ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised
         // it and GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0
         // a call to UE5_Init returns at once (initialised, no fence up YET), and a re-read of the globals then catches them
-        // as the apply publishes them. Mimic.cpp reaches no test target, so the order is pinned in source.
+        // as the apply publishes them. (1) is an order of two loads no single-threaded test can observe, so it is
+        // pinned in source; (2) is also mimic_mailbox_test's INITGATE.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
         Assert.True(settled >= 0, "InitSettled not found");
@@ -2547,7 +2540,7 @@ public class InvokeScriptTests
         // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
         // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
         // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- needs its own
-        // pin. Mimic.cpp reaches no test target, so the glue is pinned here.
+        // pin. mimic_mailbox_test does not drive CMD_INVOKE yet, so the glue is pinned here.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
         Assert.True(fn >= 0, "HandleInvoke was not found");
@@ -3880,8 +3873,9 @@ public class InvokeScriptTests
     [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
-        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
-        // or Frieren.cpp, so this pins their source; the generated scripts must claim the contract that carries the byte.
+        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. Frieren.cpp reaches no test target
+        // yet and mimic_mailbox_test does not drive CMD_TELEPORT, so this pins their source; the generated scripts must
+        // claim the contract that carries the byte.
         var mimic = DllSource("Mimic.cpp");
         // Box(): the mailbox the command came from, this copy's or one it took over ([DUMPER-SECOND-COPY-AUTOSTART]).
         Assert.Contains("Box().paramsData[178] = flags;", mimic, StringComparison.Ordinal);

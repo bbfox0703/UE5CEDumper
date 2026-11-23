@@ -578,8 +578,9 @@ public sealed class PipePerProcessSourceTests
     }
 
     // ── who holds each gameplay hold ────────────────────────────────────────────────────────────────────────────────
-    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger. Fern.cpp and Mimic.cpp reach no test target,
-    // so where they use it is pinned here.
+    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger, and the mailbox's hold changes are
+    // mimic_mailbox_test's HOLDS. Fern.cpp reaches no test target yet and CMD_INVOKE is not driven there, so those uses
+    // are pinned here.
 
     /// <summary>Every pipe command that changes a hold runs under the hold's lock, and an if_free refusal is decided
     /// under it, before the first command branch: a check made anywhere else would race the other writers.</summary>
@@ -646,27 +647,6 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Voll::Holds().Owner(hold) != owner", body[owned..]);   // a hold taken over meanwhile stays
     }
 
-    /// <summary>The mailbox is the third writer: every command of it that changes a hold goes through the same lock
-    /// and names CE as the owner.</summary>
-    [Theory]
-    [InlineData("HandleSetDebugCamera", "HOLD_DEBUG_CAMERA")]
-    [InlineData("HandleProtect", "HOLD_GOD_MODE")]
-    [InlineData("HandleForeground", "HOLD_FOREGROUND_LOCK")]
-    [InlineData("HandleMovement", "HOLD_GRAVITY_DIRECTION")]
-    [InlineData("HandleMovement", "HOLD_MOVEMENT_PREFIX")]
-    [InlineData("HandleTime", "HOLD_TIME_PREFIX")]
-    [InlineData("HandleFly", "HOLD_FLY")]
-    public void TheMailbox_ChangesEachHoldAsCe(string handler, string hold)
-    {
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        int start = mimic.IndexOf("static void " + handler + "() {", StringComparison.Ordinal);
-        Assert.True(start > 0, handler);
-        int end = mimic.IndexOf("\nstatic void ", start + 10, StringComparison.Ordinal);
-        string body = mimic[start..(end > 0 ? end : mimic.Length)];
-        Assert.Contains("ChangeHoldAsCe", body);
-        Assert.Contains("Grimoire::" + hold, body);
-    }
-
     /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A CE record that runs the debug camera's own functions (a Console row
     /// baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as CMD_SET_DEBUG_CAMERA does.
     /// Unrecorded, the camera it turned on would stay named for whoever held it before -- an AI session, whose end
@@ -728,7 +708,8 @@ public sealed class PipePerProcessSourceTests
     // ── write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────────────────
     // The pure rules are dll_helpers_test's (Lager::ClassifyWriteRegion, Stark::InvokeBlocks,
     // Voll::InvokeRefusedForBackground) and dll_core_test's (Macht::ClassifyWriteRange / WriteDataBytes on real pages).
-    // Fern, Stark, Frieren and Mimic reach no test target, so where they use them, and in what order, is pinned here.
+    // Fern, Stark and Frieren reach no test target yet, and mimic_mailbox_test does not drive Mimic's invoke path, so
+    // where they use them, and in what order, is pinned here.
 
     private static string Between(string text, string start, string end)
     {
