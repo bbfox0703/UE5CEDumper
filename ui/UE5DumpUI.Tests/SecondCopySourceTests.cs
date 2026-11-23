@@ -6,8 +6,9 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [DUMPER-SECOND-COPY-AUTOSTART] Two copies of the dumper in one game process: the later copy takes over. Which copy
 /// is retired, when a mailbox is served, what it says afterwards, and where an export call goes
-/// are unit-tested in dll_helpers_test (Land.h). The wiring sits in Land.cpp, Frieren.cpp, Heiter.cpp and Mimic.cpp,
-/// which reach no C++ test target, so it is pinned here from the source.
+/// are unit-tested in dll_helpers_test (Land.h). The wiring in Land.cpp, Frieren.cpp and Heiter.cpp reaches no C++
+/// test target yet, so it is pinned here from the source; Mimic.cpp's -- the mailboxes the poller serves, what a stop
+/// leaves in them -- is mimic_mailbox_test's LIFECYCLE and BOX blocks.
 /// </summary>
 public sealed class SecondCopySourceTests
 {
@@ -106,7 +107,8 @@ public sealed class SecondCopySourceTests
     }
 
     /// <summary>The yielded copy's shutdown and pipe stop are no-ops; the hand-off's own shutdown leaves the mailbox
-    /// whole and says SKIPPED until the later copy serves it, where an untick clears it and says IDLE.</summary>
+    /// whole and says SKIPPED until the later copy serves it, where an untick clears it and says IDLE. StopThread's own
+    /// clear is mimic_mailbox_test's LIFECYCLE.</summary>
     [Fact]
     public void AHandedOverCopysShutdownStopsNothing_AndTheHandOffKeepsTheMailbox()
     {
@@ -119,8 +121,6 @@ public sealed class SecondCopySourceTests
         string body = FunctionBody(frieren, "static void ShutdownBody(bool handingOver) {");
         Assert.Contains("Mimic::StopThread(!handingOver)", body);
         Assert.Matches(@"initState\s*=\s*handingOver\s*\?\s*Mimic::INIT_SKIPPED\s*:\s*Mimic::INIT_IDLE", body);
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        Assert.Matches(@"if\s*\(clearMailbox\)\s*memset\(&g_invokeMailbox", FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
     /// <summary>The later copy takes over inside its pipe start, after its own scan and before it asks who holds the
@@ -212,30 +212,24 @@ public sealed class SecondCopySourceTests
         Assert.Contains("RouteCall(s, target != nullptr, t_forwardHops)", FunctionBody(land, "Routing RouteExport(const char* exportName) {"));
     }
 
-    /// <summary>Every mailbox handler answers in the mailbox its command came from: only the export definition, the
-    /// poller's own-mailbox steps, StopThread's clear and GetAddress name this copy's mailbox directly.</summary>
+    /// <summary>Every mailbox handler answers in the mailbox its command came from: mimic_mailbox_test's BOX sends
+    /// each command to another mailbox while this copy's own holds a decoy, and WINDOW / LIFECYCLE drive the poller.
+    /// What stays here, and why: the rule that only the export, the poller's own-mailbox steps, StopThread's clear and
+    /// GetAddress name this copy's mailbox covers a handler added later before BOX has a row for it; the mirror is
+    /// written before the serve within one pass, which no test can see apart; and s_box is per thread, which only two
+    /// pollers racing would show.</summary>
     [Fact]
     public void MailboxHandlersAnswerThroughBox()
     {
         string mimic = CodeOnly(DllSrc("Mimic.cpp"));
         Assert.DoesNotMatch(@"\bg_invokeMailbox\.",
                             Regex.Replace(mimic, @"g_invokeMailbox\.initState\s*[,)]", "OWN_STATE)"));
-        Assert.Contains("static MailboxData& Box()", mimic);
         string poller = FunctionBody(mimic, "static void PollingThreadBody() {");
-        Assert.Matches(@"ServeOne\(&g_invokeMailbox,\s*warnedThrow\)", poller);
         // Each adopted mailbox says this copy's state -- strictly, for a copy that cannot forward -- before it is served.
         InOrder(poller, "the adopted mailboxes", "s_adopted[slot].load(", "box->initState = Land::MirroredState(g_invokeMailbox.initState,",
                 "s_adoptedForwards[slot].load(", "ServeOne(box, warnedThrow)");
-        // A mailbox another poller is mid-command on is left to it.
-        string serve = FunctionBody(mimic, "static void ServeOne(MailboxData* box, bool& warnedThrow) {")[1..].TrimStart();
-        Assert.Matches(@"^s_box = box;\s*const int32_t seen = Box\(\)\.status;\s*if \(seen == STATUS_PROCESSING\) return;", serve);
-        // ...and one finishing -- DONE written, its cmd = IDLE not yet.
-        Assert.Matches(@"if \(cmd != CMD_IDLE && seen == STATUS_DONE\) \{\s*Sleep\(1\);\s*if \(Box\(\)\.cmd == CMD_IDLE\) return;", serve);
         // One poller's mailbox is not another's: a copy can run two (a stop that gave up, then a restart).
         Assert.Contains("static thread_local MailboxData* s_box", mimic);
-        // A stop marks the adopted mailboxes by how they stop being served.
-        Assert.Contains("Land::MirroredState(clearMailbox ? INIT_IDLE : INIT_SKIPPED,",
-                        FunctionBody(mimic, "void StopThread(bool clearMailbox) {"));
     }
 
     /// <summary>The layout pin holds whatever MAILBOX_LAYOUT_SINCE says: moving it fails the build until the pin is
