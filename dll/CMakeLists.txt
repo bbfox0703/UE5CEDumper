@@ -683,6 +683,27 @@ if(BUILD_DLL_TESTS)
     endif()
     ue5_apply_asan(sein_retention_test)
 
+    # ---- methode_plugin_test: the Cheat Engine plugin, driven through a fake Cheat Engine ----------------------
+    # It #includes Methode.cpp and hands it a fake ExportedFunctions table. "Our DLL is loaded" is staged with the
+    # built UE5Dumper.dll, mapped without running its DllMain, because the plugin decides by the file's own PE
+    # ProductName: so the test depends on that target and is told where it lands.
+    add_executable(methode_plugin_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/methode_plugin_test.cpp
+    )
+    target_include_directories(methode_plugin_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    add_dependencies(methode_plugin_test UE5Dumper)
+    target_compile_definitions(methode_plugin_test PRIVATE "METHODE_TEST_DUMPER_DLL=\"$<TARGET_FILE:UE5Dumper>\"")
+    if(MSVC)
+        set_property(TARGET methode_plugin_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(methode_plugin_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(methode_plugin_test)
+    target_link_libraries(methode_plugin_test PRIVATE version)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
