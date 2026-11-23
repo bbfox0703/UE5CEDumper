@@ -6,21 +6,26 @@
 //   the game would: a queued invoke run against its own copy of the parameters or the caller's buffer, a timeout that
 //   leaves the request queued, a request its waiter abandons or the drain claims first, the if_free owner rule decided
 //   under the queue's lock, the counts that last until a request is answered, a departed owner's drop, one request at
-//   a time with no nested drain, a shutdown that cuts the wait on a stalled game, and the own-call mark.
+//   a time with no nested drain, a shutdown that cuts the wait on a stalled game, and the own-call mark. Then the game
+//   thread's side: which entries count as its, the liveness they stamp, the own-call mark per thread, a fault
+//   contained, the profiler fed and a throw contained, the worker-thread skip, and the pick and its validation.
 //
 // WHAT IS FAKED
 //   Sein records every log line, so a check can read what was logged. ProcessEvent is FakePE, a function in this
 //   executable that records each call and adds two numbers into an out-parameter; s_originalPE is set to it directly,
 //   so no hook is installed here. With s_gameThreadId 0 every thread's entry counts as the game thread's.
+//   CreateToolhelp32Snapshot inside Stark.cpp is StarkTestSnapshot, which a test can make fail.
 //
 // WHY IT #includes THE .cpp
 //   The queue, its lock, its counts and the detour are statics of Stark.cpp. Linie, which the detour feeds, is
 //   ue5_testcore's; Falsch.cpp and MinHook are linked because the install path references them.
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>   // getenv_s: the AddressSanitizer build's negative control
+#include <stdexcept>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -53,7 +58,18 @@ void Debug(const char*, const char* fmt, ...) { va_list ap; va_start(ap, fmt); L
 void Summary(const char*, ...) {}
 }  // namespace Sein
 
+HANDLE WINAPI StarkTestSnapshot(DWORD flags, DWORD pid);
+#define CreateToolhelp32Snapshot StarkTestSnapshot
 #include "../src/Stark.cpp"  // NOLINT -- see "WHY IT #includes THE .cpp" above
+#undef CreateToolhelp32Snapshot
+static std::atomic<bool> g_failSnapshot{false};
+HANDLE WINAPI StarkTestSnapshot(DWORD flags, DWORD pid) {
+    if (g_failSnapshot.load()) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return INVALID_HANDLE_VALUE;
+    }
+    return CreateToolhelp32Snapshot(flags, pid);
+}
 
 // ── harness ─────────────────────────────────────────────────────────────────────────────────────────────────────
 static int g_pass = 0, g_fail = 0;
@@ -96,9 +112,13 @@ static bool WaitLog(char lvl, const std::string& prefix, int ms) {
 constexpr uintptr_t kTickObj = 0x7100, kTickFunc = 0x7101, kInst = 0x5000;
 constexpr uintptr_t kFuncAdd = 0xF001, kFuncGate = 0xF002, kFuncRaise = 0xF003, kFuncNest = 0xF004, kFuncDirect = 0xF005;
 constexpr uint64_t kOwnerA = 0x1111, kOwnerB = 0x2222;
+constexpr uintptr_t kObj = 0x10000100, kObj2 = 0x10000200, kParams = 0x5150;
+constexpr uintptr_t kPlain = 0xF100, kReenter = 0xF200, kNested = 0xF300, kQueued = 0xF400, kFault = 0xF500;
+constexpr uintptr_t kSuper = 0xF600, kNestOwn = 0xF700, kBlock = 0xF800, kFa = 0xFA00, kFb = 0xFB00, kFc = 0xFC00;
 
 struct AddParams { int32_t a, b, out; };
 struct PeCall {
+    char via;         // 'P' FakePE, 'V' FakeOverride, 'O' OtherPE
     uintptr_t obj, ufunc, params;
     DWORD tid;
     AddParams seen;   // the parameters as the call found them
@@ -113,6 +133,9 @@ static thread_local int t_peDepth = 0;
 static HANDLE g_gateEntered = nullptr, g_gateRelease = nullptr;
 static std::atomic<int> g_overrideCalls{0};
 static std::atomic<bool> g_overrideSawOwn{false};
+static HANDLE g_inside = nullptr, g_release = nullptr;
+static std::atomic<int32_t> g_innerRc{-99};
+static std::atomic<bool> g_afterInnerOwn{false};
 
 static bool IsAddId(uintptr_t f) { return f >= kFuncAdd && f <= kFuncDirect; }
 static void PushSeq(const char* fmt, uintptr_t f, int depth) {
@@ -129,6 +152,7 @@ static void __fastcall FakePE(void* obj, void* ufunc, void* params) {
     {
         std::lock_guard<std::mutex> lk(g_peMu);
         PeCall c{};
+        c.via = 'P';
         c.obj = reinterpret_cast<uintptr_t>(obj);
         c.ufunc = f;
         c.params = reinterpret_cast<uintptr_t>(params);
@@ -141,12 +165,17 @@ static void __fastcall FakePE(void* obj, void* ufunc, void* params) {
         PushSeq("+%llX@%d", f, t_peDepth);
     }
     if (f == kFuncRaise) RaiseException(0xE0000F0D, 0, 0, nullptr);
+    if (f == kFault) {
+        const ULONG_PTR info[2] = { 0, 0x10 };
+        RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 2, info);
+    }
     ++t_peDepth;
     if (f == kFuncGate) {
         SetEvent(g_gateEntered);
         WaitForSingleObject(g_gateRelease, 10000);
     }
     if (f == kFuncNest) Stark::HookedProcessEvent(reinterpret_cast<void*>(kTickObj), reinterpret_cast<void*>(kTickFunc), nullptr);
+    if (f == kReenter) Stark::HookedProcessEvent(obj, reinterpret_cast<void*>(kNested), params);
     if (params && IsAddId(f)) {
         auto* p = static_cast<AddParams*>(params);
         p->out = p->a + p->b;
@@ -156,12 +185,39 @@ static void __fastcall FakePE(void* obj, void* ufunc, void* params) {
     g_pe[me].exited = true;
     PushSeq("-%llX", f, 0);
 }
-// A class's own ProcessEvent override: it calls Super::ProcessEvent, the address the hook patched.
+static void Record(char via, void* obj, void* ufunc, void* params) {
+    std::lock_guard<std::mutex> lk(g_peMu);
+    PeCall c{};
+    c.via = via;
+    c.obj = reinterpret_cast<uintptr_t>(obj);
+    c.ufunc = reinterpret_cast<uintptr_t>(ufunc);
+    c.params = reinterpret_cast<uintptr_t>(params);
+    c.tid = GetCurrentThreadId();
+    c.own = Stark::InOwnPeCall();
+    c.exited = true;
+    g_pe.push_back(c);
+}
+// A class's own ProcessEvent override. Direct and Super call Super::ProcessEvent, the address the hook patched;
+// NestOwn makes an own call of its own inside; Block parks until the test releases it.
 static void __fastcall FakeOverride(void* obj, void* ufunc, void* params) {
+    const uintptr_t f = reinterpret_cast<uintptr_t>(ufunc);
     g_overrideCalls.fetch_add(1);
     g_overrideSawOwn.store(Stark::InOwnPeCall());
-    Stark::HookedProcessEvent(obj, ufunc, params);
+    Record('V', obj, ufunc, params);
+    if (f == kFuncDirect) Stark::HookedProcessEvent(obj, ufunc, params);
+    else if (f == kSuper) Stark::HookedProcessEvent(obj, reinterpret_cast<void*>(kNested), params);
+    else if (f == kNestOwn) {
+        g_innerRc.store(Stark::CallOriginalSEH(reinterpret_cast<uintptr_t>(obj), kPlain,
+                                               reinterpret_cast<uintptr_t>(params)));
+        g_afterInnerOwn.store(Stark::InOwnPeCall());
+    } else if (f == kBlock) {
+        SetEvent(g_inside);
+        WaitForSingleObject(g_release, 10000);
+    }
 }
+// What the trampoline would reach: a call routed there instead of to the address given is seen as 'O'.
+static void __fastcall OtherPE(void* obj, void* ufunc, void* params) { Record('O', obj, ufunc, params); }
+static bool ThrowingReader(uintptr_t, Linie::FuncIdentity&) { throw std::runtime_error("reader boom"); }
 static void __fastcall FakeOverrideRaise(void*, void*, void*) {
     g_overrideCalls.fetch_add(1);
     RaiseException(0xE0000F0E, 0, 0, nullptr);
@@ -169,12 +225,12 @@ static void __fastcall FakeOverrideRaise(void*, void*, void*) {
 static std::vector<PeCall> Calls(uintptr_t f) {
     std::lock_guard<std::mutex> lk(g_peMu);
     std::vector<PeCall> out;
-    for (const auto& c : g_pe) if (c.ufunc == f) out.push_back(c);
+    for (const auto& c : g_pe) if (c.via == 'P' && c.ufunc == f) out.push_back(c);
     return out;
 }
 static bool AnyCallWithA(int32_t a) {
     std::lock_guard<std::mutex> lk(g_peMu);
-    for (const auto& c : g_pe) if (IsAddId(c.ufunc) && c.seen.a == a) return true;
+    for (const auto& c : g_pe) if (c.via == 'P' && IsAddId(c.ufunc) && c.seen.a == a) return true;
     return false;
 }
 
@@ -228,12 +284,13 @@ struct Caller {
     int32_t rc = 0;
     uint64_t id = 0, blocker = 0, elapsed = 0;
     std::shared_future<int32_t> queued;
+    uintptr_t inst = kInst;
     void Start(uint64_t owner, bool ifFree, uintptr_t func, AddParams* buf, size_t size, bool drop = false,
                bool wantQueued = false) {
         th = std::thread([this, owner, ifFree, func, buf, size, drop, wantQueued] {
             auto body = [&] {
                 const uint64_t t0 = Stark::NowMs();
-                rc = Stark::EnqueueInvoke(kInst, func, reinterpret_cast<uintptr_t>(buf), size, drop,
+                rc = Stark::EnqueueInvoke(inst, func, reinterpret_cast<uintptr_t>(buf), size, drop,
                                           wantQueued ? &queued : nullptr);
                 elapsed = Stark::NowMs() - t0;
                 id = Stark::LastEnqueuedId();
@@ -877,6 +934,509 @@ static void QueueBlocks() {
     }
 }
 
+// The game thread's side: which entries count as its, the liveness they stamp, the own-call mark, a fault contained,
+// the profiler fed and a throw contained, the worker-thread skip, and the pick and its validation. Here the main
+// thread plays the game thread wherever one is named; the fake game thread of the queue blocks has stopped.
+constexpr uint32_t kNoThread = 1234;   // not a multiple of 4: never a real thread id, a pick that never fires
+static DWORD g_mainTid = 0;
+
+static void ResetThread(uint32_t gameTid, Stark::GameThreadIdSource src) {
+    ResetStark();
+    Linie::StopRecording();
+    Linie::Reset();
+    Stark::s_hookInstalledMs.store(Stark::NowMs());
+    Stark::s_hookFireCount.store(0);
+    Stark::s_gameThreadFireCount.store(0);
+    Stark::s_otherThreadFireCount.store(0);
+    Stark::s_workerSkipCount.store(0);
+    Stark::s_gameThreadId.store(gameTid);
+    Stark::s_gameThreadSource.store(static_cast<uint8_t>(src));
+    Stark::s_gameThreadTried.store(true);
+    Stark::SetInvokeTimeoutMs(10000);
+    { std::lock_guard<std::mutex> lk(g_logMu); g_log.clear(); }
+}
+static void Fire(uintptr_t obj, uintptr_t f, int times = 1) {
+    for (int i = 0; i < times; ++i)
+        Stark::HookedProcessEvent(reinterpret_cast<void*>(obj), reinterpret_cast<void*>(f), reinterpret_cast<void*>(kParams));
+}
+static Caller& Pipe(uintptr_t inst, uintptr_t f) {
+    Caller& c = NewCaller();
+    c.inst = inst;
+    c.Start(0, false, f, nullptr, 0);
+    return c;
+}
+static std::vector<PeCall> Recs() { std::lock_guard<std::mutex> lk(g_peMu); return g_pe; }
+static int IndexOf(const std::vector<PeCall>& r, char via, uintptr_t f, DWORD tid) {
+    for (size_t i = 0; i < r.size(); ++i) if (r[i].via == via && r[i].ufunc == f && r[i].tid == tid) return static_cast<int>(i);
+    return -1;
+}
+static std::string Tail(const std::string& s, size_t n) { return s.size() >= n ? s.substr(s.size() - n) : s; }
+
+static void ThreadBlocks() {
+    using Src = Stark::GameThreadIdSource;
+    using Live = Stark::GameThreadLiveness;
+
+    {   blk("THREAD FIRES - a ProcessEvent counts for the game thread, or against the pick, and our own calls not at all");
+        ResetThread(g_mainTid, Src::Description);
+        Fire(kObj, kPlain, 4);
+        DWORD wtid = 0;
+        int32_t rc = -99;
+        RunOn([&] {
+            wtid = GetCurrentThreadId();
+            Fire(kObj, kPlain, 3);
+            rc = Stark::CallOriginalSEH(kObj, kReenter, kParams);
+        });
+        const auto r = Recs();
+        int mainPlain = 0, workerPlain = 0;
+        bool shaped = r.size() == 9;
+        for (const auto& c : r) {
+            shaped = shaped && c.via == 'P' && c.obj == kObj && c.params == kParams;
+            if (c.ufunc == kPlain && c.tid == g_mainTid) ++mainPlain;
+            if (c.ufunc == kPlain && c.tid == wtid) ++workerPlain;
+        }
+        const int re = IndexOf(r, 'P', kReenter, wtid), ne = IndexOf(r, 'P', kNested, wtid);
+        check("THREAD fires ⭐: the game thread's entries and the others' counted apart; our own nested call in neither",
+              Stark::GetHookFireCount() == 8 && Stark::GetGameThreadFireCount() == 4 && Stark::GetOtherThreadFireCount() == 3
+              && rc == 0, F("hook=%llu game=%llu other=%llu", (unsigned long long)Stark::GetHookFireCount(),
+              (unsigned long long)Stark::GetGameThreadFireCount(), (unsigned long long)Stark::GetOtherThreadFireCount()).c_str());
+        check("THREAD fires: every call forwarded with its object and parameters, on its own thread", shaped
+              && mainPlain == 4 && workerPlain == 3 && re >= 0 && ne > re && r[re].own && r[ne].own
+              && Stark::s_lastHookFireMs.load() != 0);
+
+        ResetThread(0, Src::Unknown);
+        Fire(kObj, kPlain, 2);
+        RunOn([] { Fire(kObj, kPlain, 2); });
+        check("THREAD fires: with no pick neither counter moves, and every entry stamps", Stark::GetHookFireCount() == 4
+              && Stark::GetGameThreadFireCount() == 0 && Stark::GetOtherThreadFireCount() == 0
+              && Stark::s_lastHookFireMs.load() != 0);
+    }
+
+    {   blk("THREAD LIVENESS - only the game thread's fires keep it looking alive; the thresholds and the grace after install");
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_lastHookFireMs.store(0);
+        const uint64_t never = Stark::MsSinceLastHookFire();
+        Stark::s_lastHookFireMs.store(Stark::NowMs() + 60000);
+        const uint64_t ahead = Stark::MsSinceLastHookFire();
+        Stark::s_lastHookFireMs.store(Stark::NowMs() - 1000);
+        const uint64_t old = Stark::MsSinceLastHookFire();
+        check("THREAD liveness: never fired is UINT64_MAX, a stamp ahead of the clock 0, an old one its age",
+              never == UINT64_MAX && ahead == 0 && old >= 1000 && old < 3000);
+
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_hookInstalledMs.store(Stark::NowMs() - 10000);
+        const uint64_t stale = Stark::NowMs() - 5000;
+        Stark::s_lastHookFireMs.store(stale);
+        RunOn([] { Fire(kObj, kPlain, 10); });
+        const bool workerKeptStale = Stark::s_lastHookFireMs.load() == stale && Stark::MsSinceLastHookFire() >= 5000
+            && Stark::GetGameThreadLiveness(0) == Live::Stalled && !Stark::IsGameThreadResponsive(0);
+        const uint64_t t0 = Stark::NowMs();
+        Fire(kObj, kPlain);
+        const uint64_t t1 = Stark::NowMs();
+        const uint64_t stamp = Stark::s_lastHookFireMs.load();
+        check("THREAD liveness ⭐: a worker's fires do not keep a stalled game thread alive; the game thread's do",
+              workerKeptStale && stamp >= t0 && stamp <= t1 && Stark::MsSinceLastHookFire() <= 1000
+              && Stark::GetGameThreadLiveness(0) == Live::Responsive && Stark::IsGameThreadResponsive(0));
+
+        ResetThread(0, Src::Unknown);
+        Stark::s_lastHookFireMs.store(Stark::NowMs() - 5000);
+        const uint64_t u0 = Stark::NowMs();
+        RunOn([] { Fire(kObj, kPlain); });
+        const uint64_t u1 = Stark::NowMs();
+        const uint64_t us = Stark::s_lastHookFireMs.load();
+        check("THREAD liveness: with no pick any thread's fire stamps", us >= u0 && us <= u1
+              && Stark::GetGameThreadLiveness(0) == Live::Responsive);
+
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_hookInstalledMs.store(Stark::NowMs() - 10000);
+        Stark::s_lastHookFireMs.store(Stark::NowMs() - 1000);
+        const bool a = Stark::GetGameThreadLiveness(0) == Live::Stalled && Stark::GetGameThreadLiveness(-1) == Live::Stalled
+            && Stark::GetGameThreadLiveness(2000) == Live::Responsive && !Stark::IsGameThreadResponsive(0)
+            && Stark::IsGameThreadResponsive(2000);
+        bool b = false, sampled = false;
+        for (int i = 0; i < 5 && !sampled; ++i) {
+            const uint64_t n0 = Stark::NowMs();
+            Stark::s_lastHookFireMs.store(n0 - 100);
+            const Live r0 = Stark::GetGameThreadLiveness(0), r50 = Stark::GetGameThreadLiveness(50);
+            const bool resp50 = Stark::IsGameThreadResponsive(50);
+            if (Stark::NowMs() - n0 > 200) continue;
+            sampled = true;
+            b = r0 == Live::Responsive && r50 == Live::Stalled && !resp50;
+        }
+        check("THREAD liveness: 0 or less means the default threshold, and a threshold given is honoured", a && sampled && b);
+
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_lastHookFireMs.store(0);
+        Stark::s_hookInstalledMs.store(Stark::NowMs());
+        const bool justInstalled = Stark::GetGameThreadLiveness(0) == Live::Unknown && Stark::IsGameThreadResponsive(0);
+        Stark::s_hookInstalledMs.store(Stark::NowMs() - 2000);
+        const bool neverFired = Stark::GetGameThreadLiveness(0) == Live::Stalled && !Stark::IsGameThreadResponsive(0);
+        Stark::s_hookInstalledMs.store(0);
+        const bool noInstallTime = Stark::GetGameThreadLiveness(0) == Live::Unknown && Stark::IsGameThreadResponsive(0);
+        check("THREAD liveness: just installed is not yet known; installed 2 s ago and never fired is stalled",
+              justInstalled && neverFired && noInstallTime && Stark::MsSinceLastHookFire() == UINT64_MAX);
+
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_lastHookFireMs.store(Stark::NowMs() - 5000);
+        Stark::RemoveHook();
+        Fire(kObj, kPlain);
+        const int32_t rc = Stark::EnqueueInvoke(kObj, kQueued, 0, 0);
+        check("THREAD soft disable ⭐: with the hook off it still forwards and stamps, liveness is not known, invokes -7",
+              !Stark::IsHookActive() && CountLog('I', "GameThreadDispatch: hook flag cleared (physical hook retained to "
+              "avoid in-flight unhook race)") == 1 && IndexOf(Recs(), 'P', kPlain, g_mainTid) >= 0
+              && Stark::MsSinceLastHookFire() <= 1000 && Stark::GetGameThreadLiveness(0) == Live::Unknown
+              && Stark::IsGameThreadResponsive(0) && Stark::HasOriginal() && rc == -7, F("rc=%d", rc).c_str());
+        Stark::s_hookActive.store(true);
+    }
+
+    {   blk("THREAD OWN CALL - Stark's own calls are marked for their whole length, nest, and never drain");
+        ResetThread(g_mainTid, Src::Description);
+        bool before = true, mid = true, after = true;
+        int32_t r1 = -99, r2 = -99, r3 = -99;
+        RunOn([&] {
+            before = Stark::InOwnPeCall();
+            r1 = Stark::CallOriginalSEH(kObj, kPlain, kParams);
+            mid = Stark::InOwnPeCall();
+            r2 = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakeOverride), kObj, kPlain, kParams);
+            r3 = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakeOverride), kObj, kNestOwn, kParams);
+            after = Stark::InOwnPeCall();
+        });
+        const auto r = Recs();
+        bool order = r.size() == 4 && r[0].via == 'P' && r[0].ufunc == kPlain && r[1].via == 'V' && r[1].ufunc == kPlain
+            && r[2].via == 'V' && r[2].ufunc == kNestOwn && r[3].via == 'P' && r[3].ufunc == kPlain;
+        for (const auto& c : r) order = order && c.own && c.obj == kObj && c.params == kParams;
+        check("THREAD own call ⭐: marked inside, not outside; an inner own call returning leaves the outer one marked",
+              !before && !mid && !after && r1 == 0 && r2 == 0 && r3 == 0 && g_innerRc.load() == 0 && order
+              && g_afterInnerOwn.load());
+
+        ResetThread(0, Src::Unknown);
+        Caller& P = Pipe(kObj2, kQueued);
+        WaitDepth(1);
+        int32_t rA = -99, rB = -99;
+        RunOn([&] {
+            rA = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakeOverride), kObj, kSuper, kParams);
+            rB = Stark::CallOriginalSEH(kObj, kReenter, kParams);
+        });
+        const auto m = Recs();
+        const bool mailbox = m.size() == 4 && m[0].via == 'V' && m[0].ufunc == kSuper && m[1].via == 'P'
+            && m[1].ufunc == kNested && m[2].via == 'P' && m[2].ufunc == kReenter && m[3].via == 'P'
+            && m[3].ufunc == kNested && m[0].own && m[1].own && m[2].own && m[3].own;
+        const bool held = rA == 0 && rB == 0 && Stark::GetHookFireCount() == 2 && Stark::s_queueDepth.load() == 1
+            && !P.done.load();
+        Fire(kObj, kPlain);
+        P.Wait(2000);
+        const auto g = Recs();
+        const int q = IndexOf(g, 'P', kQueued, g_mainTid), pl = IndexOf(g, 'P', kPlain, g_mainTid);
+        check("THREAD own call ⭐: Super::ProcessEvent re-entering the hook inside our own call drains nothing",
+              mailbox && held, F("recs=%zu rA=%d rB=%d depth=%zu", m.size(), rA, rB, Stark::s_queueDepth.load()).c_str());
+        check("THREAD own call: the game thread's next ProcessEvent drains it, before its own call", q >= 0 && pl > q
+              && g[q].obj == kObj2 && !g[q].own && P.rc == 0 && Stark::s_queueDepth.load() == 0);
+
+        ResetThread(0, Src::Unknown);
+        ResetEvent(g_inside);
+        ResetEvent(g_release);
+        Caller& P2 = Pipe(kObj2, kQueued);
+        WaitDepth(1);
+        int32_t rc = -99;
+        std::thread mb([&] {
+            rc = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakeOverride), kObj, kBlock, kParams);
+        });
+        const bool inside = WaitForSingleObject(g_inside, 10000) == WAIT_OBJECT_0;
+        const bool ownOnMain = Stark::InOwnPeCall();
+        Fire(kObj, kPlain);
+        SetEvent(g_release);
+        mb.join();
+        P2.Wait(2000);
+        const auto t = Recs();
+        const int tq = IndexOf(t, 'P', kQueued, g_mainTid), tp = IndexOf(t, 'P', kPlain, g_mainTid);
+        int vb = -1;
+        for (size_t i = 0; i < t.size(); ++i) if (t[i].via == 'V' && t[i].ufunc == kBlock) vb = static_cast<int>(i);
+        check("THREAD own call ⭐: the mark is per thread -- the game thread drains while another is inside its own call",
+              inside && !ownOnMain && tq >= 0 && tp > tq && P2.rc == 0 && vb >= 0 && t[vb].own && rc == 0);
+
+        ResetThread(g_mainTid, Src::Description);
+        Caller& P3 = Pipe(kObj2, kReenter);
+        WaitDepth(1);
+        Fire(kObj, kPlain);
+        P3.Wait(2000);
+        const auto d = Recs();
+        const int dr = IndexOf(d, 'P', kReenter, g_mainTid), dn = IndexOf(d, 'P', kNested, g_mainTid);
+        const int dp = IndexOf(d, 'P', kPlain, g_mainTid);
+        check("THREAD own call: the drain is not our own call -- the game's nested dispatch in it counts as the game's",
+              dr >= 0 && dn > dr && dp > dn && !d[dr].own && !d[dn].own && Stark::GetGameThreadFireCount() == 2
+              && Stark::GetOtherThreadFireCount() == 0 && Stark::GetHookFireCount() == 2 && P3.rc == 0);
+    }
+
+    {   blk("THREAD FAULTS - a fault inside a call is contained, answered, and the mark released");
+        ResetThread(g_mainTid, Src::Description);
+        bool h0 = true, h1 = false, o1 = true, o2 = true;
+        int32_t a = 0, b = 0, c = -99;
+        RunOn([&] {
+            Stark::s_originalPE = nullptr;
+            h0 = Stark::HasOriginal();
+            a = Stark::CallOriginalSEH(kObj, kPlain, kParams);
+            o1 = Stark::InOwnPeCall();
+            Stark::s_originalPE = &FakePE;
+            h1 = Stark::HasOriginal();
+            b = Stark::CallOriginalSEH(kObj, kFault, kParams);
+            o2 = Stark::InOwnPeCall();
+            c = Stark::CallOriginalSEH(kObj, kPlain, kParams);
+        });
+        const auto r = Recs();
+        int faults = 0;
+        for (const auto& x : r) if (x.ufunc == kFault && x.own) ++faults;
+        check("THREAD fault ⭐: no original -3; a fault inside -4 with the process alive; the mark released after",
+              !h0 && a == -3 && !o1 && h1 && b == -4 && faults == 1 && !o2 && c == 0 && r.size() == 2,
+              F("a=%d b=%d c=%d recs=%zu", a, b, c, r.size()).c_str());
+
+        ResetThread(g_mainTid, Src::Description);
+        Stark::s_originalPE = &OtherPE;
+        int32_t x1 = 0, x2 = 0, x3 = -99;
+        bool ox = true;
+        RunOn([&] {
+            x1 = Stark::CallAddressAsOwnSEH(0, kObj, kPlain, kParams);
+            x2 = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakePE), kObj, kFault, kParams);
+            ox = Stark::InOwnPeCall();
+            x3 = Stark::CallAddressAsOwnSEH(reinterpret_cast<uintptr_t>(&FakeOverride), kObj, kPlain, kParams);
+        });
+        Stark::s_originalPE = &FakePE;
+        const auto s = Recs();
+        int pf = 0, v = 0, o = 0;
+        for (const auto& y : s) {
+            if (y.via == 'P' && y.ufunc == kFault && y.own) ++pf;
+            if (y.via == 'V' && y.ufunc == kPlain && y.own && y.obj == kObj && y.params == kParams) ++v;
+            if (y.via == 'O') ++o;
+        }
+        check("THREAD fault: an address call answers -3 with no address, -4 on a fault; the address given is the one called",
+              x1 == -3 && x2 == -4 && pf == 1 && !ox && x3 == 0 && v == 1 && o == 0);
+
+        ResetThread(g_mainTid, Src::Description);
+        Caller& P = Pipe(kObj2, kFault);
+        WaitDepth(1);
+        Fire(kObj, kPlain);
+        P.Wait(2000);
+        const auto q = Recs();
+        const int qf = IndexOf(q, 'P', kFault, g_mainTid), qp = IndexOf(q, 'P', kPlain, g_mainTid);
+        check("THREAD fault ⭐: a queued call that faults is answered -4 and logged, and the game's own call still runs",
+              P.rc == -4 && CountLog('E', "GameThreadDispatch: SEH exception during queued PE call") == 1
+              && HasLog('E', F("GameThreadDispatch: SEH exception during queued PE call inst=0x%llX func=0x%llX",
+                               (unsigned long long)kObj2, (unsigned long long)kFault))
+              && qf >= 0 && qp > qf && Stark::s_queueDepth.load() == 0 && Stark::GetHookFireCount() == 1);
+    }
+
+    {   blk("THREAD PROFILER AND GUARD - the hook feeds the profiler, and a throw in our work never reaches the game");
+        ResetThread(g_mainTid, Src::Description);
+        Linie::StartRecording();
+        Caller& P = Pipe(kObj2, kQueued);
+        WaitDepth(1);
+        const uint64_t t0 = Stark::NowMs();
+        Fire(kObj, kFa, 3);
+        Fire(kObj, kFb, 1);
+        RunOn([] { Fire(kObj, kFc, 2); });
+        const uint64_t t1 = Stark::NowMs();
+        Linie::StopRecording();
+        Fire(kObj, kFa, 5);
+        std::vector<Linie::FuncStat> rows;
+        uint64_t act = 0;
+        Linie::Snapshot(rows, act);
+        P.Wait(2000);
+        Linie::Reset();
+        auto row = [&](uintptr_t f) -> const Linie::FuncStat* {
+            for (const auto& x : rows) if (x.func == f) return &x;
+            return nullptr;
+        };
+        const Linie::FuncStat *ra = row(kFa), *rb = row(kFb), *rc = row(kFc);
+        bool inWindow = rows.size() == 3;
+        for (const auto& x : rows) inWindow = inWindow && t0 <= x.firstMs && x.firstMs <= x.lastMs && x.lastMs <= t1;
+        check("THREAD profiler ⭐: each function's fires counted in order, worker threads' too, none after the stop",
+              ra && rb && rc && ra->count == 3 && ra->firstSeq == 1 && rb->count == 1 && rb->firstSeq == 4 && rc->count == 2
+              && rc->firstSeq == 5 && inWindow && !row(kQueued) && P.rc == 0, F("rows=%zu", rows.size()).c_str());
+
+        ResetThread(g_mainTid, Src::Description);
+        Linie::StartRecording(&ThrowingReader);
+        Caller& P2 = Pipe(kObj2, kQueued);
+        WaitDepth(1);
+        bool escaped = false;
+        try { Fire(kObj, kFa); } catch (...) { escaped = true; }
+        const bool contained = !escaped && CountLog('E', "") == 1
+            && HasLog('E', "GameThreadDispatch: UNCAUGHT exception (reader boom) — contained. This would previously have "
+                           "terminated the game (0xC0000409).")
+            && IndexOf(Recs(), 'P', kFa, g_mainTid) >= 0 && Stark::GetHookFireCount() == 1
+            && Stark::s_lastHookFireMs.load() != 0 && Stark::s_queueDepth.load() == 1
+            && IndexOf(Recs(), 'P', kQueued, g_mainTid) < 0;
+        Linie::StopRecording();
+        Linie::Reset();
+        Fire(kObj, kPlain);
+        P2.Wait(2000);
+        const auto r = Recs();
+        const int gq = IndexOf(r, 'P', kQueued, g_mainTid), gp = IndexOf(r, 'P', kPlain, g_mainTid);
+        check("THREAD guard ⭐: a throw in our work is contained and logged, and the game's own call still runs",
+              contained, FirstLog('E', "").c_str());
+        check("THREAD guard: the work it cut short runs on the next ProcessEvent", gq >= 0 && gp > gq && P2.rc == 0);
+    }
+
+    {   blk("THREAD WORKER SKIP - a worker thread's ProcessEvent leaves queued work for the game thread, and says so once");
+        ResetThread(g_mainTid, Src::Description);
+        Caller& P = Pipe(kObj2, kQueued);
+        WaitDepth(1);
+        DWORD wtid = 0;
+        RunOn([&] {
+            wtid = GetCurrentThreadId();
+            Fire(kObj, kPlain, 3);
+            (void)Stark::CallOriginalSEH(kObj, kReenter, kParams);
+        });
+        const bool skipped = Stark::s_workerSkipCount.load() == 3 && CountLog('I', "GameThreadDispatch: a ProcessEvent on "
+            "thread ") == 1 && HasLog('I', F("GameThreadDispatch: a ProcessEvent on thread %lu (not the game thread %lu) "
+            "left 1 queued request(s) for the game thread", (unsigned long)wtid, (unsigned long)g_mainTid))
+            && IndexOf(Recs(), 'P', kQueued, wtid) < 0 && Stark::s_queueDepth.load() == 1;
+        Fire(kObj, kPlain);
+        P.Wait(2000);
+        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount(), Stark::GetOtherThreadFireCount());
+        check("THREAD worker skip ⭐: three worker entries left the request, one line said so; our own call is not one",
+              skipped, F("skips=%llu", (unsigned long long)Stark::s_workerSkipCount.load()).c_str());
+        check("THREAD worker skip: the game thread drains it, and the validation counts the skips", P.rc == 0
+              && IndexOf(Recs(), 'P', kQueued, g_mainTid) >= 0
+              && HasLog('I', F("GameThreadDispatch: game thread %lu (named GameThread by the engine) kept: 1 hook fires on "
+                               "it in the window, 3 on other threads (our own calls not counted); worker-thread entries "
+                               "that left queued work so far: 3", (unsigned long)g_mainTid)));
+    }
+
+    {   blk("THREAD PICK - the game thread is the one named GameThread, else the main thread; tried once");
+        using FnSetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+        const auto setDesc = reinterpret_cast<FnSetDesc>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"),
+                                                                        "SetThreadDescription"));
+        const std::string walkedTail = " threads walked); queued invokes drain on it only";
+        auto named = [&](const wchar_t* desc, std::function<void(DWORD)> body) {
+            HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr), done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            DWORD gtid = 0;
+            std::thread g([&] {
+                gtid = GetCurrentThreadId();
+                setDesc(GetCurrentThread(), desc);
+                SetEvent(ready);
+                WaitForSingleObject(done, 10000);
+            });
+            WaitForSingleObject(ready, 5000);
+            body(gtid);
+            SetEvent(done);
+            g.join();
+            CloseHandle(ready);
+            CloseHandle(done);
+        };
+        if (!setDesc) {
+            printf("  SKIP  THREAD pick by name: SetThreadDescription is not available here\n");
+        } else {
+            ResetThread(0, Src::Unknown);
+            Stark::s_gameThreadTried.store(false);
+            named(L"GameThread", [&](DWORD gtid) {
+                Stark::IdentifyGameThread();
+                const std::string line = FirstLog('I', "GameThreadDispatch: game thread ");
+                check("THREAD pick ⭐: the thread the engine named GameThread", Stark::GameThreadId() == gtid
+                      && Stark::GameThreadSource() == Src::Description && Stark::s_gameThreadTried.load()
+                      && line.rfind(F("GameThreadDispatch: game thread %lu, named GameThread by the engine (",
+                                      (unsigned long)gtid), 0) == 0 && Tail(line, walkedTail.size()) == walkedTail,
+                      line.c_str());
+            });
+            ResetThread(0, Src::Unknown);
+            Stark::s_gameThreadTried.store(false);
+            named(L"GameThreadPool", [&](DWORD) {
+                Stark::IdentifyGameThread();
+                check("THREAD pick: only the exact name counts -- GameThreadPool is not it", Stark::GameThreadId() == g_mainTid
+                      && Stark::GameThreadSource() == Src::MainThread);
+            });
+        }
+        ResetThread(0, Src::Unknown);
+        Stark::s_gameThreadTried.store(false);
+        Stark::IdentifyGameThread();
+        const std::string line = FirstLog('I', "GameThreadDispatch: game thread ");
+        check("THREAD pick: with no thread named GameThread, the process's first thread", Stark::GameThreadId() == g_mainTid
+              && Stark::GameThreadSource() == Src::MainThread && line.rfind(F("GameThreadDispatch: game thread %lu, the "
+              "main thread (no thread is named GameThread) (", (unsigned long)g_mainTid), 0) == 0
+              && Tail(line, walkedTail.size()) == walkedTail, line.c_str());
+        Stark::s_gameThreadId.store(0);
+        { std::lock_guard<std::mutex> lk(g_logMu); g_log.clear(); }
+        Stark::IdentifyGameThread();
+        check("THREAD pick: once tried, never again -- a pick given up stays given up", Stark::GameThreadId() == 0
+              && CountLog('I', "GameThreadDispatch: game thread") == 0);
+
+        ResetThread(0, Src::Unknown);
+        Stark::s_gameThreadTried.store(false);
+        g_failSnapshot.store(true);
+        Stark::IdentifyGameThread();
+        g_failSnapshot.store(false);
+        check("THREAD pick: no thread snapshot leaves the drain on every thread, and says why", CountLog('W', "") == 1
+              && HasLog('W', "GameThreadDispatch: no thread snapshot (err 5) -- the drain stays on every thread, as before")
+              && CountLog('I', "GameThreadDispatch: game thread") == 0 && Stark::GameThreadId() == 0
+              && Stark::GameThreadSource() == Src::Unknown && Stark::s_gameThreadTried.load(), FirstLog('W', "").c_str());
+    }
+
+    {   blk("THREAD VALIDATION - a named pick is kept; a main-thread guess that never fires while others do is given up");
+        const std::string giveUp = "GameThreadDispatch: the main-thread guess 1234 made no ProcessEvent call in the window "
+            "while other threads made %llu: it is not this game's game thread, or it was held up for the whole window. The "
+            "drain gate is given up for this session: queued invokes run on whichever thread enters ProcessEvent, as "
+            "before [STARK-DRAIN-OFF-GAME-THREAD]";
+        ResetThread(0, Src::Unknown);
+        Stark::ApplyGameThreadValidation(0, 9);
+        bool emptyLog;
+        { std::lock_guard<std::mutex> lk(g_logMu); emptyLog = g_log.empty(); }
+        check("THREAD validation: nothing picked, nothing to validate", emptyLog && Stark::GameThreadId() == 0
+              && Stark::GameThreadSource() == Src::Unknown);
+
+        ResetThread(kNoThread, Src::Description);
+        Stark::s_workerSkipCount.store(7);
+        Stark::ApplyGameThreadValidation(0, 9);
+        check("THREAD validation ⭐: a thread the engine named is kept even when it never fired", Stark::GameThreadId() == kNoThread
+              && Stark::GameThreadSource() == Src::Description && CountLog('W', "") == 0
+              && HasLog('I', "GameThreadDispatch: game thread 1234 (named GameThread by the engine) kept: 0 hook fires on it "
+                             "in the window, 9 on other threads (our own calls not counted); worker-thread entries that left "
+                             "queued work so far: 7"));
+
+        ResetThread(kNoThread, Src::MainThread);
+        Stark::ApplyGameThreadValidation(0, 5);
+        check("THREAD validation ⭐: a main-thread guess silent while others fire is given up, and the log says so",
+              Stark::GameThreadId() == 0 && Stark::GameThreadSource() == Src::Unknown && CountLog('I', "") == 0
+              && HasLog('W', F(giveUp.c_str(), 5ull)), FirstLog('W', "").c_str());
+
+        ResetThread(kNoThread, Src::MainThread);
+        Stark::ApplyGameThreadValidation(3, 5);
+        const bool kept35 = Stark::GameThreadId() == kNoThread && HasLog('I', "GameThreadDispatch: game thread 1234 (the main "
+            "thread (no thread is named GameThread)) kept: 3 hook fires on it in the window, 5 on other threads (our own "
+            "calls not counted); worker-thread entries that left queued work so far: 0");
+        ResetThread(kNoThread, Src::MainThread);
+        Stark::ApplyGameThreadValidation(0, 0);
+        check("THREAD validation: a guess that fired, or a window where nothing did, is kept", kept35
+              && Stark::GameThreadId() == kNoThread && Stark::GameThreadSource() == Src::MainThread && CountLog('W', "") == 0
+              && HasLog('I', "GameThreadDispatch: game thread 1234 (the main thread (no thread is named GameThread)) kept: 0 "
+                             "hook fires on it in the window, 0 on other threads (our own calls not counted); worker-thread "
+                             "entries that left queued work so far: 0"));
+
+        ResetThread(kNoThread, Src::MainThread);
+        RunOn([] {
+            Fire(kObj, kPlain, 5);
+            (void)Stark::CallOriginalSEH(kObj, kReenter, kParams);
+            (void)Stark::CallOriginalSEH(kObj, kReenter, kParams);
+        });
+        const bool counted = Stark::GetGameThreadFireCount() == 0 && Stark::GetOtherThreadFireCount() == 5
+            && Stark::GetHookFireCount() == 7;
+        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount(), Stark::GetOtherThreadFireCount());
+        const bool gaveUp = Stark::GameThreadId() == 0 && HasLog('W', F(giveUp.c_str(), 5ull));
+        Stark::s_lastHookFireMs.store(Stark::NowMs() - 5000);
+        const uint64_t t0 = Stark::NowMs();
+        RunOn([] { Fire(kObj, kPlain); });
+        const uint64_t t1 = Stark::NowMs();
+        const uint64_t st = Stark::s_lastHookFireMs.load();
+        check("THREAD validation ⭐: the counters feed it -- given up, and after that any thread's fire stamps again",
+              counted && gaveUp && st >= t0 && st <= t1);
+
+        ResetThread(kNoThread, Src::MainThread);
+        RunOn([] { for (int i = 0; i < 3; ++i) (void)Stark::CallOriginalSEH(kObj, kReenter, kParams); });
+        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount(), Stark::GetOtherThreadFireCount());
+        check("THREAD validation: our own calls alone never give a guess up", Stark::GetHookFireCount() == 3
+              && Stark::GetOtherThreadFireCount() == 0 && Stark::GameThreadId() == kNoThread
+              && HasLog('I', "GameThreadDispatch: game thread 1234 (the main thread (no thread is named GameThread)) kept: 0 "
+                             "hook fires on it in the window, 0 on other threads (our own calls not counted); worker-thread "
+                             "entries that left queued work so far: 0"));
+    }
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("stark_dispatch_test — GameThreadDispatch: the invoke queue and its game-thread drain, in this process\n");
@@ -893,16 +1453,24 @@ int main() {
         }
     }
 #endif
+    g_mainTid = GetCurrentThreadId();
     g_gateEntered = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_inside = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    g_release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_gateRelease = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_game.Start();
 
     QueueBlocks();
-
     ResetStark();
     g_game.Stop();
+
+    ThreadBlocks();
+    SetEvent(g_release);
+    ResetStark();
     CloseHandle(g_gateEntered);
     CloseHandle(g_gateRelease);
+    CloseHandle(g_inside);
+    CloseHandle(g_release);
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return (g_fail == 0 && g_pass > 0) ? 0 : 1;
 }
