@@ -55,6 +55,9 @@ namespace Stark { void SetInvokeTimeoutMs(int) {} }
 // the test chooses the UE version the core code branches on.
 uint32_t g_cachedUEVersion = 0;
 
+// &GWorld, defined in Frieren.cpp in the DLL; Solitar reads the world through it. A test points it at a fake world.
+uintptr_t g_cachedGWorld = 0;
+
 // ⚠ #undef between every include, and it is not just warning silencing.
 // Each of these .cpp files is its own translation unit in the real DLL, and each either
 // #defines LOG_CAT itself or inherits Sein.h's `#ifndef LOG_CAT -> ""` default. Concatenated
@@ -81,6 +84,8 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Genau.cpp"      // NOLINT
 #undef LOG_CAT
 #include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
+#undef LOG_CAT
+#include "../src/Solitar.cpp"    // NOLINT -- God Mode: the pawn chain, the bits it writes, the re-assert worker
 #undef LOG_CAT
 #define LOG_CAT "TEST"
 #include "../src/Routine.h"      // SingleFlightJob: its guard logs through the Sein stubs above
@@ -4176,6 +4181,166 @@ int main() {
               rvec.candidates.size() == 1 && fieldsFound(rvec) == "Velocity", fieldsFound(rvec).c_str());
 
         DynOff::bUseFProperty = savedFPropSS;
+    }
+
+    // -- GODMODE -- Solitar's God Mode over a fake world: the bits it writes, the debug-camera hop, the re-assert, and
+    //    targets read again when the property family's epoch moves ---------------------------------------------------
+    //
+    // ⛔ OWN NAMES, NO POOL: the pawn is reached through reflection alone (GWorld -> OwningGameInstance -> LocalPlayers[0]
+    // -> PlayerController -> Pawn), so no object array is consulted. [SOLIDE-NATIVE-BOOL] A packed bool shares its byte
+    // with seven others and only its own bit may change; a native bool owns the byte and holds 0x01 / 0x00, never 0xFF.
+    {   blk("GODMODE - Solitar resolves the local pawn and writes only the bits it owns");
+        static uint8_t gmEntry[17][0x40] = {};
+        const char* gmNames[17] = { "", "ObjectProperty", "ArrayProperty", "BoolProperty", "OwningGameInstance",
+                                    "LocalPlayers", "PlayerController", "Pawn", "bCanBeDamaged", "bInvincible",
+                                    "GmWorld", "GmGameInstance", "GmLocalPlayer", "GmPlayerController", "GmPawn",
+                                    "DebugCameraController", "OriginalControllerRef" };
+        static uintptr_t gmChunk[18] = {};
+        for (int i = 1; i <= 16; ++i) {
+            memcpy(gmEntry[i] + 0x10, gmNames[i], strlen(gmNames[i]) + 1);
+            gmChunk[i] = reinterpret_cast<uintptr_t>(gmEntry[i]);
+        }
+        static uintptr_t gmChunks[2] = { reinterpret_cast<uintptr_t>(gmChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(gmChunks), 0x10);
+
+        const bool savedFPropGM = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto A     = [](const void* p) { return reinterpret_cast<uintptr_t>(p); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t gmFC[4][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            put32(gmFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx);
+            return A(gmFC[nameIdx]);
+        };
+        auto prop = [&](uint8_t* p, int fcIdx, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fclass(fcIdx));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, A(next));
+        };
+        // {FieldSize, ByteOffset, ByteMask, FieldMask}, where an FBoolProperty keeps them.
+        auto boolLayout = [](uint8_t* p, uint8_t fieldSize, uint8_t byteOff, uint8_t byteMask, uint8_t fieldMask) {
+            const int at = DynOff::FBOOLPROP_FIELDSIZE;
+            p[at] = fieldSize; p[at + 1] = byteOff; p[at + 2] = byteMask; p[at + 3] = fieldMask;
+        };
+        auto cls = [&](uint8_t* c, int nameIdx, uint8_t* firstProp, int32_t size) {
+            put32(c, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(c, DynOff::USTRUCT_PROPSSIZE, size);
+            putP(c, DynOff::USTRUCT_CHILDPROPS, A(firstProp));
+        };
+
+        // The classes, each with the one field the chain reads.
+        static uint8_t gpOgi[0x100] = {}, gpLps[0x100] = {}, gpPc[0x100] = {}, gpPawn[0x100] = {};
+        static uint8_t gpOrig[0x100] = {}, gpDccPawn[0x100] = {}, gpCan[0x100] = {}, gpInv[0x100] = {};
+        static uint8_t gmWorldCls[0x100] = {}, gmGiCls[0x100] = {}, gmLpCls[0x100] = {}, gmPcCls[0x100] = {};
+        static uint8_t gmDccCls[0x100] = {}, gmPawnCls[0x100] = {};
+        prop(gpOgi, 1, 4, 0x30, 8, nullptr);        cls(gmWorldCls, 10, gpOgi, 0x38);
+        prop(gpLps, 2, 5, 0x30, 16, nullptr);       cls(gmGiCls, 11, gpLps, 0x40);
+        prop(gpPc, 1, 6, 0x30, 8, nullptr);         cls(gmLpCls, 12, gpPc, 0x38);
+        prop(gpPawn, 1, 7, 0x30, 8, nullptr);       cls(gmPcCls, 13, gpPawn, 0x38);
+        prop(gpOrig, 1, 16, 0x30, 8, gpDccPawn);
+        prop(gpDccPawn, 1, 7, 0x38, 8, nullptr);    cls(gmDccCls, 15, gpOrig, 0x40);
+        // The pawn: bCanBeDamaged packed into a byte of eight bools (bit 0x04), bInvincible a native bool.
+        prop(gpCan, 3, 8, 0x40, 1, gpInv);          boolLayout(gpCan, 1, 0, 0x04, 0x04);
+        prop(gpInv, 3, 9, 0x48, 1, nullptr);        boolLayout(gpInv, 1, 0, 0x01, 0xFF);
+        cls(gmPawnCls, 14, gpCan, 0x50);
+
+        // The objects.
+        static uint8_t gmWorld[0x60] = {}, gmGi[0x60] = {}, gmLp[0x60] = {}, gmPc[0x60] = {};
+        static uint8_t gmDcc[0x60] = {}, gmPawn[0x60] = {};
+        static uintptr_t gmLocalPlayers[1] = {};
+        putP(gmWorld, Grimoire::OFF_UOBJECT_CLASS, A(gmWorldCls));
+        putP(gmGi,    Grimoire::OFF_UOBJECT_CLASS, A(gmGiCls));
+        putP(gmLp,    Grimoire::OFF_UOBJECT_CLASS, A(gmLpCls));
+        putP(gmPc,    Grimoire::OFF_UOBJECT_CLASS, A(gmPcCls));
+        putP(gmDcc,   Grimoire::OFF_UOBJECT_CLASS, A(gmDccCls));
+        putP(gmPawn,  Grimoire::OFF_UOBJECT_CLASS, A(gmPawnCls));
+        putP(gmWorld, 0x30, A(gmGi));
+        gmLocalPlayers[0] = A(gmLp);
+        putP(gmGi, 0x30, A(gmLocalPlayers)); put32(gmGi, 0x38, 1); put32(gmGi, 0x3C, 1);   // TArray {Data, Num, Max}
+        putP(gmLp, 0x30, A(gmPc));
+        putP(gmPc, 0x30, A(gmPawn));
+        putP(gmDcc, 0x30, A(gmPc));                 // OriginalControllerRef; the debug camera has no pawn of its own
+        gmPawn[0x40] = 0xFF;                        // eight packed bools, all true: the pawn can be damaged
+        gmPawn[0x48] = 0x00;                        // bInvincible: false
+        static uintptr_t gmGWorldSlot = 0;
+        gmGWorldSlot = A(gmWorld);
+        g_cachedGWorld = A(&gmGWorldSlot);
+
+        char got[64];
+        auto hex = [&](uint8_t v) { snprintf(got, sizeof got, "0x%02X", v); return got; };
+        auto waitTicks = [](int n) { Sleep(static_cast<DWORD>(Grimoire::PROTECT_REASSERT_MS * n)); };
+
+        check("GODMODE: before ON the pawn can be damaged -- 0", Solitar::GetGodMode() == 0);
+
+        int32_t rc = Solitar::SetGodMode(true);
+        check("GODMODE: ON reports the pawn immune -- 1", rc == 1, std::to_string(rc).c_str());
+        check("GODMODE ⭐: only bCanBeDamaged's bit is cleared; the seven bools sharing its byte keep theirs",
+              gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+        check("GODMODE ⭐: the native bool is written 0x01, never its FieldMask 0xFF", gmPawn[0x48] == 0x01,
+              hex(gmPawn[0x48]));
+        check("GODMODE: the live read agrees -- 1", Solitar::GetGodMode() == 1);
+
+        gmPawn[0x40] = 0xFF;                        // the game sets it back
+        waitTicks(3);
+        check("GODMODE ⭐: the worker re-asserts a bit the game set back", gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+
+        // The Debug Camera's controller has no pawn: God Mode hops through OriginalControllerRef to the player's.
+        putP(gmLp, 0x30, A(gmDcc));
+        gmPawn[0x40] = 0xFF;
+        rc = Solitar::SetGodMode(true);
+        check("GODMODE ⭐: with the debug camera on, God Mode reaches the player's pawn through it", rc == 1,
+              std::to_string(rc).c_str());
+        check("GODMODE: ...and its bit is the one written", gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+        putP(gmLp, 0x30, A(gmPc));
+
+        // The family epoch: bCanBeDamaged moves (an offsets probe re-measured it). The targets stay until the epoch moves.
+        put32(gpCan, DynOff::FPROPERTY_OFFSET, 0x44);
+        gmPawn[0x44] = 0xFF;
+        waitTicks(3);
+        check("GODMODE control: before the epoch moves, the targets read under the old offsets are kept",
+              gmPawn[0x44] == 0xFF, hex(gmPawn[0x44]));
+        DynOff::RetireFamilyEpoch();
+        rc = Solitar::SetGodMode(true);
+        check("GODMODE ⭐: once the epoch moves, the targets are read again -- the bit at the new offset is cleared",
+              rc == 1 && gmPawn[0x44] == 0xFB, hex(gmPawn[0x44]));
+
+        rc = Solitar::SetGodMode(false);
+        check("GODMODE: OFF reports the pawn can be damaged -- 0", rc == 0, std::to_string(rc).c_str());
+        check("GODMODE: OFF sets only bCanBeDamaged's bit back", gmPawn[0x44] == 0xFF, hex(gmPawn[0x44]));
+        check("GODMODE: OFF writes the native bool 0x00", gmPawn[0x48] == 0x00, hex(gmPawn[0x48]));
+        gmPawn[0x44] = 0xFB;
+        waitTicks(3);
+        check("GODMODE: OFF stops the worker -- nothing is re-asserted", gmPawn[0x44] == 0xFB, hex(gmPawn[0x44]));
+        gmPawn[0x44] = 0xFF;
+
+        std::vector<Solitar::ProtectBit> bits;
+        check("GODMODE: the trainer's bits resolve", Solitar::ResolveProtectBits(bits) == Solitar::PR_OK);
+        check("GODMODE: two protection bools", bits.size() == 2, std::to_string(bits.size()).c_str());
+        if (bits.size() == 2) {
+            check("GODMODE: bCanBeDamaged -- its byte, its bit, protected when 0",
+                  bits[0].name == "bCanBeDamaged" && bits[0].byteOffset == 0x44 && bits[0].mask == 0x04 && bits[0].protect == 0);
+            check("GODMODE ⭐: bInvincible -- a native bool's trainer bit is 0x01, protected when 1",
+                  bits[1].name == "bInvincible" && bits[1].byteOffset == 0x48 && bits[1].mask == 0x01 && bits[1].protect == 1);
+        }
+
+        check("GODMODE: SetActorBool clears one named packed bool, its siblings kept",
+              Solitar::SetActorBool(A(gmPawn), A(gmPawnCls), "bCanBeDamaged", false) == 0 && gmPawn[0x44] == 0xFB,
+              hex(gmPawn[0x44]));
+        check("GODMODE: GetActorBool reads it back", Solitar::GetActorBool(A(gmPawn), A(gmPawnCls), "bCanBeDamaged") == 0);
+        check("GODMODE: SetActorBool on the native bool writes 0x01",
+              Solitar::SetActorBool(A(gmPawn), A(gmPawnCls), "bInvincible", true) == 1 && gmPawn[0x48] == 0x01,
+              hex(gmPawn[0x48]));
+
+        g_cachedGWorld = 0;
+        check("GODMODE control: with no world, God Mode says the DLL is not ready",
+              Solitar::GetGodMode() == Solitar::PR_ERR_NOT_INIT);
+
+        Solitar::StopWorker();
+        DynOff::bUseFProperty = savedFPropGM;
     }
 
     // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
