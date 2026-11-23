@@ -4,8 +4,9 @@
 // WHAT IT DRIVES
 //   Mimic::ServeOne, the one pass the polling thread makes over a mailbox: the init gate, the dispatch, the error and
 //   done bookkeeping, a handler that throws, a mailbox another poller is busy with, and an adopted mailbox answered in
-//   place; CMD_TELEPORT's marshalling, op by op; and the lookups, listings and pointer queries. No polling thread
-//   is started, so every command is served exactly when the test says.
+//   place; CMD_TELEPORT's marshalling, op by op; the lookups, listings and pointer queries; and CMD_INVOKE's
+//   refusals, route and parameter conversion. Commands are served on the test's own thread, exactly when it says;
+//   INVOKEOWNER alone starts the real polling thread.
 //
 // WHAT IS FAKED
 //   Everything Mimic dispatches TO: the Frieren C ABI (UE5_*), Wirbel, Grausam, Schlacht, Dunste's status, Stark's
@@ -25,8 +26,10 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 static std::function<void(const char* fmt)> g_onInfo;   // a test's hook, armed around one command
@@ -64,6 +67,57 @@ static bool g_foregroundThrows = false;
 static std::vector<std::pair<bool, uint64_t>> g_seeThroughCalls;
 static std::vector<int32_t> g_pierceCalls;
 
+// What an invoke reached: the route, the arguments, and what was true at the moment of the call -- the parameter bytes
+// it saw, the mailbox's out-flags, the invoke owner it ran under, and whether the debug camera's hold was locked.
+struct PeCall {
+    char route;   // 'Q' queued (size-aware), 'D' direct, 'P' the size-less entry
+    uintptr_t inst, func, parms;
+    uint32_t size;
+    std::vector<uint8_t> params;
+    uint32_t outFlags;
+    uint64_t owner;
+    bool ifFree;
+    uint64_t camHolder;
+    bool camLockHeld;
+};
+static std::vector<PeCall> g_peCalls;
+static std::vector<std::string> g_order;   // "prepare" / "pe", in the order they happened
+static int32_t g_peRc = 0;
+static bool g_peThrows = false;   // a call that throws, as a game's function can
+struct PrepareCall { uintptr_t func; uint8_t* params; size_t size; bool direct; };
+static std::vector<PrepareCall> g_prepareCalls;
+static bool g_prepareOk = true, g_prepareMarks = false;
+static std::string g_prepareWhy;
+static thread_local uint64_t t_invokeOwner = 0;
+static thread_local bool t_invokeIfFree = false;
+// try_lock from another thread: on the calling thread, a mutex it may already own cannot be asked.
+static bool CamLockFree() {
+    bool free = false;
+    std::thread probe([&] {
+        std::mutex& m = Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA);
+        if (m.try_lock()) {
+            free = true;
+            m.unlock();
+        }
+    });
+    probe.join();
+    return free;
+}
+static int32_t RecordPe(char route, uintptr_t inst, uintptr_t func, uintptr_t parms, uint32_t size) {
+    if (g_peThrows) throw std::runtime_error("ProcessEvent threw");
+    PeCall c{};
+    c.route = route; c.inst = inst; c.func = func; c.parms = parms; c.size = size;
+    uint8_t* slab = Mimic::Box().paramsData;
+    if (parms == reinterpret_cast<uintptr_t>(slab)) c.params.assign(slab, slab + sizeof Mimic::Box().paramsData);
+    c.outFlags = Mimic::Box().cmdOutFlags;
+    c.owner = t_invokeOwner;
+    c.ifFree = t_invokeIfFree;
+    c.camHolder = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA);
+    c.camLockHeld = !CamLockFree();
+    g_peCalls.push_back(std::move(c));
+    g_order.push_back("pe");
+    return g_peRc;
+}
 extern "C" {
 __declspec(dllexport) bool UE5_Init() {
     ++g_initCalls;
@@ -90,25 +144,50 @@ __declspec(dllexport) int32_t UE5_SetFly(int32_t) { return 0; }
 __declspec(dllexport) int32_t UE5_SetFlySpeed(double) { return 0; }
 __declspec(dllexport) int32_t UE5_SetFlyPreset(int32_t) { return 0; }
 __declspec(dllexport) int32_t UE5_SetFlyNoclip(int32_t) { return 0; }
-__declspec(dllexport) bool UE5_GetObjectName(uintptr_t, char* buf, int32_t bufLen) {
+__declspec(dllexport) bool UE5_GetObjectName(uintptr_t obj, char* buf, int32_t bufLen) {
+    // What the real export answers: the object's own name, read through Ubel.
     if (buf && bufLen > 0) buf[0] = '\0';
-    return false;
+    const std::string name = obj ? Ubel::GetName(obj) : std::string();
+    if (name.empty() || !buf || bufLen <= 0) return false;
+    snprintf(buf, static_cast<size_t>(bufLen), "%s", name.c_str());
+    return true;
 }
-__declspec(dllexport) int32_t UE5_CallProcessEvent(uintptr_t, uintptr_t, uintptr_t) { return 0; }
-int32_t UE5_CallProcessEventEx(uintptr_t, uintptr_t, uintptr_t, uint32_t) { return 0; }   // Mimic declares it plain
-__declspec(dllexport) int32_t UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t) { return 0; }
+__declspec(dllexport) int32_t UE5_CallProcessEvent(uintptr_t inst, uintptr_t func, uintptr_t parms) {
+    return RecordPe('P', inst, func, parms, 0);
+}
+int32_t UE5_CallProcessEventEx(uintptr_t inst, uintptr_t func, uintptr_t parms, uint32_t size) {   // Mimic declares it plain
+    return RecordPe('Q', inst, func, parms, size);
+}
+__declspec(dllexport) int32_t UE5_CallProcessEventDirect(uintptr_t inst, uintptr_t func, uintptr_t parms) {
+    return RecordPe('D', inst, func, parms, 0);
+}
 }  // extern "C"
 
 namespace FrierenInvoke {
-bool PrepareObjectParams(uintptr_t, uint8_t*, size_t, bool, std::string&) { return true; }
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why) {
+    g_prepareCalls.push_back({ ufunc, params, size, direct });
+    g_order.push_back("prepare");
+    if (g_prepareMarks && params && size) params[0] = 0xC7;   // what a conversion writes, for the call to see
+    if (!g_prepareOk) {
+        why = g_prepareWhy;
+        return false;
+    }
+    return true;
+}
 }
 namespace FrierenDebugCamera {
 bool PendingOn(uint64_t& owner) { owner = g_pendingOwner; return g_pendingOn; }
 }
 namespace Stark {
 void SetInvokeTimeoutMs(int32_t) {}
-InvokeOwnerScope::InvokeOwnerScope(uint64_t, bool) : m_prevOwner(0), m_prevIfFree(false) {}
-InvokeOwnerScope::~InvokeOwnerScope() {}
+InvokeOwnerScope::InvokeOwnerScope(uint64_t owner, bool ifFree) : m_prevOwner(t_invokeOwner), m_prevIfFree(t_invokeIfFree) {
+    t_invokeOwner = owner;
+    t_invokeIfFree = ifFree;
+}
+InvokeOwnerScope::~InvokeOwnerScope() {
+    t_invokeOwner = m_prevOwner;
+    t_invokeIfFree = m_prevIfFree;
+}
 }
 namespace Grausam {
 int SetForegroundLock(bool enable) {
@@ -230,12 +309,16 @@ enum : int32_t {
     nClass = 1, nFunction, nObject, nChannel, nActorChannel, nActor, nHero, nSidekick, nHeroComp, nSwarm, nGameEngine,
     nMany, nCdoActorChannel, nCdoActor, nCdoHero, nHeroCompTpl, nHeroCompScs, nHero0, nHero1, nSidekick0, nHeroComp0,
     nHeroComp1, nCdoGameEngine, nGameEngine0, nSwarm0, nGameViewport, nChannelOnly, nK2Loc, nHeroOnly, nFn00,
-    nLong = nFn00 + 15, nMany0, nNames };
+    nLong = nFn00 + 15, nMany0, nTestActor, nDerivedActor, nOtherActor, nFooInterface, nTestActor0, nDerivedActor0,
+    nCdoTestActor, nSetHealth, nToggleDebugCamera, nPureMath, nPureMathBig, nStaticOnOther, nOtherFunc, nFooFunc,
+    nBigParms, nFitParms, nNames };
 enum {
     bClass, bFunction, bObject, bChannel, bActorChannel, bActor, bHero, bSidekick, bHeroComp, bSwarm, bGameEngine, bMany,
     bCdoActorChannel, bCdoActor, bCdoHero, bHeroCompTpl, bHeroCompScs, bHero0, bHero1, bSidekick0, bHeroComp0,
     bHeroComp1, bCdoGameEngine, bGameEngine0, bMany0, bNoClass, bChannelOnly, bK2Loc, bHeroOnly, bFn00,
-    bLong = bFn00 + 15, bGameViewport, kBlobs };
+    bLong = bFn00 + 15, bGameViewport, bTest, bDerived, bOther, bIFoo, bInstLive, bInstDerived, bInstCdo, bFnPlain,
+    bFnCamera, bFnPure, bFnPureBig, bFnStaticOther, bFnOther, bFnIFace, bFnBig, bFnFit, bParmA, bParmB, bParmBig,
+    bParmBig2, bParmFit, bIfaceEntry, kBlobs };
 constexpr int kFlood = 2000;   // archetypes met before the live HeroComps: more than either LIST_INSTANCES cap
 constexpr int kSwarm = 2100;   // live Swarm_C objects: past the exact-scope cap
 
@@ -274,6 +357,24 @@ static void Fn(int b, int32_t name, int outerCls, int next) {
     Obj(s_b[b], A(bFunction), name, A(outerCls));
     P64(s_b[b], DynOff::UFIELD_NEXT, A(next));
 }
+static void P16(uint8_t* b, int off, uint16_t v) { memcpy(b + off, &v, sizeof v); }
+// A UFunction the invoke path sizes and routes, its tail where the decided flags offset puts it: FunctionFlags +0xB0,
+// NumParms +0xB4, ParmsSize +0xB6, ReturnValueOffset +0xB8 (0xFFFF = none).
+static void InvokeFn(int b, int32_t name, int outerCls, uint32_t flags, uint8_t numParms, uint16_t parmsSize,
+                     uint16_t retOff, int firstParam = -1) {
+    Obj(s_b[b], A(bFunction), name, A(outerCls));
+    P64(s_b[b], DynOff::USTRUCT_CHILDPROPS, A(firstParam));
+    P32(s_b[b], 0xB0, flags);
+    s_b[b][0xB4] = numParms;
+    P16(s_b[b], 0xB6, parmsSize);
+    P16(s_b[b], 0xB8, retOff);
+}
+static void Param(int b, int32_t offset, int32_t size, uint64_t flags, int next = -1) {
+    P64(s_b[b], DynOff::FFIELD_NEXT, A(next));
+    P32(s_b[b], DynOff::FPROPERTY_ELEMSIZE, static_cast<uint32_t>(size));
+    P64(s_b[b], DynOff::FPROPERTY_FLAGS, flags);
+    P32(s_b[b], DynOff::FPROPERTY_OFFSET, static_cast<uint32_t>(offset));
+}
 static void Add(uintptr_t obj) {
     memcpy(s_items + static_cast<size_t>(s_count) * 24, &obj, sizeof obj);
     memcpy(s_items + static_cast<size_t>(s_count) * 24 + 12, &s_count, sizeof s_count);
@@ -306,6 +407,11 @@ static void Build() {
     nm[nHeroComp1] = "HeroComp_1"; nm[nCdoGameEngine] = "Default__GameEngine"; nm[nGameEngine0] = "GameEngine_0";
     nm[nSwarm0] = "Swarm_C_0"; nm[nGameViewport] = "GameViewport"; nm[nChannelOnly] = "ChannelOnly";
     nm[nK2Loc] = "K2_GetActorLocation"; nm[nHeroOnly] = "HeroOnly"; nm[nLong] = kLong; nm[nMany0] = "Many_0";
+    nm[nTestActor] = "TestActor"; nm[nDerivedActor] = "DerivedActor"; nm[nOtherActor] = "OtherActor";
+    nm[nFooInterface] = "FooInterface"; nm[nTestActor0] = "TestActor_0"; nm[nDerivedActor0] = "DerivedActor_0";
+    nm[nCdoTestActor] = "Default__TestActor"; nm[nSetHealth] = "SetHealth"; nm[nToggleDebugCamera] = "ToggleDebugCamera";
+    nm[nPureMath] = "PureMath"; nm[nPureMathBig] = "PureMathBig"; nm[nStaticOnOther] = "StaticOnOther";
+    nm[nOtherFunc] = "OtherFunc"; nm[nFooFunc] = "FooFunc"; nm[nBigParms] = "BigParms"; nm[nFitParms] = "FitParms";
     for (int i = 0; i < 15; ++i) {
         char b[8];
         snprintf(b, sizeof b, "Fn%02d", i);
@@ -368,11 +474,41 @@ static void Build() {
     for (int i = 0; i < kFlood; ++i) Obj(s_flood[i], A(bHeroComp), nHeroCompScs, A(bHero), arch);
     for (int i = 0; i < kSwarm; ++i) Obj(s_swarm[i], A(bSwarm), nSwarm0, 0);
 
+    // The invoke path's world: TestActor declares SetHealth, the camera's own function and the slab-size cases;
+    // DerivedActor inherits them; OtherActor declares functions TestActor does not own; FooInterface is one TestActor
+    // implements. Flags: 0x401 = Final|Native, 0x2401 adds Static (the direct route), 0x2000 Static alone (queued).
+    Klass(bTest, nTestActor, -1, bFnCamera);
+    P64(s_b[bTest], 0xC0, A(bIfaceEntry));   // UClass::Interfaces: one entry, FooInterface
+    P32(s_b[bTest], 0xC8, 1);
+    P64(s_b[bIfaceEntry], 0, A(bIFoo));
+    Klass(bDerived, nDerivedActor, bTest);
+    Klass(bOther, nOtherActor, -1);
+    Klass(bIFoo, nFooInterface, -1);
+    Obj(s_b[bInstLive], A(bTest), nTestActor0, 0);
+    Obj(s_b[bInstDerived], A(bDerived), nDerivedActor0, 0);
+    Obj(s_b[bInstCdo], A(bTest), nCdoTestActor, 0, Grimoire::RF_CLASS_DEFAULT_OBJECT);
+    const uint64_t parm = 0x80, ret = 0x400;
+    InvokeFn(bFnPlain, nSetHealth, bTest, 0x401, 2, 12, 8, bParmA);
+    Param(bParmA, 0, 8, parm, bParmB);
+    Param(bParmB, 8, 4, parm | ret);
+    InvokeFn(bFnCamera, nToggleDebugCamera, bTest, 0x401, 0, 0, 0xFFFF);
+    InvokeFn(bFnPure, nPureMath, bOther, 0x2401, 0, 0, 0xFFFF);
+    InvokeFn(bFnPureBig, nPureMathBig, bOther, 0x2401, 1, 8, 0xFFFF, bParmBig2);
+    Param(bParmBig2, 1017, 8, parm);
+    InvokeFn(bFnStaticOther, nStaticOnOther, bOther, 0x2000, 0, 0, 0xFFFF);
+    InvokeFn(bFnOther, nOtherFunc, bOther, 0x401, 0, 0, 0xFFFF);
+    InvokeFn(bFnIFace, nFooFunc, bIFoo, 0x401, 0, 0, 0xFFFF);
+    InvokeFn(bFnBig, nBigParms, bTest, 0x401, 1, 8, 0xFFFF, bParmBig);       // ParmsSize says 8; the chain ends at 1025
+    Param(bParmBig, 1017, 8, parm);
+    InvokeFn(bFnFit, nFitParms, bTest, 0x401, 1, 8, 0xFFFF, bParmFit);       // ends at the slab's last byte
+    Param(bParmFit, 1016, 8, parm);
+
     for (int b : { bCdoActorChannel, bCdoActor, bCdoHero, bHeroCompTpl, bHeroCompScs }) Add(A(b));
     for (int i = 0; i < kFlood; ++i) Add(reinterpret_cast<uintptr_t>(s_flood[i]));
     s_hero0Index = s_count;
     for (int b : { bHero0, bHero1, bSidekick0, bHeroComp0, bHeroComp1, bCdoGameEngine, bGameEngine0 }) Add(A(b));
     for (int i = 0; i < kSwarm; ++i) Add(reinterpret_cast<uintptr_t>(s_swarm[i]));
+    for (int b : { bInstLive, bInstCdo, bInstDerived }) Add(A(b));
     Publish();
 }
 }  // namespace Fx
@@ -999,6 +1135,272 @@ int main() {
               mb.result == -10 && Msg(mb) == "DLL not initialized", Msg(mb).c_str());
         g_cachedGWorld = 0;
         g_cachedGEngine = 0;
+    }
+
+    // [UE-OVERRIDE-411] [VND584-04] [VND584-06] [INVOKE-NONSTATIC-ON-CDO] [B636-NOACCIDENT-2026-08-23] CMD_INVOKE over
+    // the fixture's functions: refused before the conversion and the call when it cannot be sized or is not the
+    // instance's own; routed by the function's own flags; the converted parameters are what the call sees; a template
+    // is warned about, never refused.
+    {   blk("INVOKE - sized, owned and converted before the call; routed by the function's own flags");
+        using namespace Fx;
+        const uintptr_t live = A(bInstLive), derivedInst = A(bInstDerived), cdo = A(bInstCdo);
+        const uintptr_t slab = reinterpret_cast<uintptr_t>(mb.paramsData);
+        auto reset = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_prepareOk = true; g_prepareMarks = false; g_prepareWhy.clear(); g_peRc = 0;
+            mb.cmdOutFlags = 0; mb.functionFlags = 0;
+            memset(mb.paramsData, 0, sizeof mb.paramsData);
+            g_pendingOn = false;
+        };
+        auto one = [&](char route, uintptr_t func) {
+            return g_peCalls.size() == 1 && g_peCalls[0].route == route && g_peCalls[0].func == func;
+        };
+        auto has = [&](const char* text) { return Msg(mb).find(text) != std::string::npos; };
+
+        FunctionInfo fi{};
+        const bool plainOk = Ubel::ResolveFunctionInfo(A(bFnPlain), fi);
+        const bool plainShape = plainOk && fi.name == "SetHealth" && fi.functionFlags == 0x401 && fi.parmsSize == 12
+                                && fi.returnValueOffset == 8;
+        check("INVOKE setup: a function resolves with its own flags, size and return slot, an instance does not; the "
+              "chains size 1025 and 1024; a class default object is a template; TestActor implements one interface",
+              plainShape && !Ubel::ResolveFunctionInfo(live, fi) && Ubel::ParamBufferSize(A(bFnBig), 8) == 1025
+              && Ubel::ParamBufferSize(A(bFnFit), 8) == 1024
+              && Aura::TemplateOf(cdo).kind == Aura::TemplateKind::ClassDefault
+              && Aura::TemplateOf(live).kind == Aura::TemplateKind::None && Ubel::ClassInterfaces(A(bTest)).size() == 1);
+
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnBig));
+        check("INVOKE too large ⭐: a chain that ends past the slab is refused -13, before the conversion and any call",
+              Answered(mb) && mb.result == Mimic::MB_ERR_INVOKE_TOO_LARGE && has("'BigParms' needs 1025 bytes")
+              && has("the mailbox holds 1024") && g_peCalls.empty() && g_prepareCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnFit));
+        check("INVOKE fits: a chain that ends at the slab's last byte is invoked, queued with the slab's size",
+              Answered(mb) && mb.result == 0 && one('Q', A(bFnFit)) && g_peCalls[0].parms == slab
+              && g_peCalls[0].size == 1024);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, live);
+        check("INVOKE unresolved ⭐: an address that is not a UFunction is refused -12, nothing converted or called",
+              mb.result == Mimic::MB_ERR_INVOKE_UNRESOLVED && has("is not a live UFunction") && g_peCalls.empty()
+              && g_prepareCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPureBig));
+        check("INVOKE direct too large ⭐: the static-native route is refused by the same slab", mb.result == -13
+              && has("'PureMathBig' needs 1025 bytes") && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, 0, A(bFnPlain));
+        check("INVOKE null: no instance is refused -1", mb.result == -1
+              && Msg(mb) == "Instance or UFunction address is null" && g_peCalls.empty(), Msg(mb).c_str());
+
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnOther));
+        check("INVOKE not owned ⭐: another class's function is refused -15, before the conversion and any call",
+              mb.result == Mimic::MB_ERR_INVOKE_NOT_OWNED && has("'OtherFunc' (0x")
+              && has("is not a function of this instance's class") && g_peCalls.empty() && g_prepareCalls.empty(),
+              Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, derivedInst, A(bFnPlain));
+        check("INVOKE super: a function the instance's base class declares is invoked", mb.result == 0
+              && one('Q', A(bFnPlain)) && g_peCalls[0].inst == derivedInst, Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnStaticOther));
+        check("INVOKE static ⭐: another class's static function is invoked -- it takes no instance",
+              mb.result == 0 && one('Q', A(bFnStaticOther)), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnIFace));
+        check("INVOKE interface ⭐: a function of an interface the class implements is invoked", mb.result == 0
+              && one('Q', A(bFnIFace)), Msg(mb).c_str());
+
+        reset();
+        g_prepareOk = false;
+        g_prepareWhy = "the weak pointer's object is gone";
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE object parameter ⭐: a refused conversion answers -14 with its reason, and nothing is called",
+              mb.result == Mimic::MB_ERR_INVOKE_OBJECT_PARAM && Msg(mb) == "Not invoked: the weak pointer's object is gone"
+              && g_prepareCalls.size() == 1 && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        g_prepareMarks = true;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE queued converted ⭐: the conversion is given the slab, and the queued call sees what it wrote",
+              mb.result == 0 && g_prepareCalls.size() == 1 && g_prepareCalls[0].func == A(bFnPlain)
+              && g_prepareCalls[0].params == mb.paramsData && g_prepareCalls[0].size == 1024 && !g_prepareCalls[0].direct
+              && one('Q', A(bFnPlain)) && g_peCalls[0].params.size() == 1024 && g_peCalls[0].params[0] == 0xC7
+              && g_order == (std::vector<std::string>{ "prepare", "pe" }));
+        reset();
+        g_prepareMarks = true;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPure));
+        check("INVOKE direct converted ⭐: the conversion is told the call is direct, and the direct call sees what it "
+              "wrote", mb.result == 0 && g_prepareCalls.size() == 1 && g_prepareCalls[0].direct && one('D', A(bFnPure))
+              && g_peCalls[0].params.size() == 1024 && g_peCalls[0].params[0] == 0xC7
+              && g_order == (std::vector<std::string>{ "prepare", "pe" }));
+        reset();
+        mb.functionFlags = 0x2400;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        const bool staleStatic = mb.result == 0 && one('Q', A(bFnPlain)) && g_peCalls[0].size == 1024;
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPure));
+        check("INVOKE route ⭐: the function's own flags choose the route, never the mailbox's stale ones", staleStatic
+              && mb.result == 0 && one('D', A(bFnPure)));
+        reset();
+        {
+            const double in = 4.5;
+            memcpy(mb.paramsData, &in, sizeof in);
+            memset(mb.paramsData + 8, 0xAB, 4);
+        }
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        {
+            double seen = 0;
+            uint32_t slot = 1;
+            if (g_peCalls.size() == 1 && g_peCalls[0].params.size() == 1024) {
+                memcpy(&seen, g_peCalls[0].params.data(), sizeof seen);
+                memcpy(&slot, g_peCalls[0].params.data() + 8, sizeof slot);
+            }
+            check("INVOKE return slot: cleared before the call, the inputs beside it kept", mb.result == 0
+                  && seen == 4.5 && slot == 0);
+        }
+        reset();
+        g_peRc = -5;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE call failed: answered with ProcessEvent's code and its text", Answered(mb) && mb.result == -5
+              && Msg(mb) == "ProcessEvent returned -5", Msg(mb).c_str());
+
+        reset();
+        mb.functionFlags = 0x2000;
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnPlain));
+        check("INVOKE template ⭐: a function that is not static, on a class default object, is warned before the call "
+              "and still invoked", mb.result == 0
+              && (mb.cmdOutFlags & Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE) != 0 && one('Q', A(bFnPlain))
+              && (g_peCalls[0].outFlags & Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE) != 0);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnStaticOther));
+        check("INVOKE template static: a static function on a class default object is not warned", mb.result == 0
+              && mb.cmdOutFlags == 0 && g_peCalls.size() == 1);
+        reset();
+        mb.cmdOutFlags = Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE warning cleared ⭐: the previous command's warning is gone before the next one", mb.result == 0
+              && mb.cmdOutFlags == 0);
+        reset();
+        g_prepareOk = false;
+        g_prepareWhy = "x";
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnPlain));
+        const bool refusedConv = mb.result == -14 && mb.cmdOutFlags == 0;
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnOther));
+        check("INVOKE template refused ⭐: a call refused on a template carries no warning", refusedConv
+              && mb.result == -15 && mb.cmdOutFlags == 0 && g_peCalls.empty());
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] A record that runs the debug camera's own function changes the camera as
+    // CMD_SET_DEBUG_CAMERA does: under the hold's lock, CE's afterwards, a pending ON left to its sender -- and it never
+    // waits for a lock another writer holds.
+    {   blk("INVOKEHELD - the debug camera's own function, invoked, changes the camera as CE's");
+        using namespace Fx;
+        const uintptr_t live = A(bInstLive);
+        const std::string cam = Grimoire::HOLD_DEBUG_CAMERA;
+        auto reset = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_prepareOk = true; g_prepareMarks = false; g_peRc = 0;
+            mb.cmdOutFlags = 0; mb.functionFlags = 0;
+            memset(mb.paramsData, 0, sizeof mb.paramsData);
+            g_pendingOn = false;
+            Voll::Holds().SetOwner(cam, 0x1234);
+        };
+
+        reset();
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD ⭐: the camera's own function runs under the camera's lock, and CE holds the camera after",
+              mb.result == 0 && g_peCalls.size() == 1 && g_peCalls[0].func == A(bFnCamera) && g_peCalls[0].camLockHeld
+              && g_peCalls[0].camHolder == 0x1234 && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKEHELD control: another function takes no lock and leaves the camera's holder alone",
+              mb.result == 0 && g_peCalls.size() == 1 && !g_peCalls[0].camLockHeld && Voll::Holds().Owner(cam) == 0x1234);
+        reset();
+        g_debugCameraState = 0;
+        g_pendingOn = true;
+        g_pendingOwner = 0x1234;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD pending ⭐: an AI's pending ON stays its sender's when CE runs the camera's function",
+              mb.result == 0 && g_peCalls.size() == 1 && Voll::Holds().Owner(cam) == 0x1234);
+        reset();
+        g_debugCameraState = 0;
+        g_pendingOn = true;
+        g_pendingOwner = Voll::kHoldOwnerCe;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD pending CE: a pending ON that CE sent is CE's -- it takes the hold", mb.result == 0
+              && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe);
+        reset();
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE, A(bInstCdo), A(bFnCamera));
+        check("INVOKEHELD template: on a class default object the camera's function is warned like any other, and "
+              "nothing else is raised", mb.result == 0 && mb.cmdOutFlags == Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE);
+
+        // Another writer holds the camera's lock across its own game-thread wait: the mailbox's poller must not wait.
+        reset();
+        HANDLE locked = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::thread holder([&] {
+            std::lock_guard<std::mutex> hold(Voll::Holds().LockFor(cam));
+            SetEvent(locked);
+            WaitForSingleObject(release, 3000);
+        });
+        WaitForSingleObject(locked, 2000);
+        const ULONGLONG t0 = GetTickCount64();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        const ULONGLONG ms = GetTickCount64() - t0;
+        SetEvent(release);
+        holder.join();
+        CloseHandle(locked);
+        CloseHandle(release);
+        check("INVOKEHELD busy ⭐: a camera lock another writer holds is not waited for -- the invoke runs, unrecorded",
+              ms < 1500 && mb.result == 0 && g_peCalls.size() == 1 && Voll::Holds().Owner(cam) == 0x1234, num(static_cast<long long>(ms)));
+
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "TestActor");
+        snprintf(mb.funcName, sizeof mb.funcName, "%s", "ToggleDebugCamera");
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKEHELD by name ⭐: a name lookup that lands on the camera's function changes the camera as CE's",
+              Answered(mb) && mb.result == 0 && mb.instanceAddr == live && mb.ufuncAddr == A(bFnCamera)
+              && g_peCalls.size() == 1 && g_peCalls[0].inst == live && g_peCalls[0].camLockHeld
+              && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe, Msg(mb).c_str());
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "NoSuchClass_Xyz");
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKE_BY_NAME no instance: the lookup's refusal is the answer, and nothing is called", Answered(mb)
+              && mb.result == -2 && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "TestActor");
+        snprintf(mb.funcName, sizeof mb.funcName, "%s", "Nope");
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKE_BY_NAME no function: the lookup's refusal is the answer, and nothing is called", Answered(mb)
+              && mb.result == -3 && g_peCalls.empty(), Msg(mb).c_str());
+        g_debugCameraState = 0;
+    }
+
+    // [D2-3-INVOKE] Every invoke the poller queues is CE's, for the queue's owner rule. The first block that starts the
+    // real polling thread: the command is written before the thread exists, and the calls are read after it stopped.
+    {   blk("INVOKEOWNER - the poller's invokes are CE's, never if_free");
+        using namespace Fx;
+        g_peCalls.clear();
+        Send(mb, Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain));
+        check("INVOKEOWNER control: an invoke served on this thread runs under no owner", g_peCalls.size() == 1
+              && g_peCalls[0].owner == 0 && !g_peCalls[0].ifFree);
+        g_peCalls.clear();
+        mb.status = Mimic::STATUS_IDLE;
+        mb.result = 0x5A5A;
+        mb.instanceAddr = A(bInstLive);
+        mb.ufuncAddr = A(bFnPlain);
+        mb.cmd = Mimic::CMD_INVOKE;
+        Mimic::StartThread();
+        const ULONGLONG until = GetTickCount64() + 3000;
+        while (!Answered(mb) && GetTickCount64() < until) Sleep(1);
+        Mimic::StopThread(false);
+        check("INVOKEOWNER ⭐: the polling thread's invoke runs as CE's, never if_free", Answered(mb) && mb.result == 0
+              && g_peCalls.size() == 1 && g_peCalls[0].owner == Voll::kHoldOwnerCe && !g_peCalls[0].ifFree,
+              num(mb.result));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
