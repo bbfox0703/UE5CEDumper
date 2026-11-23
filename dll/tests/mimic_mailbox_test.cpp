@@ -87,7 +87,7 @@ __declspec(dllexport) bool UE5_GetObjectName(uintptr_t, char* buf, int32_t bufLe
     return false;
 }
 __declspec(dllexport) int32_t UE5_CallProcessEvent(uintptr_t, uintptr_t, uintptr_t) { return 0; }
-__declspec(dllexport) int32_t UE5_CallProcessEventEx(uintptr_t, uintptr_t, uintptr_t, uint32_t) { return 0; }
+int32_t UE5_CallProcessEventEx(uintptr_t, uintptr_t, uintptr_t, uint32_t) { return 0; }   // Mimic declares it plain
 __declspec(dllexport) int32_t UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t) { return 0; }
 }  // extern "C"
 
