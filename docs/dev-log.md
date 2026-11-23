@@ -29,6 +29,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — The invoke queue and the game thread have a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `stark_dispatch_test` #includes `Stark.cpp` (GameThreadDispatch) and drives the
+  invoke queue end to end in its own process: callers on threads of their own, a fake game thread that enters the
+  detour as the game would, and a ProcessEvent that records each call.
+- **Covered, 71 checks:** a queued invoke runs on the game thread against its own copy of the parameters; a
+  timed-out one stays queued and later runs on its original parameters without touching the caller's buffer; a
+  request its waiter abandons never runs, and one the drain already took is waited out; an if_free invoke is
+  refused under the queue's lock; a request counts until it is answered and is counted off once, before its caller
+  wakes; one request at a time, with no nested drain; a departed owner's queued invokes dropped; a shutdown cuts
+  the wait only when the game thread is stalled. On the game thread's side: which entries count as its, the
+  liveness they stamp, Stark's own calls marked per thread and never draining, a fault contained, the profiler fed
+  and a throw contained, a worker thread's ProcessEvent leaving queued work alone, and the game-thread pick and
+  its validation.
+- **Negative controls:** 57 queue and 43 thread mutants of Stark.cpp, every one detected. The
+  MinHook install is the part still read as text (9 C# pins).
+- **Tests:** `stark_dispatch_test` 71 checks, 0 failures, five runs in a row, and under ASan; C# 8526 (1 skipped).
+
+-----
+
 ## 2026-11-23 (build 3779) — Tests for God Mode, Fly and the Cheat Engine mailbox `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** nothing in the UI or the DLL's behaviour. Since build 3778 three more DLL files are tested
