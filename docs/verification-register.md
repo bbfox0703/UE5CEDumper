@@ -5908,11 +5908,20 @@ contain none of those entries. Do not extend the table to an editor build.
 > 1 Hz decrement (`DumperTestActor.h:242`), and it incidentally proves both surfaces are reading the
 > same live memory rather than a cache.
 
-### 🔲 A3 — one FVector per class was ever indexed (build 3168)
+### 🟡 STEPS 1-2 CLOSED 2026-11-23 OFFLINE `[A3-SCANSIBLING-2026-11-23]` — A3 — one FVector per class was ever indexed (build 3168); step 4 is left
+
+> ✅ **CLOSED 2026-11-23 `[A3-SCANSIBLING-2026-11-23]`, steps 1 and 2, offline.** `dll_core_test`'s
+> SCANSIBLING block (`3f3543d3`) builds a class with two fields of one Vector struct (Location at +0x30,
+> Velocity at +0x40) in a fake object pool and runs `Aura::ScanForValue`: a Float scan for 20 finds
+> `Velocity.Y` alone (step 1's defect), a Float scan for 2 finds `Location.Y`, and an FVector scan finds
+> `Velocity` whole (step 2's control). Negative control: with `StructPathGuard` replaced by a whole-walk
+> `visited.insert`, the Velocity.Y check fails and both controls stay green (1984 checks, 1 failure);
+> restored, 0 failures in 5 runs. **Not covered:** step 4, whether the 4000-field cap fires on real
+> classes, which needs a game's class sizes. Step 3 is a diagnostic, not a check.
 
 *Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned
 (`Test_Aura_StructPathGuard`, negative control 7 red); the WALK THAT USES IT is not** — no test target
-compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a real class.*
+compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a real class. (Corrected 2026-11-23: `dll_core_test` has compiled `Aura.cpp` since 2026-08-25; the record above runs that walk.)*
 
 > **Why this is cheap: the before/after is a single scan and the expected delta is huge.** The guard
 > was whole-walk instead of path-scoped, so only the FIRST field of a given `UScriptStruct` type in a
