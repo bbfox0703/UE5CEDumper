@@ -90,6 +90,22 @@ def count_dir(root, reldir, suffix):
     return sum(1 for f in os.listdir(base) if f.endswith(suffix))
 
 
+HIMMEL_SUMMARY = (r"=\s*(\d+)\s*AOB\s*\+\s*(\d+)\s*CallFollow\s*\+\s*(\d+)\s*symbol\s+exports"
+                  r"\s*=\s*(\d+)\s*entries,\s*over\s*(\d+)\s*distinct")
+
+
+def himmel_summary(root, group):
+    """One number from Himmel.h's signature summary: 1 = AOB patterns, 4 = entries, 5 = source tags.
+
+    The summary is the authority because `extract_patterns.py --check` already holds it to the parsed
+    tables; deriving from it here keeps one parser of Himmel.h, not two that can disagree."""
+    path = os.path.join(root, "dll", "src", "Himmel.h")
+    if not os.path.isfile(path):
+        return None
+    m = re.search(HIMMEL_SUMMARY, read(path))
+    return int(m.group(group)) if m else None
+
+
 # ── the registry ────────────────────────────────────────────────────────────
 # (key, human label, derive(root) -> int, paste-able sentence template, claims)
 # A claim is (file, regex). The regex MUST have exactly one group, capturing the
@@ -204,6 +220,43 @@ CHECKS = [
         derive_cmd="ls dll/src/*.h | wc -l",
         claims=[
             ("CLAUDE.md", r"\*\*\d+ \.cpp \+ (\d+) \.h\*\* DLL files"),
+        ],
+    ),
+    # The three signature-table counts. Himmel.h's own summary is held to the parsed tables by
+    # extract_patterns --check; these hold the docs that restate it.
+    dict(
+        key="aob_patterns",
+        label="AOB patterns",
+        derive=lambda r: himmel_summary(r, 1),
+        derive_cmd="the '= N AOB + ...' summary in dll/src/Himmel.h (py tools/ghidra/extract_patterns.py --check)",
+        claims=[
+            ("docs/Features.md",       r"\| (\d+) AOB patterns \+ 1 CallFollow"),
+            ("docs/Features_zh-TW.md", r"\| (\d+) 組 AOB 特徵碼"),
+            ("docs/dll-spec.md",       r"(\d+) AOB patterns \+ 1 CallFollow \+ 6 symbol exports — "),
+        ],
+    ),
+    dict(
+        key="aob_entries",
+        label="signature entries",
+        derive=lambda r: himmel_summary(r, 4),
+        derive_cmd="the '= N entries' summary in dll/src/Himmel.h (py tools/ghidra/extract_patterns.py --check)",
+        claims=[
+            ("docs/Features.md",       r"symbol exports \((\d+) entries\)"),
+            ("docs/Features_zh-TW.md", r"（共 (\d+) 筆）"),
+            ("docs/dll-spec.md",       r"— (\d+) entries defined in `Himmel\.h`"),
+            ("docs/architecture.md",   r"Genau \(OffsetFinder\)\s+— (\d+) signature entries"),
+            ("docs/roadmap.md",        r"The (\d+) signature entries in `Himmel\.h`"),
+        ],
+    ),
+    dict(
+        key="aob_source_tags",
+        label="signature source tags",
+        derive=lambda r: himmel_summary(r, 5),
+        derive_cmd="the 'over N distinct' summary in dll/src/Himmel.h (py tools/ghidra/extract_patterns.py --check)",
+        claims=[
+            ("docs/Features.md",       r"entries\) from (\d+) source tags"),
+            ("docs/Features_zh-TW.md", r"來自 (\d+) 個來源標籤"),
+            ("docs/dll-spec.md",       r"drawn from (\d+) source tags"),
         ],
     ),
 ]
