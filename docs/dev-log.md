@@ -29,6 +29,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (build 3777) — Avalonia 12.1.6
+
+- **What changes:** Avalonia 12.1.3 → 12.1.6 (Avalonia, Win32, Skia, HarfBuzz, Themes.Fluent, Fonts.Inter and,
+  in the headless tests, Headless); Microsoft.NET.Test.Sdk 18.10.1 → 18.12.0 in both test projects.
+- **Pins kept, checked against the nuspecs:** Avalonia.Skia / Avalonia.HarfBuzz 12.1.6 are built against the same
+  SkiaSharp 3.119.4 and HarfBuzzSharp 8.3.1.3 as 12.1.3, and Avalonia 12.1.6 against the same MicroCom.Runtime
+  0.11.6 and Angle natives, so SkiaSharp 4.x, HarfBuzzSharp 14.x and MicroCom.Runtime 0.11.7 are not taken.
+  Microsoft.Data.Sqlite stays on `10.0.*` (the .NET 10 LTS patches); 11.0.0 is the .NET 11 train and needs the
+  same SQLitePCLRaw 3.0.5.
+- **Also since build 3776 (docs and tools only):** the README and Features pages describe the MCP server and the
+  experimental extras, and several stale lines are fixed; `check_derived_counts` pins the signature counts five
+  docs restate from `Himmel.h`; `test-games.md` has a row for every game in the README's version matrix; CLAUDE.md
+  says everything testable is tested, and that a `.cpp` no test target compiles yet is a gap to close.
+- **Tests:** C# 8547 (1 skipped), headless 74, the five C++ self-tests; `build.ps1` reports the native renderer
+  packages match what Avalonia was built against (2 pairs).
+- AOT UI 62,980,608 bytes (sha256 2470f75e69ecbfe1...); UE5Dumper.dll 3,882,496 bytes (sha256 83b7af4bfe51bb06...).
+
+-----
+
 ## 2026-11-20 (no build change) — The census keeps only what is not done `[OPEN-CENSUS-2026-10-28]`
 
 - **The decision:** the maintainer ruled that a done item leaves the open-work census for `docs/archive/` and an
