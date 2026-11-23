@@ -647,7 +647,7 @@ shipping any major Walker / Detection change:
   prefer per-game user override over a publisher-wide bias unless we
   have ≥3 misdetected titles from the same publisher.
 - **AOB pattern decay** — UE engine source rotates roughly every minor
-  version. The 158 signature entries in `Himmel.h` are time-stamped per
+  version. The 160 signature entries in `Himmel.h` are time-stamped per
   introducing build; any pattern that hasn't matched in ≥4 minor
   versions is a candidate for removal at the next clean-up.
 - **HintCache schema additions** — the `FillPointerSnapshot`

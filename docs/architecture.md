@@ -249,7 +249,7 @@ which a `.h` edit silently stops triggering a rebuild (CLAUDE.md carries the ful
 Game Process
   └── UE5Dumper.dll (injected via CE Lua injectDLL(), version/dinput8/dxgi proxy, or CreateRemoteThread inject)
         ├── AutoStartThreadProc — 1s delay, detects CE plugin vs game
-        ├── Genau (OffsetFinder)    — 158 signature entries, GObjects / GNames / GWorld / SparseDelegates / GEngine
+        ├── Genau (OffsetFinder)    — 160 signature entries, GObjects / GNames / GWorld / SparseDelegates / GEngine
         ├── Serie (FNamePool)       — string resolution (3 modes; + Neu UE5.6+ enum FNameData)
         ├── Aura (ObjectArray)      — UObject enumeration (chunked + flat + packed) + Find Refs / FindInContainers /
         │                             FindByAddress / ScanForValue (Radar/Orden) / FindObjectGraphPath / GetRelatedObjects (Edel)
