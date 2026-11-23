@@ -134,7 +134,7 @@ def _summary(text):
 # The self-tests the ASan tree instruments (dll/CMakeLists.txt, ue5_apply_asan): what `--asan --run` builds and runs
 # when no --targets is given. A run that reaches none of them is a failure, not a pass.
 ASAN_TEST_TARGETS = ["utf8_helpers_test", "dll_helpers_test", "grausam_window_test", "sein_retention_test",
-                     "methode_plugin_test", "dunste_fly_test",
+                     "methode_plugin_test", "dunste_fly_test", "mimic_mailbox_test",
                      "dll_core_test"]
 
 

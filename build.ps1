@@ -1315,6 +1315,12 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # mimic_mailbox_test #includes Mimic.cpp (the CE Lua mailbox) and serves commands into a mailbox in its own
+    # memory, with the C ABI and the gameplay modules it calls faked.
+    if (-not (Invoke-CppSelfTest -TargetName "mimic_mailbox_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the
