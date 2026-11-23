@@ -2169,7 +2169,8 @@ public class InvokeScriptTests
         // [W1-WINMM-LOADMODE] Fern's load_mode classifier names winmm.dll too: without it a winmm proxy load would report
         // "loaded:winmm.dll" and never earn the per-game confirmed-proxy record the other three do. Methode's
         // kProxyDllNames is the list of proxy file names we ship (itself kept in sync with the .CT and ProxyType.cs), so
-        // the classifier must name every one. Fern.cpp and Methode.cpp reach no test target.
+        // the classifier must name every one. Fern.cpp reaches no test target yet, so both sides are read as source;
+        // methode_plugin_test checks the four names Methode's pre-filter accepts.
         var methode = DllSource("Methode.cpp");
         int list = methode.IndexOf("kProxyDllNames[] = {", StringComparison.Ordinal);
         Assert.True(list >= 0, "Methode.cpp's kProxyDllNames not found -- re-point this pin");
@@ -2204,49 +2205,6 @@ public class InvokeScriptTests
         // [R7-S9] ...through InitSettled, which reads the globals into locals first and the flag last.
         Assert.Contains("Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress)", mimic, StringComparison.Ordinal);
         Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_TrueButAbsent_IsAmbiguous_AndNamesTheForceLoadSetting()
-    {
-        // [A2-METHODE-MANUALMAP] ce_InjectDLL TRUE after EInjectError means CE's forceLoadModule SUCCEEDED: a manual map
-        // the module walk cannot see, so the text neither calls it "Injection failed" nor blames CE's BOOL. The APC path and
-        // a GetExitCodeThread failure also return TRUE with nothing mapped, so the honest text is AMBIGUOUS, and it names
-        // the setting that forces a manual map. Methode.cpp reaches no test target.
-        var src = DllSource("Methode.cpp");
-        Assert.Contains("\\\"Always force load modules\\\"", src, StringComparison.Ordinal);
-        Assert.Contains("That means one of two things", src, StringComparison.Ordinal);
-        Assert.DoesNotContain("its result cannot be trusted on its own", src, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify()
-    {
-        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] A manually mapped image can log an exception (C++ or SEH: /EHa) contained
-        // by a catch(...) inside it without the game crashing -- so "cannot handle exceptions, so the game is likely to
-        // crash" overstates it. The advice stands (a manual map is unsupported and MAY not register the tables
-        // exception handling needs); its reason must say "may". Methode.cpp reaches no test target.
-        var src = DllSource("Methode.cpp");
-        Assert.DoesNotContain("cannot handle exceptions", src, StringComparison.Ordinal);
-        Assert.DoesNotContain("is likely to crash", src, StringComparison.Ordinal);
-        Assert.Contains("UE5Dumper.dll is not supported", src, StringComparison.Ordinal);
-        Assert.Contains("untick that setting, restart the game, and inject again", src, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_Dialogs_PointAtTheLogsThatExist()
-    {
-        // [METHODE-STALE-LOGPATH] The failure dialogs must not point at "Logs\UE5Dumper-*.log", a flat layout that does
-        // not exist: logs are per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the
-        // scan in the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
-        var src = DllSource("Methode.cpp");
-        Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
-        Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
-        Assert.Contains("init-0.log", src, StringComparison.Ordinal);
-        // Sein names the folder after the host exe, and CE's launcher starts cheatengine-x86_64-SSE4-AVX2.exe on any
-        // AVX2 CPU (cheatengine.lpr reads cpuid leaf 7), so naming only "cheatengine-x86_64" sends the reader to a folder
-        // that is absent, or stale.
-        Assert.Contains("cheatengine-x86_64-SSE4-AVX2", src, StringComparison.Ordinal);
     }
 
     private static string DllSrcDir()

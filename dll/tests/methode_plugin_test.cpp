@@ -244,6 +244,10 @@ int main() {
               notOurs);
     }
 
+    // [A2-METHODE-MANUALMAP] CE's TRUE after a failed inject means its forced load (a manual map the module walk cannot
+    // see) SUCCEEDED; the APC path also returns TRUE with nothing mapped. So the text is ambiguous and names the
+    // setting. [METHODE-MANUALMAP-EXCEPTION-CLAIM] It claims only what a run cannot falsify: "may", never "will crash".
+    // [METHODE-STALE-LOGPATH] Every failure dialog points at the per-process logs that exist (CheckLogDetails).
     {   blk("INJECT-TRUE-ABSENT - CE reports success but the module list does not show it: ambiguous");
         g_injectOutcome = InjectOutcome::ReportTrueNothingMapped;
         menuClick();
@@ -260,6 +264,8 @@ int main() {
         check("AMBIGUOUS: claims no more than a run can show -- no 'cannot handle exceptions'",
               !has(msg, "cannot handle exceptions"), msg.c_str());
         check("AMBIGUOUS: ...and no 'is likely to crash'", !has(msg, "is likely to crash"), msg.c_str());
+        check("AMBIGUOUS: does not blame CE's result as untrustworthy -- it is one of two named outcomes",
+              !has(msg, "cannot be trusted on its own"), msg.c_str());
         CheckLogDetails("ambiguous", msg);
     }
 

@@ -2,8 +2,8 @@
 
 // ============================================================
 // Methode — メトーデ (梅特戴 — the all-capable analyst mage)
-// CEPlugin: the pure helpers Methode.cpp needs, header-inline so dll_helpers_test can run them (the Scharf pattern:
-// no test target compiles Methode.cpp).
+// CEPlugin: the pure helpers Methode.cpp needs, header-inline so dll_helpers_test can run each rule case by case;
+// methode_plugin_test drives Methode.cpp itself through a fake Cheat Engine.
 // ============================================================
 
 #include <Windows.h>
@@ -67,7 +67,7 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
 // [PATH-METHODE-NO8DOT3] The alias the plugin hands NarrowForAnsiLoad as shortPath: shortOf(the FOLDER) plus the DLL's
 // own long name -- never the file's own alias, which renames the loaded module (UE5DUM~1.DLL).
 // "" when there is no folder or the lookup answers nothing. shortOf is ShortDirOf in production, a fake in the test:
-// it lives here rather than in Methode.cpp, which no test target compiles, so the folder-alias rule is tested.
+// it lives here, pure, so dll_helpers_test holds the folder-alias rule case by case.
 template <typename ShortOf>
 inline std::wstring FolderAliasOf(const std::wstring& longPath, ShortOf shortOf)
 {
