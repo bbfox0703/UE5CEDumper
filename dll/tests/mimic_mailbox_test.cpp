@@ -242,6 +242,36 @@ int main() {
         check("PROTECT: an unknown op is refused", mb.result == -1 && Msg(mb) == "Protect: unknown op", Msg(mb).c_str());
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] A change CE makes through the mailbox makes CE the holder, so an AI session never
+    // replaces or ends it. Each handler that changes a hold, and the hold it names.
+    {   blk("HOLDS - every handler that changes a hold records CE as its holder");
+        struct Case { const char* what; int32_t cmd; uint64_t inst; uint64_t ufunc; std::string hold; };
+        const Case cases[] = {
+            { "Keep Foreground",   Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1, Grimoire::HOLD_FOREGROUND_LOCK },
+            { "walk speed",        Mimic::CMD_MOVEMENT, 0, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "walk_speed" },
+            { "gravity scale",     Mimic::CMD_MOVEMENT, 1, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "gravity" },
+            { "jump",              Mimic::CMD_MOVEMENT, 2, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "jump" },
+            { "gravity direction", Mimic::CMD_MOVEMENT, 3, 0, Grimoire::HOLD_GRAVITY_DIRECTION },
+            { "world time",        Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, std::string(Grimoire::HOLD_TIME_PREFIX) + "global" },
+            { "pawn time reset",   Mimic::CMD_TIME, Mimic::TIME_OP_RESET, 1, std::string(Grimoire::HOLD_TIME_PREFIX) + "pawn" },
+            { "Fly on",            Mimic::CMD_FLY, Mimic::FLY_OP_SET_ENABLED, 1, Grimoire::HOLD_FLY },
+            { "Fly speed",         Mimic::CMD_FLY, Mimic::FLY_OP_SET_SPEED, 0, Grimoire::HOLD_FLY },
+            { "Fly preset",        Mimic::CMD_FLY, Mimic::FLY_OP_SET_PRESET, 1, Grimoire::HOLD_FLY },
+            { "Fly noclip",        Mimic::CMD_FLY, Mimic::FLY_OP_SET_NOCLIP, 1, Grimoire::HOLD_FLY },
+        };
+        for (const Case& c : cases) {
+            Voll::Holds().SetOwner(c.hold, 0);
+            Send(mb, c.cmd, c.inst, c.ufunc);
+            check((std::string("HOLDS ⭐: ") + c.what + " -- CE holds '" + c.hold + "'").c_str(),
+                  Answered(mb) && Voll::Holds().Owner(c.hold) == Voll::kHoldOwnerCe);
+        }
+        const std::string worldTime = std::string(Grimoire::HOLD_TIME_PREFIX) + "global";
+        Voll::Holds().SetOwner(worldTime, 0);
+        Send(mb, Mimic::CMD_TIME, Mimic::TIME_OP_SET, 5);
+        check("HOLDS control: a time target that is neither world nor pawn takes no hold",
+              Voll::Holds().Owner(worldTime) == 0);
+    }
+
     {   blk("DEBUGCAM - a queued or blocked toggle says what to do next, and a pending ON stays its sender's");
         g_debugCameraRc = Stark::kInvokeTimedOutStillQueued;
         Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
@@ -255,7 +285,11 @@ int main() {
         g_debugCameraRc = Stark::kToggleBlockedByQueued;
         Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
         check("DEBUGCAM ⭐: an ON refused over a queued OFF says it was not sent",
-              mb.result == Stark::kToggleBlockedByQueued && Msg(mb).find("ON not sent") != std::string::npos, Msg(mb).c_str());
+              mb.result == Stark::kToggleBlockedByQueued
+              && Msg(mb).find("ON not sent -- an earlier OFF is still queued") != std::string::npos, Msg(mb).c_str());
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 0);
+        check("DEBUGCAM ⭐: an OFF refused over a queued ON says it was not sent",
+              Msg(mb).find("OFF not sent -- an earlier ON is still queued") != std::string::npos, Msg(mb).c_str());
 
         // An AI's ON is still pending: CE's toggle does not take the hold from its sender.
         g_debugCameraRc = 1;
