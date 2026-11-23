@@ -234,8 +234,12 @@ int main() {
         CheckLogDetails("inject-failed", msg);
 
         // System32's version.dll is in this process (the plugin links version.lib): same NAME as our proxy, not ours.
+        // The loader spells it VERSION.dll; compare without case.
         bool notOurs = false;
-        for (const auto& l : g_log) notOurs = notOurs || (has(l, "'version.dll' is loaded but is not ours"));
+        for (std::string l : g_log) {
+            for (char& c : l) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            notOurs = notOurs || has(l, "'version.dll' is loaded but is not ours");
+        }
         check("IDENTITY ⭐: Windows' own version.dll is walked past by its ProductName, not mistaken for our proxy",
               notOurs);
     }
