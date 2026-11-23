@@ -39,6 +39,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ⛔ **No new PowerShell: every helper is Python** (`build.ps1` is the one exception). Bitdefender
   quarantined six files when a new `.ps1` ran. **Commit before executing anything newly written.**
   The rest of the session rules: [handover §4](docs/handover.md).
+- ⛔ **Everything testable is tested.** No file is out of reach because no test target compiles it
+  yet: a change that needs a test adds the `.cpp` to a target (an existing one or a new one), or moves
+  the decision into a header a target compiles and has the `.cpp` call it. A C# test that reads C++
+  source as text checks the text, not the behaviour: use one only where a behaviour test cannot be
+  built, and say why ([working-lessons §7.3 #6](docs/working-lessons.md)).
 
 -----
 
@@ -98,15 +103,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 
 # Run tests only
 # ⚠ -Target Test does NOT compile the whole DLL. It builds 5 test executables, and
-#   **12 of the 33** dll/src .cpp files reach a test target at all: dll_core_test #includes
+#   **12 of the 33** dll/src .cpp files reach a test target so far: dll_core_test #includes
 #   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme / Linie into one TU,
 #   dll_helpers_test compiles Falsch, and grausam_window_test / sein_retention_test take one
-#   each. The other 21 — **Fern.cpp and
-#   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
-#   it clean. A green -Target Test after editing one of THOSE measures nothing about that
-#   file. Build the DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before
-#   claiming a C++ change builds. Both counts are pinned by `check_derived_counts`; do not
-#   hand-edit them.
+#   each. A green -Target Test says nothing about the other 21 (Fern.cpp and Stark.cpp among
+#   them). That is a gap to close, not a kind of file that cannot be tested: see "Everything
+#   testable is tested" under ## Code Changes. Build the DLL target (build_dll.py --targets
+#   UE5Dumper, or -Target DLL) before claiming a C++ change builds. Both counts are pinned by
+#   `check_derived_counts`; do not hand-edit them.
 # ⚠⚠ It is ALSO NOT READ-ONLY: the C++ narrowness above is about the C++ side ONLY —
 #   it republishes dist\ NON-TRIMMED too. See ## Build & Deploy.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
