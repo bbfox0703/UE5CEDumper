@@ -714,6 +714,52 @@ if(BUILD_DLL_TESTS)
     ue5_apply_asan(methode_plugin_test)
     target_link_libraries(methode_plugin_test PRIVATE version)
 
+    # ---- ue5_testcore: the DLL's core as a library, for a module that needs a test executable of its own ---------
+    # dll_core_test #includes these files as ONE translation unit to reach their file statics. A module whose own
+    # file-local helpers share names with one of them (Dunste and Solitar each keep a copy of the pawn chain) cannot
+    # join that unit, so it is linked against the same files compiled separately here. The externals are each test's
+    # to define: Sein's log functions, Stark::SetInvokeTimeoutMs, and Frieren's g_cachedUEVersion / g_cachedGWorld /
+    # g_initInProgress -- the surface dll_core_test's comment below lists.
+    add_library(ue5_testcore STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Macht.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Serie.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Ubel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Radar.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denken.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Flamme.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Aura.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Genau.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Linie.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Solitar.cpp
+    )
+    target_include_directories(ue5_testcore PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+    )
+    target_compile_definitions(ue5_testcore PUBLIC ${UE5_COMMON_DEFS})
+    if(MSVC)
+        set_property(TARGET ue5_testcore PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(ue5_testcore PRIVATE /utf-8 /W3 /EHsc /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(ue5_testcore)
+    target_link_libraries(ue5_testcore PUBLIC Zydis version)
+
+    # ---- dunste_fly_test: Fly / Noclip (Dunste.cpp) over a fake world, with a fake game-thread dispatcher --------
+    add_executable(dunste_fly_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/dunste_fly_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Dunste.cpp
+    )
+    if(MSVC)
+        set_property(TARGET dunste_fly_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(dunste_fly_test PRIVATE /utf-8 /W3 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(dunste_fly_test)
+    target_link_libraries(dunste_fly_test PRIVATE ue5_testcore)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
