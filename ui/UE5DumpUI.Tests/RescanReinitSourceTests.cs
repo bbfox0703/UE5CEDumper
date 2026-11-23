@@ -6,8 +6,9 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [RESCAN-DECOY-REINIT] Extra Scan replaces a published GObjects that reads no objects. The choice and the re-init's
 /// order are unit-tested in dll_core_test / dll_helpers_test (Genau::PlanRescan, PlanRescanApply,
-/// ChooseGObjectsCandidate, ReplaceGObjectsAndReprobe); Fern.cpp, Frieren.cpp, Routine.h's loop, Dunste, Schlacht and
-/// Solitar reach no C++ test target, so their wiring is pinned here from the source.
+/// ChooseGObjectsCandidate, ReplaceGObjectsAndReprobe); Fern.cpp, Frieren.cpp, Routine.h's loop, Dunste and Schlacht
+/// reach no C++ test target yet, so their wiring is pinned here from the source. Solitar's God Mode targets are
+/// dll_core_test's (GODMODE).
 /// </summary>
 public sealed class RescanReinitSourceTests
 {
@@ -191,16 +192,5 @@ public sealed class RescanReinitSourceTests
                 "s_enumCache.emplace(");
         var reset = Between(DllSrc("Genau.cpp"), "void ResetUEnumNamesDetection() {", "\n}\n");
         InOrder(reset, "DynOff::bEnumNamesNewContainer = false;", "DynOff::UENUM_DETECT_GEN.fetch_add(1");
-    }
-
-    [Fact]
-    public void GodModeTargets_AreKeyedByTheFamilyEpoch()
-    {
-        // A replace's probe re-measures the offsets the cached targets were read under; the epoch it retires is the key.
-        var solitar = DllSrc("Solitar.cpp");
-        var apply = Between(solitar, "int32_t ApplyGodNowLocked(", "\n}\n");
-        InOrder(apply, "const uintptr_t targetsKey = DynOff::FamilyCacheKey(p.pawnClass);", "BuildTargets(p.pawnClass, verbose);",
-                "s_targetsKey = targetsKey;");
-        Assert.DoesNotContain("s_targetsClass", solitar);
     }
 }
