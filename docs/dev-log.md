@@ -29,6 +29,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (build 3779) — Tests for God Mode, Fly and the Cheat Engine mailbox `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** nothing in the UI or the DLL's behaviour. Since build 3778 three more DLL files are tested
+  by C++ tests that run their code rather than read their text: God Mode (`Solitar.cpp`, in `dll_core_test`),
+  Fly / Noclip (`Dunste.cpp`, `dunste_fly_test`) and the Cheat Engine mailbox (`Mimic.cpp`,
+  `mimic_mailbox_test`, 255 checks over every command and the polling thread). The core files build once as a
+  library, `ue5_testcore`, that the per-module tests link. Two fixtures of `dll_core_test` read past their end
+  and are whole chunks now `[CEPTR-FAIL-ONCE-2026-11-23]`. 16 of the 33 `dll/src` .cpp files reach a test target.
+- **Tests:** C# 8527 (1 skipped), headless 74, the CE Lua host, and the eight C++ self-tests, each run by
+  `build.cmd publish`; no compiler, trimming or test warning in the build log.
+- AOT UI 62,980,608 bytes (sha256 2eee6b7da7ef930f...); UE5Dumper.dll 3,882,496 bytes (sha256 a22de10da870b194...).
+
+-----
+
 ## 2026-11-23 (no build change) — Every mailbox command is tested, and the polling thread too `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `mimic_mailbox_test` grows from 41 checks to 255 and now drives every command
