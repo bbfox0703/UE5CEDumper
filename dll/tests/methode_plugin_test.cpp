@@ -175,9 +175,10 @@ int main() {
         g_isCEPlugin.store(false);
         check("INIT: a null table is refused", CEPlugin_InitializePlugin(nullptr, 3) == FALSE);
 
-        ExportedFunctions small = MakeFakeCe();
-        small.sizeofExportedFunctions = static_cast<int>(sizeof(ExportedFunctions)) - 8;
-        check("INIT ⭐: a table shorter than the fields it reads is refused", CEPlugin_InitializePlugin(&small, 3) == FALSE);
+        ExportedFunctions shortTable = MakeFakeCe();   // not `small`: rpcndr.h defines that as `char`
+        shortTable.sizeofExportedFunctions = static_cast<int>(sizeof(ExportedFunctions)) - 8;
+        check("INIT ⭐: a table shorter than the fields it reads is refused",
+              CEPlugin_InitializePlugin(&shortTable, 3) == FALSE);
         check("INIT ⭐: ...and nothing is registered from it", g_registered.empty());
 
         ExportedFunctions ef = MakeFakeCe();
