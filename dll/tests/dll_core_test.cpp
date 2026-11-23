@@ -4080,11 +4080,11 @@ int main() {
     // Velocity are both a Vector, and both must contribute leaves. A guard over the whole walk would index
     // Location's leaves and drop Velocity's subtree, and the scan would report "no match" for a value that is there.
     {   blk("SCANSIBLING - ScanForValue indexes every field of one struct type, not only the first");
-        static uint8_t ssEntry[10][0x40] = {};
-        const char* ssNames[10] = { "", "StructProperty", "FloatProperty", "Location", "Velocity", "X", "Y", "Z",
-                                    "SsActor", "Vector" };
-        static uintptr_t ssChunk[11] = {};
-        for (int i = 1; i <= 9; ++i) {
+        static uint8_t ssEntry[11][0x40] = {};
+        const char* ssNames[11] = { "", "StructProperty", "FloatProperty", "Location", "Velocity", "X", "Y", "Z",
+                                    "SsActor", "Vector", "ScriptStruct" };
+        static uintptr_t ssChunk[12] = {};
+        for (int i = 1; i <= 10; ++i) {
             memcpy(ssEntry[i] + 0x10, ssNames[i], strlen(ssNames[i]) + 1);
             ssChunk[i] = reinterpret_cast<uintptr_t>(ssEntry[i]);
         }
@@ -4114,8 +4114,12 @@ int main() {
         prop(ssX, 2, 5, 0, 4, ssY);
         prop(ssY, 2, 6, 4, 4, ssZ);
         prop(ssZ, 2, 7, 8, 4, nullptr);
+        // A vector scan reads the struct's type name only from an object whose class is ScriptStruct.
+        static uint8_t ssScriptStruct[0x100] = {};
+        put32(ssScriptStruct, Grimoire::OFF_UOBJECT_NAME, 10);
         static uint8_t ssVec[0x100] = {};
         put32(ssVec, Grimoire::OFF_UOBJECT_NAME, 9);
+        putP(ssVec, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ssScriptStruct));
         put32(ssVec, DynOff::USTRUCT_PROPSSIZE, 12);
         putP(ssVec, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ssX));
 
@@ -4137,7 +4141,7 @@ int main() {
         memcpy(ssObj + 0x30, loc, sizeof(loc));
         memcpy(ssObj + 0x40, vel, sizeof(vel));
 
-        FakePool ssPool;
+        static FakePool ssPool;             // static: Aura keeps pointing at it after this block
         ssPool.Build(4);                    // the other three objects have no class, so the scan skips them
         const uintptr_t ssO = reinterpret_cast<uintptr_t>(ssObj);
         memcpy(ssPool.chunks[0].data(), &ssO, sizeof(ssO));
