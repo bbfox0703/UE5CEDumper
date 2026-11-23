@@ -15915,10 +15915,12 @@ int main() {
             // its CoreUObject core, named slot after slot. The larger count must not win on 8 names.
             {
                 std::vector<uint8_t> nothing(0x40, 0);   // a readable object that names nothing (index 0, "None")
-                std::vector<uint8_t> spChunk(1024 * 24, 0);
-                for (int i = 0; i < 1024; ++i) {
-                    const uintptr_t o = i % 128 == 0 ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
-                                                     : reinterpret_cast<uintptr_t>(nothing.data());
+                // A whole chunk: the scorer samples kRescanNameSampleSlots slots, more than the 1024-slot head, and a
+                // chunk that ended with the head let it read whatever the heap put next. Past the head, nothing named.
+                std::vector<uint8_t> spChunk(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 24, 0);
+                for (int i = 0; i < Grimoire::OBJECTS_PER_CHUNK; ++i) {
+                    const uintptr_t o = (i < 1024 && i % 128 == 0) ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
+                                                                   : reinterpret_cast<uintptr_t>(nothing.data());
                     memcpy(spChunk.data() + static_cast<size_t>(i) * 24, &o, 8);
                 }
                 std::vector<uintptr_t> spTable(6, reinterpret_cast<uintptr_t>(spChunk.data()));
