@@ -543,7 +543,8 @@ inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
 // On a stalled game thread only Stark::Shutdown answers a waiter's future -- which UE5_Shutdown reaches after joining
 // the workers parked in such waits, so a waiter that watched only its future would hold a CE untick for the rest of
 // the invoke timeout before the pipe server even began to stop. The waiter asks between slices whether a shutdown
-// makes the rest of its wait pointless. Decisions only, header-inline: no test target compiles Stark.cpp.
+// makes the rest of its wait pointless. Decisions only, header-inline, so dll_helpers_test drives every branch;
+// stark_dispatch_test drives the wait that calls them.
 
 // How often a waiter asks. Short against CE's 5 s executeCodeEx and Fern::Stop's 5 s drain.
 constexpr int32_t kInvokeWaitSliceMs = 50;

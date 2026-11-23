@@ -10103,7 +10103,7 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
 //
 // Everything in Renge.h is `inline`, but that does not make MakeResponse linkable here:
 // it calls `Stark::IsGameThreadResponsive`, which is DECLARED in Stark.h but DEFINED in
-// Stark.cpp — and no test target compiles Stark.cpp. `inline` makes the builder itself
+// Stark.cpp, which this target does not compile. `inline` makes the builder itself
 // linkable; it does nothing for what the builder calls. MakeError and MakeEvent touch
 // nothing of Stark's.
 //
