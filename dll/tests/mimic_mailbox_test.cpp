@@ -5,15 +5,17 @@
 //   Mimic::ServeOne, the one pass the polling thread makes over a mailbox: the init gate, the dispatch, the error and
 //   done bookkeeping, a handler that throws, a mailbox another poller is busy with, and an adopted mailbox answered in
 //   place; CMD_TELEPORT's marshalling, op by op; the lookups, listings and pointer queries; and CMD_INVOKE's
-//   refusals, route and parameter conversion. Commands are served on the test's own thread, exactly when it says;
-//   INVOKEOWNER alone starts the real polling thread.
+//   refusals, route and parameter conversion; every handler reading and answering through the mailbox its command
+//   came from; and the polling thread itself -- served, mirrored, stopped and restarted. Commands are served on the
+//   test's own thread, exactly when it says, except in INVOKEOWNER and LIFECYCLE, which start the real thread.
+//   LIFECYCLE takes other mailboxes over for good, so it runs last.
 //
 // WHAT IS FAKED
 //   Everything Mimic dispatches TO: the Frieren C ABI (UE5_*), Wirbel, Grausam, Schlacht, Dunste's status, Stark's
 //   invoke-owner scope and Frieren's debug-camera pending state. Each fake records its arguments and returns what the
 //   test chose. The hold ledger is the real one (Voll::Holds, header-inline), so "CE now holds it" is read back from it.
 //   The core the lookups walk -- Aura, Ubel, Serie -- is the real one, over objects built in the test's own memory
-//   (Fx); Sein::Info can carry a test's hook into one log line.
+//   (Fx); Sein::Info can carry a test's hook into one log line, and Sleep inside Mimic.cpp is MimicSleep.
 //
 // WHY IT #includes THE .cpp
 //   ServeOne, the handlers and the mailbox pointer are statics of Mimic.cpp. The core it reaches (Aura, Ubel, ...) is
@@ -43,7 +45,21 @@ void Debug(const char*, const char*, ...) {}
 void Summary(const char*, ...) {}
 }  // namespace Sein
 
+// A seam into Mimic.cpp's sleeps -- ServeOne's one-millisecond second look and the poll interval. Unhooked it is Sleep;
+// a block that hooks it runs no polling thread.
+void MimicSleep(DWORD ms);
+#define Sleep MimicSleep
 #include "../src/Mimic.cpp"  // NOLINT -- see "WHY IT #includes THE .cpp" above
+#undef Sleep
+static std::function<void()> g_onSleep;
+static int g_sleeps = 0;
+void MimicSleep(DWORD ms) {
+    if (g_onSleep) {
+        ++g_sleeps;
+        g_onSleep();
+    }
+    ::Sleep(ms);
+}
 #include "../src/Serie.h"   // the fixture's name pool
 
 // ── Frieren's globals ───────────────────────────────────────────────────────────────────────────────────────────
@@ -67,6 +83,18 @@ static bool g_foregroundThrows = false;
 static std::vector<std::pair<bool, uint64_t>> g_seeThroughCalls;
 static std::vector<int32_t> g_pierceCalls;
 
+// The C ABI's movement, time and fly setters: each call logged with the values Mimic passed.
+static std::vector<std::string> g_abiCalls;
+static int32_t g_movementRc = 0, g_timeRc = 0;
+static Dunste::FlyStatus g_flyStatus{};
+static void AbiCall(const char* fmt, ...) {
+    char line[160];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    g_abiCalls.emplace_back(line);
+}
 // What an invoke reached: the route, the arguments, and what was true at the moment of the call -- the parameter bytes
 // it saw, the mailbox's out-flags, the invoke owner it ran under, and whether the debug camera's hold was locked.
 struct PeCall {
@@ -136,14 +164,26 @@ __declspec(dllexport) int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t buf
     snprintf(reasonBuf, static_cast<size_t>(bufLen), "%s", "measured by the probe");
     return 1;
 }
-__declspec(dllexport) int32_t UE5_SetMovementPercent(int32_t, double) { return 0; }
-__declspec(dllexport) int32_t UE5_SetTimeDilation(int32_t, double) { return 0; }
-__declspec(dllexport) int32_t UE5_ResetTimeDilation(int32_t) { return 0; }
-__declspec(dllexport) int32_t UE5_SetGravityDirection(double, double, double) { return 0; }
-__declspec(dllexport) int32_t UE5_SetFly(int32_t) { return 0; }
-__declspec(dllexport) int32_t UE5_SetFlySpeed(double) { return 0; }
-__declspec(dllexport) int32_t UE5_SetFlyPreset(int32_t) { return 0; }
-__declspec(dllexport) int32_t UE5_SetFlyNoclip(int32_t) { return 0; }
+__declspec(dllexport) int32_t UE5_SetMovementPercent(int32_t knob, double pct) {
+    AbiCall("SetMovementPercent(%d,%g)", knob, pct);
+    return g_movementRc;
+}
+__declspec(dllexport) int32_t UE5_SetTimeDilation(int32_t target, double value) {
+    AbiCall("SetTimeDilation(%d,%g)", target, value);
+    return g_timeRc;
+}
+__declspec(dllexport) int32_t UE5_ResetTimeDilation(int32_t target) {
+    AbiCall("ResetTimeDilation(%d)", target);
+    return g_timeRc;
+}
+__declspec(dllexport) int32_t UE5_SetGravityDirection(double x, double y, double z) {
+    AbiCall("SetGravityDirection(%g,%g,%g)", x, y, z);
+    return g_movementRc;
+}
+__declspec(dllexport) int32_t UE5_SetFly(int32_t on) { AbiCall("SetFly(%d)", on); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlySpeed(double speed) { AbiCall("SetFlySpeed(%g)", speed); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlyPreset(int32_t preset) { AbiCall("SetFlyPreset(%d)", preset); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlyNoclip(int32_t on) { AbiCall("SetFlyNoclip(%d)", on); return 0; }
 __declspec(dllexport) bool UE5_GetObjectName(uintptr_t obj, char* buf, int32_t bufLen) {
     // What the real export answers: the object's own name, read through Ubel.
     if (buf && bufLen > 0) buf[0] = '\0';
@@ -202,7 +242,7 @@ int32_t SetEnabled(bool enable, uint64_t owner) { g_seeThroughCalls.emplace_back
 void SetPierceCount(int32_t count) { g_pierceCalls.push_back(count); }
 }
 namespace Dunste {
-int32_t GetStatus(FlyStatus& out) { out = FlyStatus{}; return FR_OK; }
+int32_t GetStatus(FlyStatus& out) { out = g_flyStatus; return FR_OK; }
 }
 // Wirbel: every call is logged with the arguments Mimic passed, and answers what the test chose. An unknown landing
 // leaves outNewPose as the caller set it, as Wirbel.h says the real one does.
@@ -492,6 +532,7 @@ static void Build() {
     Param(bParmA, 0, 8, parm, bParmB);
     Param(bParmB, 8, 4, parm | ret);
     InvokeFn(bFnCamera, nToggleDebugCamera, bTest, 0x401, 0, 0, 0xFFFF);
+    P64(s_b[bFnCamera], DynOff::UFIELD_NEXT, A(bFnPlain));   // TestActor's functions: the camera's, then SetHealth
     InvokeFn(bFnPure, nPureMath, bOther, 0x2401, 0, 0, 0xFFFF);
     InvokeFn(bFnPureBig, nPureMathBig, bOther, 0x2401, 1, 8, 0xFFFF, bParmBig2);
     Param(bParmBig2, 1017, 8, parm);
@@ -1401,6 +1442,315 @@ int main() {
         check("INVOKEOWNER ⭐: the polling thread's invoke runs as CE's, never if_free", Answered(mb) && mb.result == 0
               && g_peCalls.size() == 1 && g_peCalls[0].owner == Voll::kHoldOwnerCe && !g_peCalls[0].ifFree,
               num(mb.result));
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] DONE beside a live command is another poller between its two stores, or a sender
+    // that did not clear status: one more look after a millisecond tells them apart. The seam plays the other poller.
+    {   blk("WINDOW - DONE beside a live command: a second look before running it");
+        static Mimic::MailboxData win = {};
+        auto stage = [&] {
+            win.status = Mimic::STATUS_DONE;
+            win.instanceAddr = Mimic::PROTECT_OP_SET_GODMODE;
+            win.ufuncAddr = 1;
+            win.cmd = Mimic::CMD_PROTECT;
+            g_godModeCalls.clear();
+            g_sleeps = 0;
+        };
+        bool warned = false;
+        stage();
+        g_onSleep = [&] { win.cmd = Mimic::CMD_IDLE; };   // the other poller finishes its command in that moment
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW ⭐: the other poller finished it in that moment -- not run a second time", g_sleeps == 1
+              && g_godModeCalls.empty() && win.cmd == Mimic::CMD_IDLE && win.status == Mimic::STATUS_DONE,
+              num(static_cast<long long>(g_godModeCalls.size())));
+        stage();
+        g_onSleep = [] {};
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW: a sender that left DONE and wrote a command is still served after the look", g_sleeps == 1
+              && g_godModeCalls == std::vector<int32_t>{ 1 } && Answered(win));
+        stage();
+        win.status = Mimic::STATUS_IDLE;
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW control: a command after a cleared status runs at once, with no look", g_sleeps == 0
+              && g_godModeCalls == std::vector<int32_t>{ 1 } && Answered(win));
+        g_onSleep = nullptr;
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] Every handler reads its inputs from, and answers into, the mailbox its command came
+    // from -- this copy's own, or an earlier copy's it took over. Each row sends to another mailbox while this copy's
+    // own holds a decoy: inputs that would change the answer if read, and fields that must come through untouched.
+    {   blk("BOX - every handler reads and answers through the mailbox its command came from");
+        using namespace Fx;
+        static Mimic::MailboxData box = {};
+        static uintptr_t s_slot = 0x0000123456789AB0ull;
+        auto bq = [&](size_t at) { uint64_t v; memcpy(&v, box.paramsData + at, sizeof v); return v; };
+        auto bd = [&](size_t at, double v) { memcpy(box.paramsData + at, &v, sizeof v); };
+        auto bstr = [&](size_t at) { return std::string(reinterpret_cast<const char*>(box.paramsData + at)); };
+        auto bmsg = [&] { return std::string(box.errorMsg); };
+        auto bname = [&](const char* cls, const char* fn) {
+            snprintf(box.className, sizeof box.className, "%s", cls);
+            snprintf(box.funcName, sizeof box.funcName, "%s", fn);
+        };
+        auto log1 = [&](const char* line) { return g_abiCalls == std::vector<std::string>{ line }; };
+        struct Row {
+            const char* what;
+            int32_t cmd;
+            uint64_t inst, ufunc;
+            std::function<void()> prep;
+            std::function<bool()> answer;
+        };
+        const Row rows[] = {
+            { "FIND_INSTANCE", Mimic::CMD_FIND_INSTANCE, 0, 0, [&] { bname("Actor", ""); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bHero0); } },
+            { "FIND_FUNCTION", Mimic::CMD_FIND_FUNCTION, A(bHero0), 0, [&] { bname("", "HeroOnly"); },
+              [&] { return box.result == 0 && box.ufuncAddr == A(bHeroOnly) && box.numParms != 0x3333; } },
+            { "FIND_FUNCTION not found", Mimic::CMD_FIND_FUNCTION, A(bHero0), 0x77, [&] { bname("", "Nope"); },
+              [&] { return box.result == -3 && box.ufuncAddr == 0 && bmsg().find("'Nope'") != std::string::npos; } },
+            { "INVOKE", Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain), [&] { bd(0, 4.5); g_prepareMarks = true; },
+              [&] { return box.result == 0 && g_peCalls.size() == 1
+                       && g_peCalls[0].parms == reinterpret_cast<uintptr_t>(box.paramsData)
+                       && g_peCalls[0].params.size() == 1024 && g_prepareCalls.size() == 1
+                       && g_prepareCalls[0].params == box.paramsData && box.paramsData[0] == 0xC7; } },
+            { "INVOKE on a template", Mimic::CMD_INVOKE, A(bInstCdo), A(bFnPlain), nullptr,
+              [&] { return box.result == 0 && box.cmdOutFlags == Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE; } },
+            { "INVOKE refused", Mimic::CMD_INVOKE, A(bInstLive), A(bFnBig), nullptr,
+              [&] { return box.result == -13 && bmsg().find("'BigParms'") != std::string::npos; } },
+            { "INVOKE failed", Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain), [&] { g_peRc = -5; },
+              [&] { return box.result == -5 && bmsg() == "ProcessEvent returned -5"; } },
+            { "INVOKE_BY_NAME", Mimic::CMD_INVOKE_BY_NAME, 0, 0, [&] { bname("TestActor", "SetHealth"); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bInstLive) && box.ufuncAddr == A(bFnPlain)
+                       && g_peCalls.size() == 1 && g_peCalls[0].parms == reinterpret_cast<uintptr_t>(box.paramsData); } },
+            { "INVOKE_BY_NAME threw", Mimic::CMD_INVOKE_BY_NAME, 0, 0, [&] { bname("TestActor", "SetHealth"); g_peThrows = true; },
+              [&] { return box.result == Mimic::MB_ERR_HANDLER_THREW && bmsg().find("did NOT complete") != std::string::npos; } },
+            { "LIST_FUNCTIONS", Mimic::CMD_LIST_FUNCTIONS, 0, 0, [&] { bname("Actor", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bHero0) && box.parmsSize == 1 && bstr(16) == "HeroOnly"; } },
+            { "LIST_INSTANCES exact", Mimic::CMD_LIST_INSTANCES, 0, 0, [&] { bname("BP_Hero_C", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && box.parmsSize == 2 && bq(0) == A(bHero0) && box.instanceAddr == A(bHero); } },
+            { "LIST_INSTANCES derived", Mimic::CMD_LIST_INSTANCES, 0, 0,
+              [&] { bname("BP_Hero_C", ""); memset(box.paramsData, 0, 4); box.cmdFlags = Mimic::LI_IN_DERIVED; },
+              [&] { return box.result == 0 && box.parmsSize == 3 && box.cmdFlags == 0 && bq(40) == A(bSidekick); } },
+            { "LIST_INSTANCES capped", Mimic::CMD_LIST_INSTANCES, 0, 0, [&] { bname("Swarm_C", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && (box.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) != 0; } },
+            { "SET_DEBUG_CAMERA", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER; },
+              [&] { return box.result == -17 && bmsg().find("no live CheatManager") != std::string::npos
+                       && g_debugCameraCalls == std::vector<int32_t>{ 1 }; } },
+            { "SET_DEBUG_CAMERA queued", Mimic::CMD_SET_DEBUG_CAMERA, 0, 0, [&] { g_debugCameraRc = Stark::kInvokeTimedOutStillQueued; },
+              [&] { return bmsg().find("send OFF again") != std::string::npos; } },
+            { "SET_DEBUG_CAMERA blocked", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = Stark::kToggleBlockedByQueued; },
+              [&] { return bmsg().find("ON not sent") != std::string::npos; } },
+            { "SET_DEBUG_CAMERA unreadable", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = -1; },
+              [&] { return bmsg().find("unreadable state") != std::string::npos; } },
+            { "TELEPORT GET_POSE", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE, 0,
+              [&] { g_tpPose = Wirbel::Pose{ 1, 2, 3, 4, 5, 6 }; g_tpMap = "Map_A"; g_tpParentRel = true; },
+              [&] { double x; memcpy(&x, box.paramsData, sizeof x);
+                    return box.result == 0 && x == 1 && bstr(48) == "Map_A" && box.paramsData[178] == 1; } },
+            { "TELEPORT RELATIVE", Mimic::CMD_TELEPORT, Mimic::TP_OP_RELATIVE, 0, [&] { bd(0, 250); box.paramsData[8] = 0; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "TeleportRelative(250,1)" }; } },
+            { "TELEPORT CURSOR", Mimic::CMD_TELEPORT, Mimic::TP_OP_CURSOR, 0,
+              [&] { bd(0, 50); box.paramsData[8] = 3; box.paramsData[9] = 0; g_tpUsedCenter = true; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "TeleportToCursor(50,3,0)" } && box.paramsData[178] == 1; } },
+            { "TELEPORT EXPLICIT", Mimic::CMD_TELEPORT, Mimic::TP_OP_EXPLICIT, 0,
+              [&] { for (int i = 0; i < 6; ++i) bd(static_cast<size_t>(i) * 8, i + 1.0); box.paramsData[48] = 0; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "RecallExplicit(1,2,3,4,5,6,0,0)" }; } },
+            { "TELEPORT RECALL", Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL, 2, [&] { g_tpTier = 2; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "RecallMarker(2,0)" } && box.paramsData[177] == 2; } },
+            { "TELEPORT GET_POV", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POV, 0, [&] { g_tpPov.Fov = 90.0; g_tpPov.Source = 2; },
+              [&] { double f; memcpy(&f, box.paramsData + 48, sizeof f); return f == 90.0 && box.paramsData[81] == 2; } },
+            { "TELEPORT SET_CURSOR", Mimic::CMD_TELEPORT, Mimic::TP_OP_SET_CURSOR, 0, [&] { g_tpCursorState = true; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "SetMouseCursor(0)" } && box.paramsData[0] == 1; } },
+            { "TELEPORT failed", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE, 0, [&] { g_tpRc = Wirbel::TP_ERR_NO_PAWN; },
+              [&] { return box.result == -3 && bmsg() == "Teleport: op=0 slot=0 failed code=-3"; } },
+            { "TELEPORT unknown op", Mimic::CMD_TELEPORT, 99, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Teleport: unknown op"; } },
+            { "PROTECT SET", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 0, nullptr,
+              [&] { return g_godModeCalls == std::vector<int32_t>{ 0 } && box.result == g_godModeRc; } },
+            { "PROTECT GET_STATE", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_GET_STATE, 0, nullptr,
+              [&] { return box.paramsData[0] == 1 && box.paramsData[1] == 0xFF && box.paramsData[2] == 1; } },
+            { "PROTECT failed", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 0, [&] { g_godModeRc = -2; },
+              [&] { return box.result == -2 && bmsg() == "GodMode: op=0 failed code=-2"; } },
+            { "PROTECT unknown op", Mimic::CMD_PROTECT, 7, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Protect: unknown op"; } },
+            { "FOREGROUND SET", Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 0, nullptr,
+              [&] { return g_foregroundCalls == std::vector<bool>{ false } && box.result == 0; } },
+            { "FOREGROUND unknown op", Mimic::CMD_FOREGROUND, 9, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Foreground: unknown op"; } },
+            { "FOREGROUND threw", Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1, [&] { g_foregroundThrows = true; },
+              [&] { return box.result == Mimic::MB_ERR_HANDLER_THREW && bmsg().find("did NOT complete") != std::string::npos; } },
+            { "SEETHROUGH", Mimic::CMD_SEETHROUGH, 3, 0, nullptr,
+              [&] { return g_pierceCalls == std::vector<int32_t>{ 3 } && g_seeThroughCalls.size() == 1
+                       && !g_seeThroughCalls[0].first; } },
+            { "MOVEMENT speed", Mimic::CMD_MOVEMENT, 0, 0, [&] { bd(0, 150); },
+              [&] { return log1("SetMovementPercent(0,150)"); } },
+            { "MOVEMENT gravity direction", Mimic::CMD_MOVEMENT, 3, 0, [&] { bd(0, 0); bd(8, 0); bd(16, -1); },
+              [&] { return log1("SetGravityDirection(0,0,-1)"); } },
+            { "MOVEMENT failed", Mimic::CMD_MOVEMENT, 0, 0, [&] { bd(0, 150); g_movementRc = -4; },
+              [&] { return box.result == -4 && bmsg() == "Movement: knob=0 failed code=-4"; } },
+            { "TIME set", Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, [&] { bd(0, 0.5); },
+              [&] { return log1("SetTimeDilation(0,0.5)"); } },
+            { "TIME reset", Mimic::CMD_TIME, Mimic::TIME_OP_RESET, 1, nullptr, [&] { return log1("ResetTimeDilation(1)"); } },
+            { "TIME failed", Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, [&] { bd(0, 0.5); g_timeRc = -3; },
+              [&] { return box.result == -3 && bmsg() == "Time: op=0 target=0 failed code=-3"; } },
+            { "FLY enable", Mimic::CMD_FLY, Mimic::FLY_OP_SET_ENABLED, 0, nullptr, [&] { return log1("SetFly(0)"); } },
+            { "FLY speed", Mimic::CMD_FLY, Mimic::FLY_OP_SET_SPEED, 0, [&] { bd(0, 1200); }, [&] { return log1("SetFlySpeed(1200)"); } },
+            { "FLY preset", Mimic::CMD_FLY, Mimic::FLY_OP_SET_PRESET, 2, nullptr, [&] { return log1("SetFlyPreset(2)"); } },
+            { "FLY noclip", Mimic::CMD_FLY, Mimic::FLY_OP_SET_NOCLIP, 0, nullptr, [&] { return log1("SetFlyNoclip(0)"); } },
+            { "FLY state", Mimic::CMD_FLY, Mimic::FLY_OP_GET_STATE, 0,
+              [&] { g_flyStatus.active = true; g_flyStatus.preset = 3; g_flyStatus.noclip = true; g_flyStatus.speed = 900.0; },
+              [&] { double v; memcpy(&v, box.paramsData + 8, sizeof v);
+                    return box.paramsData[0] == 1 && box.paramsData[1] == 3 && box.paramsData[2] == 1 && v == 900.0; } },
+            { "FLY unknown op", Mimic::CMD_FLY, 9, 0, nullptr,
+              [&] { return box.result < 0 && bmsg().rfind("Fly: op=9 failed code=", 0) == 0; } },
+            { "QUERY_PTR GWorld", Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GWORLD, 0,
+              [&] { g_cachedGWorld = reinterpret_cast<uintptr_t>(&s_slot); },
+              [&] { return box.result == 0 && bq(0) == reinterpret_cast<uintptr_t>(&s_slot) && bq(8) == s_slot; } },
+            { "QUERY_PTR GameEngine", Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GAME_ENGINE, 0, nullptr,
+              [&] { return box.result == 0 && bq(0) == A(bGameEngine0) && bstr(16) == "GameEngine"; } },
+            { "QUERY_PTR unknown op", Mimic::CMD_QUERY_PTR, 7, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "QueryPtr: unknown op"; } },
+            { "OFFSETS_VERDICT", Mimic::CMD_OFFSETS_VERDICT, 0, 0, nullptr,
+              [&] { return box.result == 1 && bstr(0) == "measured by the probe"; } },
+            { "an unknown command", 99, 0, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Unknown command"; } },
+            { "an init refused", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_GET_STATE, 0,
+              [&] { g_cachedGObjects = g_cachedGNames = 0; },
+              [&] { return box.result == -10 && bmsg() == "DLL not initialized"; } },
+        };
+        auto resetAll = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_peRc = 0; g_peThrows = false; g_prepareOk = true; g_prepareMarks = false;
+            g_tpCalls.clear(); g_tpRc = 0; g_tpTier = 0; g_tpPose = {}; g_tpMap = ""; g_tpParentRel = false;
+            g_tpLandingKnown = true; g_tpUsedCenter = false; g_tpCursorState = false; g_tpMarker = {}; g_tpPov = {};
+            g_abiCalls.clear(); g_movementRc = 0; g_timeRc = 0; g_flyStatus = {};
+            g_godModeCalls.clear(); g_godModeRc = 1; g_debugCameraCalls.clear(); g_debugCameraRc = 1;
+            g_protectWant = 1; g_protectLive = -1; g_protectResolvable = 1;
+            g_foregroundCalls.clear(); g_foregroundThrows = false; g_seeThroughCalls.clear(); g_pierceCalls.clear();
+            g_pendingOn = false; g_cachedGWorld = 0; g_cachedGEngine = 0;
+        };
+        // What a handler that read this copy's mailbox would find: another object, another function, another class
+        // name, a derived scope, 0xEE where a parameter or an operand would be.
+        auto decoy = [&] {
+            memset(&mb, 0xEE, sizeof mb);
+            mb.cmd = Mimic::CMD_IDLE;
+            mb.status = Mimic::STATUS_IDLE;
+            mb.result = 0x1111;
+            mb.instanceAddr = 0x10;
+            mb.ufuncAddr = 0x20;
+            snprintf(mb.className, sizeof mb.className, "%s", "DecoyClass");
+            snprintf(mb.funcName, sizeof mb.funcName, "%s", "DecoyFunc");
+            snprintf(mb.errorMsg, sizeof mb.errorMsg, "%s", "decoy");
+            mb.cmdFlags = Mimic::LI_IN_DERIVED;
+            mb.cmdOutFlags = 0x40;
+        };
+        for (const Row& r : rows) {
+            resetAll();
+            memset(&box, 0x33, sizeof box);
+            box.className[0] = box.funcName[0] = '\0';
+            snprintf(box.errorMsg, sizeof box.errorMsg, "%s", "stale");
+            box.cmdFlags = 0;
+            if (r.prep) r.prep();
+            decoy();
+            Mimic::MailboxData snap;
+            memcpy(&snap, &mb, sizeof snap);
+            Send(box, r.cmd, r.inst, r.ufunc);
+            g_cachedGObjects = g_cachedGNames = 1;
+            const bool answered = Answered(box) && r.answer();
+            check((std::string("BOX ⭐: ") + r.what + " -- read from and answered in its own mailbox").c_str(),
+                  answered, std::string(box.errorMsg).c_str());
+            check((std::string("BOX: ") + r.what + " -- this copy's mailbox untouched").c_str(),
+                  memcmp(&mb, &snap, sizeof snap) == 0);
+        }
+        resetAll();
+        memset(&mb, 0, sizeof mb);
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] The real polling thread over this copy's mailbox and the earlier copies' it took
+    // over: one that forwards its exports here, and one that cannot. Adoption lasts for the process, so this block is
+    // the last. A command is posted as CE posts one -- inputs, then cmd last -- and waited for with a deadline.
+    {   blk("LIFECYCLE - the poller serves this copy's mailbox and the ones it took over; a stop keeps or clears");
+        static Mimic::MailboxData fwd = {}, old = {}, extra[8] = {};
+        auto post = [](Mimic::MailboxData& b, int32_t cmd, uint64_t inst = 0, uint64_t ufunc = 0) {
+            b.status = Mimic::STATUS_IDLE;
+            b.result = 0x5A5A;
+            b.instanceAddr = inst;
+            b.ufuncAddr = ufunc;
+            b.cmd = cmd;
+        };
+        auto waitFor = [](const std::function<bool()>& done) {
+            const ULONGLONG until = GetTickCount64() + 3000;
+            while (!done() && GetTickCount64() < until) Sleep(1);
+            return done();
+        };
+        g_godModeCalls.clear();
+        g_foregroundCalls.clear();
+        g_foregroundThrows = false;
+
+        const bool refusesNull = !Mimic::AdoptMailbox(nullptr, true);
+        const bool refusesOwn = !Mimic::AdoptMailbox(&mb, true);
+        mb.initState = Mimic::INIT_READY;
+        const bool tookFwd = Mimic::AdoptMailbox(&fwd, true);
+        const int32_t fwdAtAdopt = fwd.initState;
+        const bool tookAgain = Mimic::AdoptMailbox(&fwd, true);
+        mb.initState = Mimic::INIT_RUNNING;
+        const bool tookOld = Mimic::AdoptMailbox(&old, false);
+        check("LIFECYCLE adopt: nothing and this copy's own are refused; a taken-over mailbox is taken once, and says "
+              "this copy's state -- or, where its owner cannot forward, READY or SKIPPED only", refusesNull && refusesOwn
+              && tookFwd && fwdAtAdopt == Mimic::INIT_READY && tookAgain && tookOld && old.initState == Mimic::INIT_SKIPPED);
+
+        Mimic::StartThread();
+        post(mb, Mimic::CMD_OFFSETS_VERDICT);
+        const bool ownServed = waitFor([&] { return Answered(mb); }) && mb.result == 1;
+        post(fwd, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        const bool fwdServed = waitFor([&] { return Answered(fwd); }) && fwd.result == g_godModeRc;
+        post(old, Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1);
+        const bool oldServed = waitFor([&] { return Answered(old); }) && old.result == 1;
+        check("LIFECYCLE serve ⭐: the polling thread answers this copy's mailbox and each one it took over, in that "
+              "mailbox", ownServed && fwdServed && oldServed && g_godModeCalls == std::vector<int32_t>{ 1 }
+              && g_foregroundCalls == std::vector<bool>{ true }, num(fwd.result));
+
+        mb.initState = Mimic::INIT_FAILED;
+        const bool mirroredFailed = waitFor([&] { return fwd.initState == Mimic::INIT_FAILED; })
+                                    && waitFor([&] { return old.initState == Mimic::INIT_SKIPPED; });
+        mb.initState = Mimic::INIT_READY;
+        const bool mirroredReady = waitFor([&] { return fwd.initState == Mimic::INIT_READY && old.initState == Mimic::INIT_READY; });
+        check("LIFECYCLE mirror ⭐: each pass a taken-over mailbox says this copy's state -- READY or SKIPPED where its "
+              "owner cannot forward", mirroredFailed && mirroredReady, num(old.initState));
+
+        // A hand-off: the copy taking over serves this mailbox next, so the stop leaves every byte of it.
+        mb.result = 0x7777;
+        memset(mb.paramsData, 0x5C, sizeof mb.paramsData);
+        Mimic::MailboxData snap;
+        memcpy(&snap, &mb, sizeof snap);
+        Mimic::StopThread(false);
+        const bool kept = memcmp(&mb, &snap, sizeof snap) == 0;
+        post(fwd, Mimic::CMD_OFFSETS_VERDICT);
+        Sleep(50);
+        const bool stoppedServesNothing = fwd.cmd == Mimic::CMD_OFFSETS_VERDICT;
+        check("LIFECYCLE hand-off ⭐: a stop that hands over keeps this copy's mailbox, and says SKIPPED in the ones it "
+              "took over", kept && mb.result == 0x7777 && fwd.initState == Mimic::INIT_SKIPPED
+              && old.initState == Mimic::INIT_SKIPPED, num(fwd.initState));
+        check("LIFECYCLE stopped: a stopped poller serves nothing", stoppedServesNothing);
+
+        Mimic::StartThread();
+        const bool restarted = waitFor([&] { return Answered(fwd); }) && fwd.result == 1;
+        Mimic::StopThread(true);
+        bool cleared = true;
+        const uint8_t* raw = reinterpret_cast<const uint8_t*>(&mb);
+        for (size_t i = 0; i < sizeof mb; ++i) cleared = cleared && raw[i] == 0;
+        check("LIFECYCLE restart: a restarted poller serves what waited", restarted);
+        check("LIFECYCLE unload ⭐: a stop that does not hand over clears this copy's mailbox, and says IDLE where the "
+              "owner forwards -- a revival reaches this copy -- SKIPPED where it cannot", cleared
+              && fwd.initState == Mimic::INIT_IDLE && old.initState == Mimic::INIT_SKIPPED, num(fwd.initState));
+
+        memset(&mb, 0x5D, sizeof mb);
+        Mimic::StopThread(true);
+        check("LIFECYCLE idle stop: stopping a poller that is not running clears nothing", raw[0] == 0x5D
+              && raw[sizeof mb - 1] == 0x5D);
+        memset(&mb, 0, sizeof mb);
+
+        int took = 0;
+        for (int i = 0; i < 8; ++i) took += Mimic::AdoptMailbox(&extra[i], false) ? 1 : 0;
+        check("LIFECYCLE slots: eight mailboxes in all -- two taken, six more, then refused; one taken already is "
+              "still answered yes", took == Land::kMaxCopies - 2 && Mimic::AdoptMailbox(&fwd, true), num(took));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
