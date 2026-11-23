@@ -2180,8 +2180,8 @@ static void Test_Lineal_SerialOffsetForLayout() {
 
 // ----- Mimic: the CE Lua <-> DLL mailbox LAYOUT --------------------------------
 //
-// `Mimic.cpp` is not compiled by any target, but `Mimic.h` is pure data, so its
-// layout IS reachable from here. And that layout is a published cross-language
+// `Mimic.h` is pure data, so its layout is reachable from here without Mimic.cpp.
+// And that layout is a published cross-language
 // contract: every offset below is baked as a literal into the emitted CE Lua
 // (`Services/CeMailboxLayout.cs`, whose comment reads "must match Mimic.h
 // MailboxData") and into scripts/UE5CEDumper.CT. `tools/check_mailbox_contract.py`

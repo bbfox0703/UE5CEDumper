@@ -505,8 +505,8 @@ static_assert(LIST_INSTANCES_MAX_DERIVED
 //
 // Neither of these is contract SURFACE — tools/check_mailbox_contract.py hashes
 // `MailboxData`'s fields and the CONTRACT_ENUMS values, nothing else — but both
-// decide how a command behaves, and `Mimic.cpp` is compiled by no test target.
-// Keeping them here is what makes them assertable at all.
+// decide how a command behaves. Pure and in the header, so dll_helpers_test asserts
+// them case by case.
 
 // UE FunctionFlags subset the invoke route depends on. Pulled from
 // Engine/Source/Runtime/CoreUObject/Public/UObject/Script.h. Only these two bits
