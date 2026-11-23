@@ -2527,45 +2527,6 @@ public class InvokeScriptTests
     }
 
     [Fact]
-    public void MailboxInvoke_SizesTheParametersByTheChain_AndRefusesBeforeProcessEvent()
-    {
-        // [OVERRIDE-REVIEW2-LOWS] CMD_INVOKE hands ProcessEvent the fixed paramsData slab (or the queued path's owned
-        // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
-        // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
-        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- needs its own
-        // pin. mimic_mailbox_test does not drive CMD_INVOKE yet, so the glue is pinned here.
-        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
-        int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
-        Assert.True(fn >= 0, "HandleInvoke was not found");
-        int end = mimic.IndexOf("\n}\n", fn, StringComparison.Ordinal);
-        Assert.True(end > fn, "the end of HandleInvoke was not found");
-        var body = mimic[fn..end];
-
-        int resolved = body.IndexOf("const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);",
-                                    StringComparison.Ordinal);
-        Assert.True(resolved >= 0, "the invoked function must be resolved at the address being invoked");
-        // A ParmsSize alone is read where the version puts the tail; the chain's end is where ProcessEvent writes.
-        var need = System.Text.RegularExpressions.Regex.Match(body,
-            @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
-        Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
-        var verdict = System.Text.RegularExpressions.Regex.Match(body,
-            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(Box\(\)\.paramsData\)\)\);");
-        Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
-        var refused = System.Text.RegularExpressions.Regex.Match(body,
-            @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
-            System.Text.RegularExpressions.RegexOptions.Singleline);
-        Assert.True(refused.Success, "a refusal must publish its own code and return before anything is invoked");
-
-        int direct = body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
-        int queued = body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal);
-        Assert.True(direct >= 0 && queued >= 0, "both ProcessEvent routes must be in HandleInvoke");
-        Assert.True(resolved < need.Index && need.Index < verdict.Index && verdict.Index < refused.Index,
-                    "resolve, measure, judge, refuse -- in that order");
-        Assert.True(refused.Index + refused.Length < Math.Min(direct, queued),
-                    "the slab must be judged before the first ProcessEvent call");
-    }
-
-    [Fact]
     public void FindRefsReply_CarriesSparseSkipped()
     {
         // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.
@@ -2948,19 +2909,15 @@ public class InvokeScriptTests
     public void NonStaticOnTemplate_IsDecidedOnceInTheDllAndPublishedOnBothLanes()
     {
         // [INVOKE-NONSTATIC-ON-CDO] Warn, never refuse. The DLL decides from the flags it read itself (never the caller's
-        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. No test target compiles
-        // Fern or Mimic, so this pins their source; dll_helpers_test pins the rule and dll_core_test TemplateOf.
+        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. The mailbox half --
+        // taken after the last refusal, published before the call, cleared before the next command -- is
+        // mimic_mailbox_test's INVOKE block. Fern.cpp reaches no test target yet, so its source is pinned here;
+        // dll_helpers_test pins the rule and dll_core_test TemplateOf.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
             return c >= 0 ? l[..c] : l;
         }));
-        static string Body(string src, string signature)
-        {
-            int at = src.IndexOf(signature, StringComparison.Ordinal);
-            Assert.True(at >= 0, signature + " not found -- re-point this pin");
-            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
-        }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
@@ -2971,19 +2928,6 @@ public class InvokeScriptTests
         Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);
         foreach (var key in new[] { "instance_template", "template_owner_name", "nonstatic_on_template" })
             Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
-
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        var handle = Body(mimic, "static void HandleInvoke() {");
-        int prep = handle.IndexOf("PrepareObjectParams(", StringComparison.Ordinal);
-        int verdict = handle.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
-        int bit = handle.IndexOf("INV_OUT_NONSTATIC_ON_TEMPLATE", StringComparison.Ordinal);
-        int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
-        Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
-            "the verdict is taken after the last refusal and published before the call");
-        int clearErr = mimic.IndexOf("Box().errorMsg[0] = '\\0';", StringComparison.Ordinal);
-        int clearOut = mimic.IndexOf("Box().cmdOutFlags = 0;", StringComparison.Ordinal);
-        Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
-            "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
 
         var mimicH = DllSource("Mimic.h");
         Assert.Matches(@"INV_OUT_NONSTATIC_ON_TEMPLATE\s*=\s*0x2\b", mimicH);
@@ -3084,18 +3028,8 @@ public class InvokeScriptTests
         Assert.DoesNotContain("nonstatic_on_template", handler, StringComparison.Ordinal);
         Assert.DoesNotContain("DebugCameraFiredOnTemplate", fern, StringComparison.Ordinal);
 
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        var dbg = Body(mimic, "static void HandleSetDebugCamera() {");
-        Assert.DoesNotContain("INV_OUT_NONSTATIC_ON_TEMPLATE", dbg, StringComparison.Ordinal);
-        Assert.DoesNotContain("DebugCameraFiredOnTemplate", mimic, StringComparison.Ordinal);
-        int refused = dbg.IndexOf("state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER", StringComparison.Ordinal);
-        Assert.True(refused > 0, "the refusal has its own errorMsg");
-        Assert.Contains("no live CheatManager", dbg[refused..dbg.IndexOf("} else", refused, StringComparison.Ordinal)],
-            StringComparison.Ordinal);
-        int minus1 = dbg.IndexOf("state == -1", StringComparison.Ordinal);
-        Assert.True(minus1 > 0, "the -1 errorMsg is still there");
-        Assert.DoesNotContain("no live CheatManager",
-            dbg[minus1..dbg.IndexOf("} else", minus1, StringComparison.Ordinal)], StringComparison.Ordinal);
+        // The mailbox's half -- no template bit on any toggle or on the camera's own function invoked, the -17 and -1
+        // texts -- is mimic_mailbox_test's DEBUGCAM and INVOKEHELD blocks.
     }
 
     [Fact]
