@@ -275,8 +275,8 @@ public class DebugCameraScriptGeneratorTests
     // [DBGCAM-OFF-OVER-QUEUED-ON] A Force OFF (or an untick) while a timed-out ON still sits in the game-thread queue reads
     // the camera OFF -- the ON has not run -- so a check that reads first returns "already OFF", reports a clean OFF, and
     // the queued ON then turns the camera on. UE5_SetDebugCamera must ask whether a queued ON has run BEFORE it reads the
-    // state, and record an ON it queues. Frieren.cpp and Stark.cpp are in no C++ test target (Stark::QueuedInvoke itself
-    // is tested in C++).
+    // state, and record an ON it queues. Frieren.cpp reaches no C++ test target yet; Stark's half -- EnqueueInvoke
+    // filling the slot on a timeout that stays queued -- is stark_dispatch_test's QUEUE TIMEOUT.
     [Fact]
     public void SetDebugCamera_asks_whether_a_queued_ON_has_run_before_it_reads_the_state_and_records_one_it_queues()
     {
@@ -290,10 +290,8 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(ask >= 0, "UE5_SetDebugCamera never asks whether a queued toggle has run");
         Assert.True(ask < read, "it asks only after reading a state the queued toggle will change");
         Assert.Contains("s_dbgCamQueued.Record(", body);
-        // The dispatch must hand the slot over, and EnqueueInvoke fill it -- without either, the record stays empty with
-        // every other pin green.
+        // The dispatch must hand the slot over: without it the record stays empty with every other pin green.
         Assert.Contains("CallProcessEventRouted(cm, ufunc, 0, 0, false, &", body);
-        Assert.Contains("if (queuedOut && !dropIfAbandoned) *queuedOut = future;", Src("dll/src/Stark.cpp"));
         // Both directions are tracked (a queued OFF does flip the camera on UE 5.8), and one being dispatched counts
         // too: no lock is held across the invoke wait, which would push a CE untick past its 10 s deadline.
         Assert.Contains("s_dbgCamInFlight", body);

@@ -3217,7 +3217,9 @@ public class InvokeScriptTests
         // class that overrides ProcessEvent -- every AActor -- it fails open to the override, and
         // AActor::ProcessEvent calls Super::ProcessEvent: the address MinHook patched. An UNMARKED call would re-enter
         // our detour on the mailbox thread with InOwnPeCall() false, and its drain would run every queued request there,
-        // off the game thread. No test target compiles Frieren.cpp or Stark.cpp, so this pins their source.
+        // off the game thread. Stark's half -- the mark held in the outer frame for the whole call, the resolved address
+        // called, never the trampoline -- is stark_dispatch_test's own-call checks. Frieren.cpp reaches no test target
+        // yet, so its half is pinned here.
         var frieren = DllSource("Frieren.cpp");
         int fn = frieren.IndexOf("int32_t UE5_CallProcessEventDirect(uintptr_t", StringComparison.Ordinal);
         Assert.True(fn >= 0, "UE5_CallProcessEventDirect's definition not found -- re-point this pin");
@@ -3226,32 +3228,11 @@ public class InvokeScriptTests
         var body = frieren[fn..end];
         Assert.Contains("Stark::CallAddressAsOwnSEH(peAddr, instance, ufunc, params)", body, StringComparison.Ordinal);
         Assert.DoesNotContain("pProcessEvent(", body, StringComparison.Ordinal);   // no unmarked raw call left
-
-        var stark = DllSource("Stark.cpp");
-        int h = stark.IndexOf("int32_t CallAddressAsOwnSEH(", StringComparison.Ordinal);
-        Assert.True(h >= 0, "Stark's CallAddressAsOwnSEH not found");
-        var helper = stark[h..stark.IndexOf("\n}", h, StringComparison.Ordinal)];
-        Assert.Contains("OwnPeCallGuard guard;", helper, StringComparison.Ordinal);   // the mark, in the OUTER frame
-        Assert.Contains("CallAddressSEH(", helper, StringComparison.Ordinal);         // the SEH frame, separate (C2712)
-
-        // Raw substrings would let a COMMENTED-OUT guard pass, and an unread CallAddressSEH body would let a HARMFUL
-        // trampoline swap inside it pass too. Read both bodies with their comments removed.
-        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
-        {
-            int c = l.IndexOf("//", StringComparison.Ordinal);
-            return c >= 0 ? l[..c] : l;
-        }));
-        Assert.Contains("OwnPeCallGuard guard;", CodeOnly(helper), StringComparison.Ordinal);
-        int sehAt = stark.IndexOf("static int32_t CallAddressSEH(", StringComparison.Ordinal);
-        Assert.True(sehAt >= 0, "Stark's CallAddressSEH not found");
-        var seh = CodeOnly(stark[sehAt..stark.IndexOf("\n}", sehAt, StringComparison.Ordinal)]);
-        Assert.Contains("__try", seh, StringComparison.Ordinal);
-        Assert.Contains("reinterpret_cast<FnProcessEvent>(peAddr)(", seh, StringComparison.Ordinal);   // the RESOLVED address
-        Assert.DoesNotContain("s_originalPE", seh, StringComparison.Ordinal);                      // never the trampoline
     }
 
-    // [MH-PRERESERVE-PROXY] Stark's MinHook glue. No test target compiles Stark.cpp, Frieren.cpp or Heiter.cpp, so these
-    // pin their source with comments removed; the rules the glue calls are dll_helpers_test's (Test_Lager_*).
+    // [MH-PRERESERVE-PROXY] Stark's MinHook glue. stark_dispatch_test does not install a hook yet, and Frieren.cpp and
+    // Heiter.cpp reach no test target, so these pin their source with comments removed; the rules the glue calls are
+    // dll_helpers_test's (Test_Lager_*).
     private static string MinHookGlue(string file) => string.Join('\n', DllSource(file).Split('\n').Select(l =>
     {
         int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3358,7 +3339,7 @@ public class InvokeScriptTests
         // Live Funcs is never opened. ReadMainImageLayout copies the 4 KB header page; a protector that PAGE_GUARDs its
         // header to detect dumpers would have the guard consumed and its vectored handler see the read. Query the page
         // first and skip the copy unless it is committed and readable with no PAGE_GUARD, reporting an unknown layout
-        // instead. Stark.cpp reaches no test target: pin the guard.
+        // instead. stark_dispatch_test does not drive the hook install yet: pin the guard.
         var stark = MinHookGlue("Stark.cpp");
         var body = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
         int query = body.IndexOf("VirtualQuery(base", StringComparison.Ordinal);
