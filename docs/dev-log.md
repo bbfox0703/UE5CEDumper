@@ -29,6 +29,19 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — Fly's failed MovementMode write is tested, not only read `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `dunste_fly_test`'s WRITEFAIL reaches the CharacterMovement through a read-only view
+  of a section, so the MovementMode write fails: an enable returns FR_ERR_WRITE and starts nothing, and a disable
+  whose restore fails returns FR_ERR_WRITE with the worker stopped. A read-only PAGE would not do: Macht::WriteBytes
+  raises a page to PAGE_READWRITE for its write. Negative controls: an enable that ignores the write fails 3 checks,
+  a disable that does not report the failed restore 1.
+- `tools/verify/sliceb_fly_arm.py` had said this path could only be checked by reading, because Dunste.cpp reached
+  no test target; `check_comment_refs` flagged the claim once it did, and the note now points at WRITEFAIL.
+- **Tests:** `dunste_fly_test` 57 checks, 0 failures, and under ASan.
+
+-----
+
 ## 2026-11-23 (no build change) — Fly / Noclip has a test, on a core library the next module tests share `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests and the test build only. `Dunste.cpp` keeps file-local copies of the pawn chain that
