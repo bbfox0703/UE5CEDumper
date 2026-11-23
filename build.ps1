@@ -1303,6 +1303,12 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # methode_plugin_test #includes Methode.cpp (the Cheat Engine plugin) and drives it through a fake Cheat Engine.
+    # It builds UE5Dumper first: "our DLL is loaded" is staged with the built DLL, mapped without running DllMain.
+    if (-not (Invoke-CppSelfTest -TargetName "methode_plugin_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the

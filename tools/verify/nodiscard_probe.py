@@ -50,6 +50,7 @@ TARGET_OBJECT_MARKERS = {
     "dll_helpers_test": "dll_helpers_test.dir",
     "grausam_window_test": "grausam_window_test.dir",
     "sein_retention_test": "sein_retention_test.dir",
+    "methode_plugin_test": "methode_plugin_test.dir",
     "dll_core_test": "dll_core_test.dir",
 }
 
