@@ -29,6 +29,28 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — Fly / Noclip has a test, on a core library the next module tests share `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests and the test build only. `Dunste.cpp` keeps file-local copies of the pawn chain that
+  `Solitar.cpp` keeps too, so it cannot join `dll_core_test`'s single translation unit. A new static library,
+  `ue5_testcore`, builds the core files once (Macht, Serie, Ubel, Radar, Denken, Flamme, Aura, Genau, Linie,
+  Solitar), and `dunste_fly_test` compiles `Dunste.cpp` as its own unit against it. The test fakes the world and the
+  game thread: `Stark::IsGameThreadResponsive` answers what the test says, and `UE5_CallProcessEventEx` records each
+  call and, on success, sets the pawn's bActorEnableCollision as SetActorEnableCollision would.
+- **Covered, 51 checks:** refusals (no world, no CharacterMovement); enable, the held MOVE_Flying and the hover;
+  Noclip's one SetActorEnableCollision(false), and the status reading the collision that resulted; the disable
+  restoring the captured mode, zeroing the velocity and restoring collision; a restore deferred while the game
+  thread stalls, landing when it answers; the restore a refused enable re-arms; a queued call recorded so the next
+  toggle undoes it; a refused call left unrecorded and retried after its back-off; the speed and preset knobs.
+  Negative controls: no re-arm fails 2 checks, every outcome committed 1, a stall not looked at 3. The re-arm's C#
+  text pin is gone, and the observed-collision pin keeps only Fern's half. 15 of the 33 `dll/src` .cpp files reach
+  a test target.
+- **Tests:** `dunste_fly_test` 51 checks, 0 failures (and under ASan, its negative control reported); C# 8540
+  (1 skipped); the nodiscard probe checks the new library and test. build.ps1 runs the new test in its C++ list;
+  that line was not run locally (a local run republishes dist\), so the next publish or CI run is its first.
+
+-----
+
 ## 2026-11-23 (no build change) — God Mode has a test: dll_core_test compiles Solitar.cpp `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `dll_core_test` #includes `Solitar.cpp` and its GODMODE block drives God Mode over a
