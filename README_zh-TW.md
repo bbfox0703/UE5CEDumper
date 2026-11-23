@@ -34,12 +34,14 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 - **Value Search（數值搜尋）** — Cheat-Engine 風格的 First Scan / Next Scan，掃描每個 UE 屬性（數字、字串、向量、array / map / set），不需知道 offset 就能找到目標。**Group 模式**能找出同時持有多個數值的物件（例如 `Str + Def + Dex + Int`），另有可選的 **Deep** 模式深入巢狀容器。
 - **Teleport（傳送）** — 3 個 marker 存檔 / 召回（BugItGo 風格）、俯視 / 2.5D 遊戲的**傳送到游標**、可自設全域熱鍵，以及唯讀的**相機 POV** 讀值。¹
 - **角色調整（Player tuning）** — **Super Jump / Move Speed / Gravity** 滑桿、**God Mode（無敵）**、**Time Dilation（全域或僅玩家的慢動作 / 凍結 / 快轉）** — 全部以反射強制設定並對抗每 tick 覆寫，因此重生後仍維持。可綁熱鍵或匯出成 CE 開 / 關記錄。
+- **實驗功能（Experimental extras，需自行開啟）** — **Fly / Noclip**（飛行 / 穿牆）、**See-through**（隱藏擋住相機的物體）、**Keep Foreground** 等。
 - **Debug Camera（除錯相機）** — 強制開 / 關自由飛行除錯相機，即使在通常會卡住的 Shipping build 也能可靠開關（需要執行中的 CheatManager；UE 5 的 Shipping build 預設沒有，此時 Force On 會直接說明）。
 - **Console（主控台）** — 發現並一鍵呼叫許多遊戲保留的 `fly` / `god` / `ghost` / 遊戲特定 exec 指令。
 - **即時函式剖析器（Live Funcs）** — 錄下*一個*遊戲內動作（開商店、衝刺），就能看到實際觸發了哪些 UFunction，附 baseline 差異 + 雜訊過濾。名稱搜尋找不到時，用「行為」找。
 - **一鍵 CE 匯出** — 指標鏈 XML、Structure Dissect (CSX)、SDK headers、AA 腳本、多列 `.CT` 批次。
-- **Dump Explorer（離線瀏覽）** — 離線瀏覽匯出的「Dump All」`.jsonl`，一個關鍵字同時搜尋 class + property + function。**Compare…** 可與同一款遊戲的另一份 dump 比對，輸出 HTML 報告，列出修補檔移動、改型別、新增或移除了哪些項目。
-- **注入免 Cheat Engine** — `version.dll` **proxy DLL**、UI 的 **Inject into running game…**，或 **`inject-ue.ps1`** 命令列（管理員遊戲會自動提權）。Proxy Deploy **逐遊戲建議正確的 proxy**。
+- **Dump Explorer（離線瀏覽）** — 離線瀏覽匯出的「Dump All」`.jsonl`，一個關鍵字同時搜尋 class、struct、enum、它們的成員與函式參數。**Compare…** 可與同一款遊戲的另一份 dump 比對，輸出 HTML 報告，列出修補檔移動、改型別、新增或移除了哪些項目。
+- **AI 助理（MCP）** — 讓 Claude Code 這類 AI 用戶端替您查看執行中的遊戲，要修改遊戲時必須先經您核准。設定方式見下方「選用：AI 助理（MCP）」。
+- **注入免 Cheat Engine** — **proxy DLL**、UI 的 **Inject into running game…**，或 **`inject-ue.ps1`** 命令列（管理員遊戲會自動提權）。Proxy Deploy **逐遊戲建議正確的 proxy**。
 
 > ¹ 少數被大量精簡的 Shipping build（例如泰坦任務 2）無法做*游標*傳送 — 它們移除了標準的游標 / viewport / line-trace API 並改用自訂虛擬游標。詳見 [docs/teleport-spec.md](docs/teleport-spec.md)。
 
@@ -54,7 +56,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 | **4.18 – 4.20** | ✅ | ✅ | ✅ | Final Fantasy VII Remake Intergrade, The Occupation, 勇者鬥惡龍 XI S, 八方旅人 |
 | **4.21 – 4.24** | ✅ | ✅ | ✅ | 《STAR WARS 絕地：組織殞落™》, 偶像大師 星耀季節 |
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | Final Fantasy VII Rebirth, 勇者鬥惡龍 I&II / III HD-2D 重製版, 劍星 (Stellar Blade), Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, 機動戰士 GUNDAM SEED 激鬥命運 復刻版, 女神異聞錄３ Reload (Persona 3 Reload) |
-| **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
+| **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia（舊版）, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1 滿意工廠), Colossal, Avowed, 艾恩葛朗特 迴盪新聲 Demo (Echoes of Aincrad), MindsEye, DragonSword Awakening, 天外世界 2 (The Outer Worlds 2) |
 | **5.5 – 5.7** | ✅ | ✅ | ✅ | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown, 冒險家艾略特的千年奇譚 (The Adventures of Elliot), FINAL FANTASY RESONANCE |
 | **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo, Unknown Operations: The Habitus Demo |
@@ -94,6 +96,10 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 [AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) 與它的 Cheat Engine 外掛，可讓 UE5CEDumper 把找到的內容直接送進開啟中的 CE table：記憶體記錄、AA 腳本、GObjects / GNames / GWorld 的符號，以及把 Live Walker 的結構送進 Structure Dissect；也能讓 CE 的記憶體檢視與反組譯器跳到指定位址。其餘功能不需要它也能運作。
 
+### 選用：AI 助理（MCP）
+
+Claude Code、Claude Desktop 這類 AI 用戶端可以讀取已載入 DLL 的遊戲，經您核准後也能修改它；Teleport 分頁的 **Block AI writes** 可以擋下 AI 的修改。設定方式請見每個 release 中、與 `UE5DumpUI.exe` 放在一起的 `MCP-Setup.html`。
+
 ## 系統需求 (Requirements)
 
 - Windows 10/11 x64
@@ -109,8 +115,9 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 * **`UObject` 之外的資料**：部分遊戲（例如《FF7 Rebirth》）把 HP 這類重要數值存在自己的結構裡。Live Walker 可協助查看這些區域，但無法自動找出來。
 * **Start from GWorld 無法使用時**：若遊戲不在上方表格內，請改用 **Object Tree** 或 **Instance Finder** 作為進入點。
 * **透過 EA app 啟動的遊戲**不會載入任何 proxy DLL，請在遊戲執行後改用方式 A 或 C。
-* **切到背景就暫停的遊戲**會讓需要呼叫遊戲的操作逾時。此時 UI 會顯示「game thread stalled」提示，實驗性的 **Keep Foreground** 開關可繞過它。
-* **大型 Array / Map / Set** 的讀取數量受 Live Walker 的 **Array Limit** 滑桿限制。
+* **切到背景就暫停的遊戲**會讓需要呼叫遊戲的操作逾時。此時 UI 會顯示「Game thread paused」提示，實驗性的 **Keep Foreground** 開關可繞過它。
+* **以系統管理員身分執行的遊戲**：**UE5DumpUI.exe** 也必須以系統管理員身分執行。
+* **大型 Array / Map / Set** 的讀取數量受工具列 **⚙ Options** 內的 **Array Limit** 滑桿限制。
 
 各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。跨版本仍存在的已知問題與限制收錄於 [docs/known-issues.md](docs/known-issues.md)（英文）。
 
