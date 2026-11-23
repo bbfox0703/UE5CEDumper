@@ -29,6 +29,28 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — God Mode has a test: dll_core_test compiles Solitar.cpp `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `dll_core_test` #includes `Solitar.cpp` and its GODMODE block drives God Mode over a
+  fake world reached by reflection alone (GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController ->
+  Pawn): ON clears only bCanBeDamaged's bit in a byte of eight packed bools and writes a native bool 0x01; the
+  worker re-asserts a bit the game set back; the debug camera's controller is hopped through
+  OriginalControllerRef; targets are kept until the property family's epoch moves, then read again at the new
+  offset; OFF restores the bits and stops the worker; the trainer's bits; SetActorBool / GetActorBool; no world.
+  22 checks. Negative controls: a whole-byte stamp fails 6, targets keyed by the class alone 1, no hop 2. The three
+  C# tests that read Solitar.cpp as text are gone. 14 of the 33 `dll/src` .cpp files now reach a test target.
+- **Two failures seen once, found and fixed `[CEPTR-FAIL-ONCE-2026-11-23]`:** the ASan run of `dll_core_test` failed
+  the CEPTR MindsEye-Extended checks every time, which made them measurable. Both fixtures were shorter than what the
+  code reads: the CEPTR chunk held 64 items of 24 bytes while Aura's item-layout probes read 200 items up to 32 bytes
+  apart, and RESCAN's sparse chunk held 1024 slots while the scorer samples 4096. The reads past them met whatever
+  the heap put next, so MindsEye-Extended's preset item hint was refused in an ordinary build and taken under ASan.
+  Whole chunks now, MindsEye's own items for that shape, and a check of the item layout each stock shape latched.
+  Tests only; nothing in the DLL changed.
+- **Tests:** `dll_core_test` 2024 checks, 0 failures (three ordinary runs, and the ASan run with its negative control);
+  C# 8541 (1 skipped).
+
+-----
+
 ## 2026-11-23 (build 3778) — The proxies build into their own folder; the Cheat Engine plugin has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** nothing in the UI or the DLL's behaviour. The four proxy DLLs build into `build\dll\proxy\`
