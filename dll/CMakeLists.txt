@@ -760,6 +760,21 @@ if(BUILD_DLL_TESTS)
     ue5_apply_asan(dunste_fly_test)
     target_link_libraries(dunste_fly_test PRIVATE ue5_testcore)
 
+    # ---- mimic_mailbox_test: the Cheat Engine mailbox (Mimic.cpp), one command at a time against fake modules ------
+    # It #includes Mimic.cpp to reach ServeOne and the handlers, and fakes what Mimic dispatches to (the Frieren C ABI,
+    # Wirbel, Grausam, Schlacht, ...); the core it reaches is ue5_testcore.
+    add_executable(mimic_mailbox_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mimic_mailbox_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET mimic_mailbox_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(mimic_mailbox_test PRIVATE /utf-8 /W3 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(mimic_mailbox_test)
+    target_link_libraries(mimic_mailbox_test PRIVATE ue5_testcore)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
