@@ -929,15 +929,22 @@ if ($cppTargets.Count -gt 0) {
                 # -Target DLL copies ALL proxies; a per-proxy target copies only its own.
                 if ($Target -notin "All", "DLL", $p.When) { continue }
 
-                $proxyDll = Get-ChildItem -Path $BUILD_DIR -Filter $p.File -Recurse |
-                            Select-Object -First 1
+                # By name from the proxy folder CMake builds them into, never a recursive search: a proxy left
+                # in dll\ by a tree configured before that folder existed would be found first and shipped stale.
+                # Such a leftover is deleted -- beside the test executables it is loaded into every test that
+                # imports version.dll.
+                $staleProxy = Join-Path $BUILD_DIR "dll\$($p.File)"
+                if (Test-Path $staleProxy) {
+                    Remove-Item $staleProxy -Force
+                    Write-Info "removed a proxy left in build\dll\ by an older tree: $($p.File)"
+                }
+                $proxyDll = Get-Item -Path (Join-Path $BUILD_DIR "dll\proxy\$($p.File)") -ErrorAction SilentlyContinue
                 if ($proxyDll) {
                     if (-not (Test-Path $proxyOutDir)) { New-Item -Path $proxyOutDir -ItemType Directory | Out-Null }
                     Copy-Item $proxyDll.FullName -Destination $proxyOutDir -Force
 
                     if ($Mode -eq "Debug") {
-                        $pdbFile = Get-ChildItem -Path $BUILD_DIR -Filter $p.Pdb -Recurse |
-                                   Select-Object -First 1
+                        $pdbFile = Get-Item -Path (Join-Path $BUILD_DIR "dll\proxy\$($p.Pdb)") -ErrorAction SilentlyContinue
                         if ($pdbFile) { Copy-Item $pdbFile.FullName -Destination $proxyOutDir -Force }
                     }
 
@@ -1293,6 +1300,24 @@ if ($Target -in "All", "Test") {
     # off the loader lock. It drives the DLL's only recursive delete, against a fixture
     # under %TEMP% guarded by a four-condition safety gate.
     if (-not (Invoke-CppSelfTest -TargetName "sein_retention_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # methode_plugin_test #includes Methode.cpp (the Cheat Engine plugin) and drives it through a fake Cheat Engine.
+    # It builds UE5Dumper first: "our DLL is loaded" is staged with the built DLL, mapped without running DllMain.
+    if (-not (Invoke-CppSelfTest -TargetName "methode_plugin_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # dunste_fly_test compiles Dunste.cpp (Fly / Noclip) against ue5_testcore, the core files built as a library,
+    # and drives it over a fake world and a fake game thread.
+    if (-not (Invoke-CppSelfTest -TargetName "dunste_fly_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # mimic_mailbox_test #includes Mimic.cpp (the CE Lua mailbox) and serves commands into a mailbox in its own
+    # memory, with the C ABI and the gameplay modules it calls faked.
+    if (-not (Invoke-CppSelfTest -TargetName "mimic_mailbox_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
         $exitCode = 1
     }
 

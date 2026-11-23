@@ -2069,10 +2069,9 @@ public class InvokeScriptTests
     [Fact]
     public void SetDebugCamera_PassesAQueuedToggleThrough()
     {
-        // [W3-DEBUGCAM-QUEUED] Frieren and Mimic reach no test target, so their halves are pinned from source; the mapper
-        // itself is dll_helpers_test's DBGCAMQ block.
+        // [W3-DEBUGCAM-QUEUED] Frieren reaches no test target yet, so its half is pinned from source; the mapper is
+        // dll_helpers_test's DBGCAMQ block, and the mailbox passing a queued toggle through is mimic_mailbox_test's DEBUGCAM.
         Assert.Contains("return Stark::StatefulToggleFailure(r);", DllSource("Frieren.cpp"));
-        Assert.Contains("state == Stark::kInvokeTimedOutStillQueued", DllSource("Mimic.cpp"));
     }
 
     [Fact]
@@ -2095,12 +2094,9 @@ public class InvokeScriptTests
     [Fact]
     public void OffsetsVerdict_ReachesTheCeMailbox()
     {
-        // [W5-OFFSETS-MAILBOX] No test target compiles Mimic.cpp and the CE helper is Lua, so the wiring is pinned from
-        // source; the numbering, the contract bump and the init exemption are dll_helpers_test's.
-        string mimic = DllSource("Mimic.cpp");
-        Assert.Contains("case CMD_OFFSETS_VERDICT:", mimic);
-        Assert.Contains("UE5_GetOffsetsVerdict(reason,", mimic);
-
+        // [W5-OFFSETS-MAILBOX] The mailbox's half -- served with no init, the reason in paramsData -- is
+        // mimic_mailbox_test's OFFSETS; the numbering, the contract bump and the init exemption are dll_helpers_test's.
+        // The CE helper is Lua, so its half is read here.
         string lua = HelperLuaResource.Read();
         Assert.Contains("local CMD_OFFSETS_VERDICT = 16", lua);
         Assert.Contains("function getOffsetsVerdict()", lua);
@@ -2169,7 +2165,8 @@ public class InvokeScriptTests
         // [W1-WINMM-LOADMODE] Fern's load_mode classifier names winmm.dll too: without it a winmm proxy load would report
         // "loaded:winmm.dll" and never earn the per-game confirmed-proxy record the other three do. Methode's
         // kProxyDllNames is the list of proxy file names we ship (itself kept in sync with the .CT and ProxyType.cs), so
-        // the classifier must name every one. Fern.cpp and Methode.cpp reach no test target.
+        // the classifier must name every one. Fern.cpp reaches no test target yet, so both sides are read as source;
+        // methode_plugin_test checks the four names Methode's pre-filter accepts.
         var methode = DllSource("Methode.cpp");
         int list = methode.IndexOf("kProxyDllNames[] = {", StringComparison.Ordinal);
         Assert.True(list >= 0, "Methode.cpp's kProxyDllNames not found -- re-point this pin");
@@ -2191,62 +2188,15 @@ public class InvokeScriptTests
     [Fact]
     public void MailboxInitFastPath_WaitsWhileAnInitIsScanning()
     {
-        // [A3-MIMIC-INIT-FASTPATH] Frieren.cpp and Mimic.cpp reach no test target: the RULE is pinned in dll_helpers_test
-        // (Mimic::InitFastPathOk), and this pins both ends of its wiring. UE5_Init must raise the flag under s_initMutex
-        // BEFORE FindAll publishes the globals, and the mailbox's fast path must read it.
+        // [A3-MIMIC-INIT-FASTPATH] The RULE is dll_helpers_test's (Mimic::InitFastPathOk) and the mailbox waiting on the
+        // flag is mimic_mailbox_test's INITGATE. Frieren.cpp reaches no test target yet: UE5_Init must raise the flag
+        // under s_initMutex BEFORE FindAll publishes the globals.
         var frieren = DllSource("Frieren.cpp");
         int lockAt    = frieren.IndexOf("std::unique_lock<std::mutex> initLock(s_initMutex", StringComparison.Ordinal);
         int scopeAt   = frieren.IndexOf("} initInProgress;", StringComparison.Ordinal);
         int findAllAt = frieren.IndexOf("Genau::FindAll(ptrs", StringComparison.Ordinal);
         Assert.True(lockAt >= 0 && scopeAt > lockAt && findAllAt > scopeAt,
                     "UE5_Init must raise g_initInProgress under s_initMutex, before FindAll publishes the globals");
-        var mimic = DllSource("Mimic.cpp");
-        // [R7-S9] ...through InitSettled, which reads the globals into locals first and the flag last.
-        Assert.Contains("Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress)", mimic, StringComparison.Ordinal);
-        Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_TrueButAbsent_IsAmbiguous_AndNamesTheForceLoadSetting()
-    {
-        // [A2-METHODE-MANUALMAP] ce_InjectDLL TRUE after EInjectError means CE's forceLoadModule SUCCEEDED: a manual map
-        // the module walk cannot see, so the text neither calls it "Injection failed" nor blames CE's BOOL. The APC path and
-        // a GetExitCodeThread failure also return TRUE with nothing mapped, so the honest text is AMBIGUOUS, and it names
-        // the setting that forces a manual map. Methode.cpp reaches no test target.
-        var src = DllSource("Methode.cpp");
-        Assert.Contains("\\\"Always force load modules\\\"", src, StringComparison.Ordinal);
-        Assert.Contains("That means one of two things", src, StringComparison.Ordinal);
-        Assert.DoesNotContain("its result cannot be trusted on its own", src, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify()
-    {
-        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] A manually mapped image can log an exception (C++ or SEH: /EHa) contained
-        // by a catch(...) inside it without the game crashing -- so "cannot handle exceptions, so the game is likely to
-        // crash" overstates it. The advice stands (a manual map is unsupported and MAY not register the tables
-        // exception handling needs); its reason must say "may". Methode.cpp reaches no test target.
-        var src = DllSource("Methode.cpp");
-        Assert.DoesNotContain("cannot handle exceptions", src, StringComparison.Ordinal);
-        Assert.DoesNotContain("is likely to crash", src, StringComparison.Ordinal);
-        Assert.Contains("UE5Dumper.dll is not supported", src, StringComparison.Ordinal);
-        Assert.Contains("untick that setting, restart the game, and inject again", src, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CePluginInject_Dialogs_PointAtTheLogsThatExist()
-    {
-        // [METHODE-STALE-LOGPATH] The failure dialogs must not point at "Logs\UE5Dumper-*.log", a flat layout that does
-        // not exist: logs are per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the
-        // scan in the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
-        var src = DllSource("Methode.cpp");
-        Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
-        Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
-        Assert.Contains("init-0.log", src, StringComparison.Ordinal);
-        // Sein names the folder after the host exe, and CE's launcher starts cheatengine-x86_64-SSE4-AVX2.exe on any
-        // AVX2 CPU (cheatengine.lpr reads cpuid leaf 7), so naming only "cheatengine-x86_64" sends the reader to a folder
-        // that is absent, or stale.
-        Assert.Contains("cheatengine-x86_64-SSE4-AVX2", src, StringComparison.Ordinal);
     }
 
     private static string DllSrcDir()
@@ -2541,7 +2491,9 @@ public class InvokeScriptTests
         // load as ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised
         // it and GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0
         // a call to UE5_Init returns at once (initialised, no fence up YET), and a re-read of the globals then catches them
-        // as the apply publishes them. Mimic.cpp reaches no test target, so the order is pinned in source.
+        // as the apply publishes them. (1) is an order of two loads no single-threaded test can observe, so it is
+        // pinned in source. (2) is mimic_mailbox_test's INITGATE: globals published while the fence stays up are
+        // refused after four more asks.
         var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
         int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
         Assert.True(settled >= 0, "InitSettled not found");
@@ -2552,14 +2504,6 @@ public class InvokeScriptTests
         int readFlag = body.IndexOf("g_initInProgress.load", StringComparison.Ordinal);
         Assert.True(readGObjects >= 0 && fence > readGObjects && readFlag > fence,
                     "the globals must be read first, then an acquire fence, then the flag");
-
-        int ensure = mimic.IndexOf("static bool EnsureInitialized() {", StringComparison.Ordinal);
-        int ensureEnd = mimic.IndexOf("\n}\n", ensure, StringComparison.Ordinal);
-        var ensureBody = mimic[ensure..ensureEnd];
-        int call = ensureBody.IndexOf("UE5_Init();", StringComparison.Ordinal);
-        Assert.True(call >= 0 && ensureBody.IndexOf("InitSettled()", call, StringComparison.Ordinal) > call,
-                    "the result after UE5_Init must be the same settled check, not a bare re-read of the globals");
-        Assert.DoesNotContain("return (g_cachedGObjects != 0 && g_cachedGNames != 0);", ensureBody);
 
         // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
@@ -2580,142 +2524,6 @@ public class InvokeScriptTests
             beginApply, @"\n[ \t]*std::atomic_thread_fence\(std::memory_order_seq_cst\);");
         Assert.True(raise >= 0 && fullFence.Success && fullFence.Index > raise,
                     "BeginApply raises the flag, then fences, before the publish");
-    }
-
-    [Fact]
-    public void MailboxInvoke_SizesTheParametersByTheChain_AndRefusesBeforeProcessEvent()
-    {
-        // [OVERRIDE-REVIEW2-LOWS] CMD_INVOKE hands ProcessEvent the fixed paramsData slab (or the queued path's owned
-        // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
-        // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
-        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- needs its own
-        // pin. Mimic.cpp reaches no test target, so the glue is pinned here.
-        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
-        int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
-        Assert.True(fn >= 0, "HandleInvoke was not found");
-        int end = mimic.IndexOf("\n}\n", fn, StringComparison.Ordinal);
-        Assert.True(end > fn, "the end of HandleInvoke was not found");
-        var body = mimic[fn..end];
-
-        int resolved = body.IndexOf("const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);",
-                                    StringComparison.Ordinal);
-        Assert.True(resolved >= 0, "the invoked function must be resolved at the address being invoked");
-        // A ParmsSize alone is read where the version puts the tail; the chain's end is where ProcessEvent writes.
-        var need = System.Text.RegularExpressions.Regex.Match(body,
-            @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
-        Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
-        var verdict = System.Text.RegularExpressions.Regex.Match(body,
-            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(Box\(\)\.paramsData\)\)\);");
-        Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
-        var refused = System.Text.RegularExpressions.Regex.Match(body,
-            @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
-            System.Text.RegularExpressions.RegexOptions.Singleline);
-        Assert.True(refused.Success, "a refusal must publish its own code and return before anything is invoked");
-
-        int direct = body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
-        int queued = body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal);
-        Assert.True(direct >= 0 && queued >= 0, "both ProcessEvent routes must be in HandleInvoke");
-        Assert.True(resolved < need.Index && need.Index < verdict.Index && verdict.Index < refused.Index,
-                    "resolve, measure, judge, refuse -- in that order");
-        Assert.True(refused.Index + refused.Length < Math.Min(direct, queued),
-                    "the slab must be judged before the first ProcessEvent call");
-    }
-
-    [Fact]
-    public void SolitarBools_ResolveAndWriteThroughTheBoolBitsHelpers()
-    {
-        // [SOLIDE-NATIVE-BOOL] Which probed layout a God Mode target or a forced bool takes, and how its byte is read
-        // and written, are Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue (pinned in dll_helpers_test): a native
-        // bool owns the whole byte and is written 0x01 / 0x00. Solitar.cpp reaches no test target, so the glue is
-        // pinned here: the probe hands every quad to PickBoolBits, and nothing in the file masks a byte with a bare mask
-        // -- ApplyBoolBit with a native bool's FieldMask would stamp 0xFF, which C++ that XORs a bool reads as still true.
-        // A path that skips the helpers WITHOUT a bitwise mask is the next test's to catch.
-        var src = DllSource("Solitar.cpp").Replace("\r\n", "\n");
-        int fn = src.IndexOf("bool ReadBoolLayout(uintptr_t fpropAddr, BoolBits& bits) {", StringComparison.Ordinal);
-        Assert.True(fn >= 0, "ReadBoolLayout(fpropAddr, BoolBits&) was not found");
-        int end = src.IndexOf("\n}\n", fn, StringComparison.Ordinal);
-        Assert.Contains("return PickBoolBits(quads, readOk, kTries, bits);", src[fn..end]);
-        Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // no (byteOff, mask) form
-        Assert.DoesNotContain("ApplyBoolBit(", src);
-        Assert.DoesNotMatch(@"[&|~]\s*(?:\w+\.)*(?:mask|fieldMask|byteMask)\b", src);
-        Assert.DoesNotMatch(@"\b(?:mask|fieldMask|byteMask)\s*\)?\s*[&|]", src);
-        Assert.Contains("WriteBoolValue(", src);
-        Assert.Contains("ReadBoolValue(", src);
-    }
-
-    [Fact]
-    public void SolitarBools_EachPathReadsAndWritesItsByteThroughTheHelpers()
-    {
-        // [SOLIDE-NATIVE-BOOL] The file-wide pin above sees a bare mask only where it meets & | ~, so
-        // `on ? bits.byteMask : 0` passes it -- a whole-byte stamp that, on a packed bool, clears the 7 bools sharing its
-        // byte on every re-assert tick, and none of the tests that compile helpers can see it.
-        // So each function that reads or writes a bool's byte is held on its own: the byte it writes is the one
-        // WriteBoolValue made, and every read of a byte it fetched goes through ReadBoolValue. The masks a path may still
-        // touch are an allow-list, so a new use has to be argued for here.
-        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
-        {
-            int c = l.IndexOf("//", StringComparison.Ordinal);
-            return c >= 0 ? l[..c] : l;
-        }));
-        static string BodyOf(string src, string signature)
-        {
-            int at = src.IndexOf(signature, StringComparison.Ordinal);
-            Assert.True(at >= 0, signature + " was not found -- re-point this pin");
-            int open = src.IndexOf('{', at);
-            int depth = 0;
-            for (int i = open; i < src.Length; i++)
-            {
-                if (src[i] == '{') depth++;
-                else if (src[i] == '}' && --depth == 0) return src[open..(i + 1)];
-            }
-            throw new InvalidOperationException(signature + " has no closing brace");
-        }
-
-        var src = CodeOnly(DllSource("Solitar.cpp").Replace("\r\n", "\n"));
-
-        // Outside the helpers one mask is read: the God Mode scan logs the FieldMask it resolved. The trainer export's
-        // single-bit mask is Solitar::TrainerMaskFor's (dll_helpers_test): its Lua does its own read-modify-write.
-        var maskUses = System.Text.RegularExpressions.Regex.Matches(src, @"[\w.]*\.(?:mask|fieldMask|byteMask)\b")
-            .Select(m => m.Value).OrderBy(v => v, StringComparer.Ordinal).ToArray();
-        Assert.Equal(new[] { "b.mask", "t.bits.fieldMask" }, maskUses);
-        Assert.Contains("b.mask = TrainerMaskFor(bits);", src, StringComparison.Ordinal);
-
-        var paths = new (string Signature, string? Write)[]
-        {
-            ("int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted", "uint8_t nb = WriteBoolValue(b, t.bits, want);"),
-            ("int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on)",
-             "uint8_t nb = WriteBoolValue(b, bits, on);"),
-            ("int32_t GetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName)", null),
-            ("int32_t GetGodMode()", null),
-        };
-        foreach (var (signature, write) in paths)
-        {
-            var body = BodyOf(src, signature);
-            var writes = System.Text.RegularExpressions.Regex.Matches(body, @"Macht::WriteBytes\(([^()]*)\)")
-                .Select(m => m.Groups[1].Value).ToArray();
-            if (write is null)
-            {
-                Assert.True(writes.Length == 0, signature + " reads a bool; it must not write one");
-            }
-            else
-            {
-                Assert.True(writes.Length == 1 && writes[0] == "byteAddr, &nb, 1",
-                            signature + " must write exactly the one byte WriteBoolValue made");
-                Assert.Contains(write, body, StringComparison.Ordinal);
-                Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, @"\bnb\s*=(?!=)"));
-            }
-
-            // Every use of a fetched byte, once the allowed forms are taken out, must be gone: a bare `b ? 1 : 0` or
-            // `b != want` reads a packed bool's siblings as its value.
-            var rest = System.Text.RegularExpressions.Regex.Replace(body,
-                @"uint8_t (?:b|after) = 0;"
-                + @"|Macht::ReadSafe\(byteAddr, (?:b|after)\)"
-                + @"|ReadBoolValue\((?:b|after), (?:t\.)?bits\)"
-                + @"|WriteBoolValue\(b, (?:t\.)?bits, (?:want|on)\)"
-                + @"|\bnb != b\b", "");
-            Assert.True(!System.Text.RegularExpressions.Regex.IsMatch(rest, @"\b(?:b|after)\b"),
-                        signature + " uses a fetched byte outside ReadBoolValue / WriteBoolValue");
-        }
     }
 
     [Fact]
@@ -2823,9 +2631,10 @@ public class InvokeScriptTests
     {
         // [FINDINSTANCE-SUBSTRING-USERFACING] The C ABI export, the pipe's invoke_function class_name and the mailbox's
         // FIND_INSTANCE / LIST_FUNCTIONS each matched a class-name SUBSTRING and took the first non-CDO match, else the
-        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance; no test target compiles Frieren,
-        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the source's comments name the call
-        // it must not make.
+        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance, and mimic_mailbox_test's FINDLIST
+        // shows the mailbox's FIND_INSTANCE and LIST_FUNCTIONS picking by derivation. Frieren and Fern reach no test
+        // target yet, so this pins that they USE it. Comments are stripped: the source's comments name the call it
+        // must not make.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -2841,14 +2650,6 @@ public class InvokeScriptTests
         var frieren = Body(CodeOnly(DllSource("Frieren.cpp")), "uintptr_t UE5_FindInstanceOfClass(const char* className) {");
         Assert.Contains("Aura::ResolveUserInstance(", frieren, StringComparison.Ordinal);
         Assert.DoesNotContain("FindInstancesByClass(", frieren, StringComparison.Ordinal);
-
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        foreach (var handler in new[] { "static void HandleFindInstance() {", "static void HandleListFunctions() {" })
-        {
-            var body = Body(mimic, handler);
-            Assert.Contains("Aura::ResolveUserInstance(", body, StringComparison.Ordinal);
-            Assert.DoesNotContain("FindInstancesByClass(", body, StringComparison.Ordinal);
-        }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
@@ -3108,19 +2909,15 @@ public class InvokeScriptTests
     public void NonStaticOnTemplate_IsDecidedOnceInTheDllAndPublishedOnBothLanes()
     {
         // [INVOKE-NONSTATIC-ON-CDO] Warn, never refuse. The DLL decides from the flags it read itself (never the caller's
-        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. No test target compiles
-        // Fern or Mimic, so this pins their source; dll_helpers_test pins the rule and dll_core_test TemplateOf.
+        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. The mailbox half --
+        // taken after the last refusal, published before the call, cleared before the next command -- is
+        // mimic_mailbox_test's INVOKE block. Fern.cpp reaches no test target yet, so its source is pinned here;
+        // dll_helpers_test pins the rule and dll_core_test TemplateOf.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
             return c >= 0 ? l[..c] : l;
         }));
-        static string Body(string src, string signature)
-        {
-            int at = src.IndexOf(signature, StringComparison.Ordinal);
-            Assert.True(at >= 0, signature + " not found -- re-point this pin");
-            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
-        }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
@@ -3131,19 +2928,6 @@ public class InvokeScriptTests
         Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);
         foreach (var key in new[] { "instance_template", "template_owner_name", "nonstatic_on_template" })
             Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
-
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        var handle = Body(mimic, "static void HandleInvoke() {");
-        int prep = handle.IndexOf("PrepareObjectParams(", StringComparison.Ordinal);
-        int verdict = handle.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
-        int bit = handle.IndexOf("INV_OUT_NONSTATIC_ON_TEMPLATE", StringComparison.Ordinal);
-        int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
-        Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
-            "the verdict is taken after the last refusal and published before the call");
-        int clearErr = mimic.IndexOf("Box().errorMsg[0] = '\\0';", StringComparison.Ordinal);
-        int clearOut = mimic.IndexOf("Box().cmdOutFlags = 0;", StringComparison.Ordinal);
-        Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
-            "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
 
         var mimicH = DllSource("Mimic.h");
         Assert.Matches(@"INV_OUT_NONSTATIC_ON_TEMPLATE\s*=\s*0x2\b", mimicH);
@@ -3244,18 +3028,8 @@ public class InvokeScriptTests
         Assert.DoesNotContain("nonstatic_on_template", handler, StringComparison.Ordinal);
         Assert.DoesNotContain("DebugCameraFiredOnTemplate", fern, StringComparison.Ordinal);
 
-        var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        var dbg = Body(mimic, "static void HandleSetDebugCamera() {");
-        Assert.DoesNotContain("INV_OUT_NONSTATIC_ON_TEMPLATE", dbg, StringComparison.Ordinal);
-        Assert.DoesNotContain("DebugCameraFiredOnTemplate", mimic, StringComparison.Ordinal);
-        int refused = dbg.IndexOf("state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER", StringComparison.Ordinal);
-        Assert.True(refused > 0, "the refusal has its own errorMsg");
-        Assert.Contains("no live CheatManager", dbg[refused..dbg.IndexOf("} else", refused, StringComparison.Ordinal)],
-            StringComparison.Ordinal);
-        int minus1 = dbg.IndexOf("state == -1", StringComparison.Ordinal);
-        Assert.True(minus1 > 0, "the -1 errorMsg is still there");
-        Assert.DoesNotContain("no live CheatManager",
-            dbg[minus1..dbg.IndexOf("} else", minus1, StringComparison.Ordinal)], StringComparison.Ordinal);
+        // The mailbox's half -- no template bit on any toggle or on the camera's own function invoked, the -17 and -1
+        // texts -- is mimic_mailbox_test's DEBUGCAM and INVOKEHELD blocks.
     }
 
     [Fact]
@@ -3349,8 +3123,10 @@ public class InvokeScriptTests
     {
         // [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and Force (Solide) write into every object their
         // pool lists. A template there -- a class default object, one of its default subobjects, a Blueprint component
-        // template -- passes its value to every later spawn, and the freeze helper never restores. Mimic.cpp and
-        // Solide.cpp reach no C++ test target, so their source is pinned here; dll_core_test pins the walkers.
+        // template -- passes its value to every later spawn, and the freeze helper never restores. dll_core_test pins
+        // the walkers, and mimic_mailbox_test's FINDLIST the freeze pool: the templates take no slot under either cap,
+        // and one that slips through the walk is left out when the pool is published. Solide.cpp reaches no test
+        // target yet, so its source is pinned here.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3365,12 +3141,6 @@ public class InvokeScriptTests
 
         // A working copy may hold CRLF (git config is per machine); Body looks for "\n}\n".
         static string Lf(string s) => s.Replace("\r\n", "\n");
-        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
-        Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
-        Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
-        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
-        Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
-
         var solide = Body(CodeOnly(Lf(DllSource("Solide.cpp"))), "void ApplyJobLocked(");
         Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
@@ -3398,10 +3168,12 @@ public class InvokeScriptTests
             "a script that relies on FIND_INSTANCE passing over destroyed objects must claim contract 9");
 
         // The Force reply and the forced-fields list say how many templates the pool passed over, so a hold
-        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
+        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do. The memo is a cache
+        // and changes no answer, so no behaviour test can see it: its use in the freeze pool is read here too.
         var fern = CodeOnly(Lf(DllSource("Fern.cpp")));
         Assert.Contains("data[\"templates_skipped\"]", fern, StringComparison.Ordinal);
         Assert.Contains("j[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", list, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", solide, StringComparison.Ordinal);
         var dumpSvc = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
@@ -3946,8 +3718,7 @@ public class InvokeScriptTests
 
         Assert.Matches(@"TP_ERR_PARENT_RELATIVE\s*=\s*-16\s*,", DllSource("Wirbel.h"));
         Assert.Equal(-16, TeleportCodes.ParentRelative);
-        // Control: the mailbox handler still passes BugItGo's code straight through, with no field of its own.
-        Assert.Contains("rc = Wirbel::BugItGo(&tier);", DllSource("Mimic.cpp"), StringComparison.Ordinal);
+        // The mailbox passing BugItGo's code through is mimic_mailbox_test's TELEPORT block.
     }
 
     [Fact]
@@ -4010,48 +3781,24 @@ public class InvokeScriptTests
         Assert.Contains("return TP_ERR_PARENT_RELATIVE;", rel, StringComparison.Ordinal);
         Assert.Contains("&landingParentRelative", rel, StringComparison.Ordinal);
         Assert.Contains("!landingParentRelative", rel, StringComparison.Ordinal);
-
-        // Control: the transports still pass Wirbel's code straight through.
-        var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("rc = Wirbel::RecallMarker(slot, op == TP_OP_RECALL_FORCE, &tier);", mimic, StringComparison.Ordinal);
+        // The mailbox passing the slot, the force bit and Wirbel's code through is mimic_mailbox_test's TELEPORT block.
     }
 
     [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
-        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
-        // or Frieren.cpp, so this pins their source; the generated scripts must claim the contract that carries the byte.
-        var mimic = DllSource("Mimic.cpp");
-        // Box(): the mailbox the command came from, this copy's or one it took over ([DUMPER-SECOND-COPY-AUTOSTART]).
-        Assert.Contains("Box().paramsData[178] = flags;", mimic, StringComparison.Ordinal);
-        Assert.Contains("writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);", mimic, StringComparison.Ordinal);
-        Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly, p, &tier, &landingKnown)", mimic,
-            StringComparison.Ordinal);
+        // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the C ABI half. The mailbox half -- each op's flags byte, an
+        // unknown landing published as NaN with bit1 -- is mimic_mailbox_test's TELEPORT block. Frieren.cpp reaches no
+        // test target yet, so its source is pinned here; the generated scripts must claim the contract that carries
+        // the byte.
         var frieren = DllSource("Frieren.cpp");
         Assert.Contains("Wirbel::TeleportRelative(distance, horizontalOnly != 0, p, nullptr, &landingKnown)", frieren,
             StringComparison.Ordinal);
-
-        // The pins above alone would let one-line mutants through -- a shared substring that matches any of three
-        // writes, and nothing on the GET_POSE / BUGIT_SAVE flags, the NaN landing or bit1.
-        static int CountOf(string s, string sub)
-        {
-            int n = 0;
-            for (int i = s.IndexOf(sub, StringComparison.Ordinal); i >= 0;
-                 i = s.IndexOf(sub, i + sub.Length, StringComparison.Ordinal)) n++;
-            return n;
-        }
-        Assert.Equal(2, CountOf(mimic, "writePoseBlock(p, map, source, 0, parentRel ? 0x01 : 0);"));              // GET_POSE, BUGIT_SAVE
-        Assert.Equal(3, CountOf(mimic, "writePoseBlock(m.P, m.MapName, 0, 0, m.ParentRelative ? 0x01 : 0);"));    // SAVE, GET_MARKER, GET_LAST
-        Assert.Contains("if (rc == 0) writePoseBlock(p, nullptr, 0, tier, landingKnown ? 0 : 0x02);", mimic,
-            StringComparison.Ordinal);                                                                          // bit1
-        foreach (var (name, src) in new[] { ("Mimic.cpp", mimic), ("Frieren.cpp", frieren) })
-        {
-            int unknown = src.IndexOf("if (rc == 0 && !landingKnown) {", StringComparison.Ordinal);
-            int nan = src.IndexOf("const uint64_t nanBits = 0x7FF8000000000000ull;", Math.Max(unknown, 0),
-                StringComparison.Ordinal);
-            Assert.True(unknown >= 0 && nan > unknown && nan - unknown < 400,
-                name + ": an unknown landing must publish NaN, never the zero-initialised pose");
-        }
+        int unknown = frieren.IndexOf("if (rc == 0 && !landingKnown) {", StringComparison.Ordinal);
+        int nan = frieren.IndexOf("const uint64_t nanBits = 0x7FF8000000000000ull;", Math.Max(unknown, 0),
+            StringComparison.Ordinal);
+        Assert.True(unknown >= 0 && nan > unknown && nan - unknown < 400,
+            "Frieren.cpp: an unknown landing must publish NaN, never the zero-initialised pose");
         Assert.Contains("if (outParentRelative) *outParentRelative = m.ParentRelative;", DllSource("Wirbel.cpp"),
             StringComparison.Ordinal);
         Assert.Contains("if poseFlags % 2 == 1 then",

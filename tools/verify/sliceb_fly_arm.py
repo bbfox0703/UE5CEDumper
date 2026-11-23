@@ -28,9 +28,9 @@ A run where `state == 1` and `current_mode != 5` is exactly the defect.
 be refused on the CMC's page or the memcpy to fault — which needs the region freed between
 `ResolveCtx` and the write. There is no way to manufacture that from outside without decommitting
 a page of the game's live heap, which any other thread touching it turns into a crash rather than
-into evidence. The failure path is therefore verified by reading, by `-Target DLL`, and by the C#
-tests that pin what the UI does when the DLL reports it — NOT by this rig. Said here rather than
-left for a reader to discover, because `Dunste.cpp` reaches no test target at all.
+into evidence. The failure path is verified offline instead: `dunste_fly_test`'s WRITEFAIL puts a
+CharacterMovement on a read-only page, and the C# tests pin what the UI does when the DLL reports
+it -- NOT this rig.
 
 ⚠ RESTORE. `clean` always ends with Fly OFF, and asserts the MovementMode came back to the value
 it read BEFORE the run — the `mutate_guard.py` discipline. A run that leaves the pawn flying has

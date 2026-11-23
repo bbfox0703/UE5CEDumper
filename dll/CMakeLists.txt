@@ -295,6 +295,12 @@ set_target_properties(UE5Dumper PROPERTIES
     OUTPUT_NAME "UE5Dumper"
 )
 
+# The proxies build into their own folder, never beside the test executables: a test that imports
+# version.dll would load our proxy from its own folder first (the DLL search order a proxy exists to use),
+# and its DllMain would start a pipe server and log inside the test. dist\ keeps them in proxy\ for the
+# same reason. build.ps1 takes each one from here.
+set(UE5_PROXY_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/proxy)
+
 # ============================================================
 # Proxy DLL targets — version.dll / dinput8.dll / dxgi.dll
 #
@@ -358,6 +364,7 @@ if(BUILD_PROXY_DLL)
     set_target_properties(UE5Dumper_Proxy PROPERTIES
         PREFIX ""
         OUTPUT_NAME "version"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -387,6 +394,7 @@ if(BUILD_PROXY_DINPUT8)
     set_target_properties(UE5Dumper_ProxyDinput8 PROPERTIES
         PREFIX ""
         OUTPUT_NAME "dinput8"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -450,6 +458,7 @@ if(BUILD_PROXY_DXGI)
     set_target_properties(UE5Dumper_ProxyDxgi PROPERTIES
         PREFIX ""
         OUTPUT_NAME "dxgi"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -510,6 +519,7 @@ if(BUILD_PROXY_WINMM)
     set_target_properties(UE5Dumper_ProxyWinmm PROPERTIES
         PREFIX ""
         OUTPUT_NAME "winmm"
+        RUNTIME_OUTPUT_DIRECTORY ${UE5_PROXY_OUTPUT_DIR}
     )
 endif()
 
@@ -683,6 +693,88 @@ if(BUILD_DLL_TESTS)
     endif()
     ue5_apply_asan(sein_retention_test)
 
+    # ---- methode_plugin_test: the Cheat Engine plugin, driven through a fake Cheat Engine ----------------------
+    # It #includes Methode.cpp and hands it a fake ExportedFunctions table. "Our DLL is loaded" is staged with the
+    # built UE5Dumper.dll, mapped without running its DllMain, because the plugin decides by the file's own PE
+    # ProductName: so the test depends on that target and is told where it lands.
+    add_executable(methode_plugin_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/methode_plugin_test.cpp
+    )
+    target_include_directories(methode_plugin_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    add_dependencies(methode_plugin_test UE5Dumper)
+    target_compile_definitions(methode_plugin_test PRIVATE "METHODE_TEST_DUMPER_DLL=\"$<TARGET_FILE:UE5Dumper>\"")
+    if(MSVC)
+        set_property(TARGET methode_plugin_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(methode_plugin_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(methode_plugin_test)
+    target_link_libraries(methode_plugin_test PRIVATE version)
+
+    # ---- ue5_testcore: the DLL's core as a library, for a module that needs a test executable of its own ---------
+    # dll_core_test #includes these files as ONE translation unit to reach their file statics. A module whose own
+    # file-local helpers share names with one of them (Dunste and Solitar each keep a copy of the pawn chain) cannot
+    # join that unit, so it is linked against the same files compiled separately here. The externals are each test's
+    # to define: Sein's log functions, Stark::SetInvokeTimeoutMs, and Frieren's g_cachedUEVersion / g_cachedGWorld /
+    # g_initInProgress -- the surface dll_core_test's comment below lists.
+    add_library(ue5_testcore STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Macht.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Serie.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Ubel.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Radar.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Denken.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Flamme.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Aura.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Genau.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Linie.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Solitar.cpp
+    )
+    target_include_directories(ue5_testcore PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+    )
+    target_compile_definitions(ue5_testcore PUBLIC ${UE5_COMMON_DEFS})
+    if(MSVC)
+        set_property(TARGET ue5_testcore PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(ue5_testcore PRIVATE /utf-8 /W3 /EHsc /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(ue5_testcore)
+    target_link_libraries(ue5_testcore PUBLIC Zydis version)
+
+    # ---- dunste_fly_test: Fly / Noclip (Dunste.cpp) over a fake world, with a fake game-thread dispatcher --------
+    add_executable(dunste_fly_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/dunste_fly_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Dunste.cpp
+    )
+    if(MSVC)
+        set_property(TARGET dunste_fly_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(dunste_fly_test PRIVATE /utf-8 /W3 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(dunste_fly_test)
+    target_link_libraries(dunste_fly_test PRIVATE ue5_testcore)
+
+    # ---- mimic_mailbox_test: the Cheat Engine mailbox (Mimic.cpp), one command at a time against fake modules ------
+    # It #includes Mimic.cpp to reach ServeOne and the handlers, and fakes what Mimic dispatches to (the Frieren C ABI,
+    # Wirbel, Grausam, Schlacht, ...); the core it reaches is ue5_testcore.
+    add_executable(mimic_mailbox_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mimic_mailbox_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET mimic_mailbox_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(mimic_mailbox_test PRIVATE /utf-8 /W3 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(mimic_mailbox_test)
+    target_link_libraries(mimic_mailbox_test PRIVATE ue5_testcore)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
@@ -701,6 +793,8 @@ if(BUILD_DLL_TESTS)
     #              ProcessEvent hook and has no place in a headless test.
     #   * g_cachedUEVersion -- defined in Frieren.cpp (the C ABI layer). Defined in the
     #              test instead, which is a FEATURE: the test picks the UE version.
+    #   * g_cachedGWorld / g_initInProgress -- also Frieren.cpp's, read by Solitar and its
+    #              re-assert loop; the test points the first at a fake world.
     #   * Zydis (Denken) and version.lib (Genau's PE version-info reads).
     add_executable(dll_core_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/dll_core_test.cpp

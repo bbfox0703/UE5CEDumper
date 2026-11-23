@@ -1695,7 +1695,7 @@ dll_core_test pins. The hint cache kept no override afterwards.
 
 **⛔ HOST GATE — test this first, and close the row if it fails.** The corpus holds exactly one UE 4.21 title: **Star Wars Jedi: Fallen Order** (`docs/test-games.md:24`), an EA-launcher title where `version.dll`/`dinput8.dll` proxies do **not** load — it must be CE-injected after the game is running. On the primary PC it is a **ghost install** (`H:\SteamLibrary\steamapps\common\Jedi Fallen Order\` holds only `steam_appid.txt`; an exe backup exists at `D:\UE_Analyze_data\Game Binary backup\Jedi Fallen Order`, which cannot be launched). If it is not installed on the verification PC either, close this row as *"no reachable victim in the corpus"* rather than forcing it. Second gate, in `scan-0.log`: the run must log `FindAll: UE Version = 421`. `4.21.` is a real needle rung, but if the tag scan misses, detection defaults to 504 and the `TNameEntryArray` override rewrites it to 422 → primary `0x98` → **the fix changes nothing** and the row is moot.
 
-**Why the suite cannot close it.** `dll_helpers_test.cpp:5539-5596` pins `FunctionFlagsOffsetFor` rows, the CPN `+8` invariant and the sweep contents — header arithmetic. `ReadFuncFlagsAndParams` lives in `Ubel.cpp`, which no test target compiles.
+**Why the suite cannot close it.** `dll_helpers_test.cpp:5539-5596` pins `FunctionFlagsOffsetFor` rows, the CPN `+8` invariant and the sweep contents — header arithmetic. `ReadFuncFlagsAndParams` lives in `Ubel.cpp`, which no test target compiles. *(Corrected 2026-11-23: `dll_core_test` has compiled `Ubel.cpp` since 2026-08-25.)*
 
 | side | where | expect |
 |---|---|---|
@@ -2322,8 +2322,8 @@ method with zero callers; **AC16 / AB21 / AF24 / AF26 / AE26** are re-verified n
 no code change; **AB23** was not fixed (see its row). Categories are §10's A/B/C/D.*
 
 ⚠ **MB3 is the row to run FIRST.** It restructures the CE mailbox poller — the loop every `.CT`
-command rides on, inside the game's own process — and **no test target compiles `Mimic.cpp`**, so
-none of it has executed. Two changes: the dispatch `switch` now runs inside
+command rides on, inside the game's own process. Since 2026-11-23 `mimic_mailbox_test` executes both
+changes (its THREW and BOX blocks); what this row still needs is the run inside a game. Two changes: the dispatch `switch` now runs inside
 `Routine::RunTickGuarded` so one throwing handler loses that command instead of ending the mailbox
 for the session, and `CompoundOpGuard`'s destructor now detects unwinding
 (`std::uncaught_exceptions()` vs the count at entry) and publishes `-11` instead of the stale
@@ -5908,11 +5908,20 @@ contain none of those entries. Do not extend the table to an editor build.
 > 1 Hz decrement (`DumperTestActor.h:242`), and it incidentally proves both surfaces are reading the
 > same live memory rather than a cache.
 
-### 🔲 A3 — one FVector per class was ever indexed (build 3168)
+### 🟡 STEPS 1-2 CLOSED 2026-11-23 OFFLINE `[A3-SCANSIBLING-2026-11-23]` — A3 — one FVector per class was ever indexed (build 3168); step 4 is left
+
+> ✅ **CLOSED 2026-11-23 `[A3-SCANSIBLING-2026-11-23]`, steps 1 and 2, offline.** `dll_core_test`'s
+> SCANSIBLING block (`3f3543d3`) builds a class with two fields of one Vector struct (Location at +0x30,
+> Velocity at +0x40) in a fake object pool and runs `Aura::ScanForValue`: a Float scan for 20 finds
+> `Velocity.Y` alone (step 1's defect), a Float scan for 2 finds `Location.Y`, and an FVector scan finds
+> `Velocity` whole (step 2's control). Negative control: with `StructPathGuard` replaced by a whole-walk
+> `visited.insert`, the Velocity.Y check fails and both controls stay green (1984 checks, 1 failure);
+> restored, 0 failures in 5 runs. **Not covered:** step 4, whether the 4000-field cap fires on real
+> classes, which needs a game's class sizes. Step 3 is a diagnostic, not a check.
 
 *Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned
 (`Test_Aura_StructPathGuard`, negative control 7 red); the WALK THAT USES IT is not** — no test target
-compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a real class.*
+compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a real class. (Corrected 2026-11-23: `dll_core_test` has compiled `Aura.cpp` since 2026-08-25; the record above runs that walk.)*
 
 > **Why this is cheap: the before/after is a single scan and the expected delta is huge.** The guard
 > was whole-walk instead of path-scoped, so only the FIRST field of a given `UScriptStruct` type in a
@@ -6273,7 +6282,7 @@ whether the record ends ticked or unticked.*
 **NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate**
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
-is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
+is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`. (Corrected 2026-11-23: `dll_core_test` has compiled both since 2026-08-25, so the wiring can be tested offline.)*
 
 1. **⚠ G12 REGRESSION — enums and TArray elements still read correctly.** Open Live Walker on a
    class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
@@ -6715,7 +6724,7 @@ exits immediately when its shipping exe is launched directly (Steam DRM wants th
 
 *Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
 against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
-no test target compiles `Genau.cpp`.*
+no test target compiles `Genau.cpp`. (Corrected 2026-11-23: `dll_core_test` has compiled it since 2026-08-25; what still needs a game is the real image.)*
 
 1. **✅ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
    version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
@@ -10968,7 +10977,7 @@ on it read dead memory.
 > stamp format byte-identical to `AtomicFileHygiene.QuarantineNameFor` so one sweep can bound both
 > sides' quarantine later. ⚠ No test target compiles `Flamme.cpp`, so the decision (`is this
 > document a wipe candidate, and may I proceed without a quarantine?`) must go in `Flamme.h` beside
-> `ShouldPublishAtomicWrite`, per the L4 precedent.
+> `ShouldPublishAtomicWrite`, per the L4 precedent. *(Corrected 2026-11-23: `dll_core_test` has compiled `Flamme.cpp` since 2026-08-25, so the decision can also be tested where it is.)*
 >
 > Not folded into L7 because that batch is scoped to `ui/UE5DumpUI/Services/`, and a DLL change
 > needs a `-Target DLL` build to mean anything.

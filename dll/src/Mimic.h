@@ -465,8 +465,8 @@ static_assert(sizeof(MailboxData) <= 4096, "MailboxData must fit in a single pag
 //
 // The wire format depends on ONE input bit, so the DLL and the CE Lua helper must
 // derive it from the same rule or they disagree about where entry N begins. Kept
-// header-inline and pure precisely so `dll_helpers_test` can pin it: no test target
-// compiles Mimic.cpp, but every test compiles this header.
+// header-inline and pure precisely so `dll_helpers_test` can pin it case by case, and
+// the C++ and Lua sides read one definition.
 
 constexpr uint32_t LIST_INSTANCES_ENTRY_EXACT   = 8;   // UObject*
 constexpr uint32_t LIST_INSTANCES_ENTRY_DERIVED = 16;  // UObject* + its UClass*
@@ -505,8 +505,8 @@ static_assert(LIST_INSTANCES_MAX_DERIVED
 //
 // Neither of these is contract SURFACE — tools/check_mailbox_contract.py hashes
 // `MailboxData`'s fields and the CONTRACT_ENUMS values, nothing else — but both
-// decide how a command behaves, and `Mimic.cpp` is compiled by no test target.
-// Keeping them here is what makes them assertable at all.
+// decide how a command behaves. Pure and in the header, so dll_helpers_test asserts
+// them case by case.
 
 // UE FunctionFlags subset the invoke route depends on. Pulled from
 // Engine/Source/Runtime/CoreUObject/Public/UObject/Script.h. Only these two bits

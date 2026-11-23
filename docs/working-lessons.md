@@ -3187,6 +3187,20 @@ inside the session, where the same delay only makes the run 15 s longer (exit 0)
 To see what lingers, raise `shutdownForegroundThreadWaitSeconds` in xunit.runner.json and take `dotnet-stack report -p
 <pid>` during the wait.
 
+### 3.xg A test executable beside our proxy DLLs loads one: the search order a proxy exists to use
+
+Until 2026-11-23 the four proxies built into `build\dll\`, the folder the C++ test executables run from. Any test that
+imports `version.dll` (`dll_core_test`, which links `version.lib` for Genau's PE version reads) loaded OUR proxy from
+its own folder first -- the application-directory search a proxy relies on in a game folder. Its DllMain then ran inside
+the test: a MinHook trampoline block, a pipe server, and log files plus a retention sweep in the user's
+`%LOCALAPPDATA%\UE5CEDumper\Logs\` (a `dll_core_test` folder there went back to 2026-11-02). Nothing failed, so nobody
+saw it. It surfaced when `methode_plugin_test` asked the plugin whether our DLL was loaded in the test process, and the
+plugin rightly answered "yes, as VERSION.dll". The proxies now build into `build\dll\proxy\` (dist\ already kept them in
+`proxy\` for the same reason), and build.ps1 takes each by name and deletes one an older tree left in `build\dll\`.
+
+**How to apply:** a DLL named after a Windows DLL never sits beside an executable you run, in the build tree as in
+dist\. A `Logs\<test exe name>\` folder appearing is the tell: our DLL ran in that process.
+
 -----
 
 -----

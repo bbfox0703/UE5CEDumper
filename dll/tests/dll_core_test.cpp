@@ -55,6 +55,11 @@ namespace Stark { void SetInvokeTimeoutMs(int) {} }
 // the test chooses the UE version the core code branches on.
 uint32_t g_cachedUEVersion = 0;
 
+// &GWorld, defined in Frieren.cpp in the DLL; Solitar reads the world through it. A test points it at a fake world.
+uintptr_t g_cachedGWorld = 0;
+// Defined in Frieren.cpp: raised while an init runs. Routine::ReassertLoop (Solitar's worker) skips its tick then.
+std::atomic<bool> g_initInProgress{false};
+
 // ⚠ #undef between every include, and it is not just warning silencing.
 // Each of these .cpp files is its own translation unit in the real DLL, and each either
 // #defines LOG_CAT itself or inherits Sein.h's `#ifndef LOG_CAT -> ""` default. Concatenated
@@ -81,6 +86,8 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Genau.cpp"      // NOLINT
 #undef LOG_CAT
 #include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
+#undef LOG_CAT
+#include "../src/Solitar.cpp"    // NOLINT -- God Mode: the pawn chain, the bits it writes, the re-assert worker
 #undef LOG_CAT
 #define LOG_CAT "TEST"
 #include "../src/Routine.h"      // SingleFlightJob: its guard logs through the Sein stubs above
@@ -4071,6 +4078,271 @@ int main() {
         }
 
         DynOff::bUseFProperty = savedFPropCE;
+    }
+
+    // -- SCANSIBLING -- ScanForValue indexes EVERY field of one struct type in a class --------------------------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). The value scan expands a class's struct fields under a guard
+    // scoped to the CURRENT path, so a struct type met again on a sibling branch is expanded again: Location and
+    // Velocity are both a Vector, and both must contribute leaves. A guard over the whole walk would index
+    // Location's leaves and drop Velocity's subtree, and the scan would report "no match" for a value that is there.
+    {   blk("SCANSIBLING - ScanForValue indexes every field of one struct type, not only the first");
+        static uint8_t ssEntry[11][0x40] = {};
+        const char* ssNames[11] = { "", "StructProperty", "FloatProperty", "Location", "Velocity", "X", "Y", "Z",
+                                    "SsActor", "Vector", "ScriptStruct" };
+        static uintptr_t ssChunk[12] = {};
+        for (int i = 1; i <= 10; ++i) {
+            memcpy(ssEntry[i] + 0x10, ssNames[i], strlen(ssNames[i]) + 1);
+            ssChunk[i] = reinterpret_cast<uintptr_t>(ssEntry[i]);
+        }
+        static uintptr_t ssChunks[2] = { reinterpret_cast<uintptr_t>(ssChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ssChunks), 0x10);
+
+        const bool savedFPropSS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t ssFC[3][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            put32(ssFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx);
+            return reinterpret_cast<uintptr_t>(ssFC[nameIdx]);
+        };
+        auto prop = [&](uint8_t* p, int fcIdx, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fclass(fcIdx));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(next));
+        };
+
+        // The struct: Vector { float X, Y, Z; }.
+        static uint8_t ssX[0x100] = {}, ssY[0x100] = {}, ssZ[0x100] = {};
+        prop(ssX, 2, 5, 0, 4, ssY);
+        prop(ssY, 2, 6, 4, 4, ssZ);
+        prop(ssZ, 2, 7, 8, 4, nullptr);
+        // A vector scan reads the struct's type name only from an object whose class is ScriptStruct.
+        static uint8_t ssScriptStruct[0x100] = {};
+        put32(ssScriptStruct, Grimoire::OFF_UOBJECT_NAME, 10);
+        static uint8_t ssVec[0x100] = {};
+        put32(ssVec, Grimoire::OFF_UOBJECT_NAME, 9);
+        putP(ssVec, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ssScriptStruct));
+        put32(ssVec, DynOff::USTRUCT_PROPSSIZE, 12);
+        putP(ssVec, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ssX));
+
+        // The class: two fields of that one struct type, siblings.
+        static uint8_t ssLoc[0x100] = {}, ssVel[0x100] = {};
+        prop(ssLoc, 1, 3, 0x30, 12, ssVel);
+        putP(ssLoc, DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(ssVec));
+        prop(ssVel, 1, 4, 0x40, 12, nullptr);
+        putP(ssVel, DynOff::FSTRUCTPROP_STRUCT, reinterpret_cast<uintptr_t>(ssVec));
+        static uint8_t ssCls[0x100] = {};
+        put32(ssCls, Grimoire::OFF_UOBJECT_NAME, 8);
+        put32(ssCls, DynOff::USTRUCT_PROPSSIZE, 0x4C);
+        putP(ssCls, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(ssLoc));
+
+        // The instance: Location (1, 2, 3), Velocity (10, 20, 30) -- distinct after the scan's rounding.
+        static uint8_t ssObj[0x60] = {};
+        putP(ssObj, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ssCls));
+        const float loc[3] = { 1.0f, 2.0f, 3.0f }, vel[3] = { 10.0f, 20.0f, 30.0f };
+        memcpy(ssObj + 0x30, loc, sizeof(loc));
+        memcpy(ssObj + 0x40, vel, sizeof(vel));
+
+        static FakePool ssPool;             // static: Aura keeps pointing at it after this block
+        ssPool.Build(4);                    // the other three objects have no class, so the scan skips them
+        const uintptr_t ssO = reinterpret_cast<uintptr_t>(ssObj);
+        memcpy(ssPool.chunks[0].data(), &ssO, sizeof(ssO));
+        Aura::InitWithExtendedLayout(ssPool.Addr(), FakePool::kItemSize);
+        ResetCancel();
+
+        auto fieldsFound = [](const Aura::ValueScanResult& r) {
+            std::string s;
+            for (const auto& c : r.candidates) {
+                if (!s.empty()) s += ", ";
+                s += r.descriptors[c.descriptorIdx].fieldName;
+            }
+            return s;
+        };
+        auto scanFloat = [](float v) {
+            return Aura::ScanForValue(Radar::DataType::Float, Radar::ScanType::Exact,
+                                      reinterpret_cast<const uint8_t*>(&v), nullptr, /*gameOnly=*/false, 100,
+                                      Radar::RoundMode::Round, "", false, nullptr, nullptr, /*parallel=*/false);
+        };
+        const auto rv = scanFloat(20.0f);
+        check("SCANSIBLING ⭐: the second field of the struct type is indexed -- Velocity.Y found",
+              rv.candidates.size() == 1 && fieldsFound(rv) == "Velocity.Y", fieldsFound(rv).c_str());
+        const auto rl = scanFloat(2.0f);
+        check("SCANSIBLING control: the first field of the struct type -- Location.Y found",
+              rl.candidates.size() == 1 && fieldsFound(rl) == "Location.Y", fieldsFound(rl).c_str());
+        // A vector scan takes the struct fields whole and never recurses, so the guard is not what it rests on.
+        const double velD[3] = { 10.0, 20.0, 30.0 };
+        const auto rvec = Aura::ScanForValue(Radar::DataType::FVector, Radar::ScanType::Exact,
+                                             reinterpret_cast<const uint8_t*>(velD), nullptr, /*gameOnly=*/false, 100,
+                                             Radar::RoundMode::Round, "", false, nullptr, nullptr, /*parallel=*/false);
+        check("SCANSIBLING control: an FVector scan matches the Velocity field whole",
+              rvec.candidates.size() == 1 && fieldsFound(rvec) == "Velocity", fieldsFound(rvec).c_str());
+
+        DynOff::bUseFProperty = savedFPropSS;
+    }
+
+    // -- GODMODE -- Solitar's God Mode over a fake world: the bits it writes, the debug-camera hop, the re-assert, and
+    //    targets read again when the property family's epoch moves ---------------------------------------------------
+    //
+    // ⛔ OWN NAMES, NO POOL: the pawn is reached through reflection alone (GWorld -> OwningGameInstance -> LocalPlayers[0]
+    // -> PlayerController -> Pawn), so no object array is consulted. [SOLIDE-NATIVE-BOOL] A packed bool shares its byte
+    // with seven others and only its own bit may change; a native bool owns the byte and holds 0x01 / 0x00, never 0xFF.
+    {   blk("GODMODE - Solitar resolves the local pawn and writes only the bits it owns");
+        static uint8_t gmEntry[17][0x40] = {};
+        const char* gmNames[17] = { "", "ObjectProperty", "ArrayProperty", "BoolProperty", "OwningGameInstance",
+                                    "LocalPlayers", "PlayerController", "Pawn", "bCanBeDamaged", "bInvincible",
+                                    "GmWorld", "GmGameInstance", "GmLocalPlayer", "GmPlayerController", "GmPawn",
+                                    "DebugCameraController", "OriginalControllerRef" };
+        static uintptr_t gmChunk[18] = {};
+        for (int i = 1; i <= 16; ++i) {
+            memcpy(gmEntry[i] + 0x10, gmNames[i], strlen(gmNames[i]) + 1);
+            gmChunk[i] = reinterpret_cast<uintptr_t>(gmEntry[i]);
+        }
+        static uintptr_t gmChunks[2] = { reinterpret_cast<uintptr_t>(gmChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(gmChunks), 0x10);
+
+        const bool savedFPropGM = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto A     = [](const void* p) { return reinterpret_cast<uintptr_t>(p); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t gmFC[4][0x20] = {};
+        auto fclass = [&](int nameIdx) {
+            put32(gmFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx);
+            return A(gmFC[nameIdx]);
+        };
+        auto prop = [&](uint8_t* p, int fcIdx, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fclass(fcIdx));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, A(next));
+        };
+        // {FieldSize, ByteOffset, ByteMask, FieldMask}, where an FBoolProperty keeps them.
+        auto boolLayout = [](uint8_t* p, uint8_t fieldSize, uint8_t byteOff, uint8_t byteMask, uint8_t fieldMask) {
+            const int at = DynOff::FBOOLPROP_FIELDSIZE;
+            p[at] = fieldSize; p[at + 1] = byteOff; p[at + 2] = byteMask; p[at + 3] = fieldMask;
+        };
+        auto cls = [&](uint8_t* c, int nameIdx, uint8_t* firstProp, int32_t size) {
+            put32(c, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(c, DynOff::USTRUCT_PROPSSIZE, size);
+            putP(c, DynOff::USTRUCT_CHILDPROPS, A(firstProp));
+        };
+
+        // The classes, each with the one field the chain reads.
+        static uint8_t gpOgi[0x100] = {}, gpLps[0x100] = {}, gpPc[0x100] = {}, gpPawn[0x100] = {};
+        static uint8_t gpOrig[0x100] = {}, gpDccPawn[0x100] = {}, gpCan[0x100] = {}, gpInv[0x100] = {};
+        static uint8_t gmWorldCls[0x100] = {}, gmGiCls[0x100] = {}, gmLpCls[0x100] = {}, gmPcCls[0x100] = {};
+        static uint8_t gmDccCls[0x100] = {}, gmPawnCls[0x100] = {};
+        prop(gpOgi, 1, 4, 0x30, 8, nullptr);        cls(gmWorldCls, 10, gpOgi, 0x38);
+        prop(gpLps, 2, 5, 0x30, 16, nullptr);       cls(gmGiCls, 11, gpLps, 0x40);
+        prop(gpPc, 1, 6, 0x30, 8, nullptr);         cls(gmLpCls, 12, gpPc, 0x38);
+        prop(gpPawn, 1, 7, 0x30, 8, nullptr);       cls(gmPcCls, 13, gpPawn, 0x38);
+        prop(gpOrig, 1, 16, 0x30, 8, gpDccPawn);
+        prop(gpDccPawn, 1, 7, 0x38, 8, nullptr);    cls(gmDccCls, 15, gpOrig, 0x40);
+        // The pawn: bCanBeDamaged packed into a byte of eight bools (bit 0x04), bInvincible a native bool.
+        prop(gpCan, 3, 8, 0x40, 1, gpInv);          boolLayout(gpCan, 1, 0, 0x04, 0x04);
+        prop(gpInv, 3, 9, 0x48, 1, nullptr);        boolLayout(gpInv, 1, 0, 0x01, 0xFF);
+        cls(gmPawnCls, 14, gpCan, 0x50);
+
+        // The objects.
+        static uint8_t gmWorld[0x60] = {}, gmGi[0x60] = {}, gmLp[0x60] = {}, gmPc[0x60] = {};
+        static uint8_t gmDcc[0x60] = {}, gmPawn[0x60] = {};
+        static uintptr_t gmLocalPlayers[1] = {};
+        putP(gmWorld, Grimoire::OFF_UOBJECT_CLASS, A(gmWorldCls));
+        putP(gmGi,    Grimoire::OFF_UOBJECT_CLASS, A(gmGiCls));
+        putP(gmLp,    Grimoire::OFF_UOBJECT_CLASS, A(gmLpCls));
+        putP(gmPc,    Grimoire::OFF_UOBJECT_CLASS, A(gmPcCls));
+        putP(gmDcc,   Grimoire::OFF_UOBJECT_CLASS, A(gmDccCls));
+        putP(gmPawn,  Grimoire::OFF_UOBJECT_CLASS, A(gmPawnCls));
+        putP(gmWorld, 0x30, A(gmGi));
+        gmLocalPlayers[0] = A(gmLp);
+        putP(gmGi, 0x30, A(gmLocalPlayers)); put32(gmGi, 0x38, 1); put32(gmGi, 0x3C, 1);   // TArray {Data, Num, Max}
+        putP(gmLp, 0x30, A(gmPc));
+        putP(gmPc, 0x30, A(gmPawn));
+        putP(gmDcc, 0x30, A(gmPc));                 // OriginalControllerRef; the debug camera has no pawn of its own
+        gmPawn[0x40] = 0xFF;                        // eight packed bools, all true: the pawn can be damaged
+        gmPawn[0x48] = 0x00;                        // bInvincible: false
+        static uintptr_t gmGWorldSlot = 0;
+        gmGWorldSlot = A(gmWorld);
+        g_cachedGWorld = A(&gmGWorldSlot);
+
+        char got[64];
+        auto hex = [&](uint8_t v) { snprintf(got, sizeof got, "0x%02X", v); return got; };
+        auto waitTicks = [](int n) { Sleep(static_cast<DWORD>(Grimoire::PROTECT_REASSERT_MS * n)); };
+
+        check("GODMODE: before ON the pawn can be damaged -- 0", Solitar::GetGodMode() == 0);
+
+        int32_t rc = Solitar::SetGodMode(true);
+        check("GODMODE: ON reports the pawn immune -- 1", rc == 1, std::to_string(rc).c_str());
+        check("GODMODE ⭐: only bCanBeDamaged's bit is cleared; the seven bools sharing its byte keep theirs",
+              gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+        check("GODMODE ⭐: the native bool is written 0x01, never its FieldMask 0xFF", gmPawn[0x48] == 0x01,
+              hex(gmPawn[0x48]));
+        check("GODMODE: the live read agrees -- 1", Solitar::GetGodMode() == 1);
+
+        gmPawn[0x40] = 0xFF;                        // the game sets it back
+        waitTicks(3);
+        check("GODMODE ⭐: the worker re-asserts a bit the game set back", gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+
+        // The Debug Camera's controller has no pawn: God Mode hops through OriginalControllerRef to the player's.
+        putP(gmLp, 0x30, A(gmDcc));
+        gmPawn[0x40] = 0xFF;
+        rc = Solitar::SetGodMode(true);
+        check("GODMODE ⭐: with the debug camera on, God Mode reaches the player's pawn through it", rc == 1,
+              std::to_string(rc).c_str());
+        check("GODMODE: ...and its bit is the one written", gmPawn[0x40] == 0xFB, hex(gmPawn[0x40]));
+        putP(gmLp, 0x30, A(gmPc));
+
+        // The family epoch: bCanBeDamaged moves (an offsets probe re-measured it). The targets stay until the epoch moves.
+        put32(gpCan, DynOff::FPROPERTY_OFFSET, 0x44);
+        gmPawn[0x44] = 0xFF;
+        waitTicks(3);
+        check("GODMODE control: before the epoch moves, the targets read under the old offsets are kept",
+              gmPawn[0x44] == 0xFF, hex(gmPawn[0x44]));
+        DynOff::RetireFamilyEpoch();
+        rc = Solitar::SetGodMode(true);
+        check("GODMODE ⭐: once the epoch moves, the targets are read again -- the bit at the new offset is cleared",
+              rc == 1 && gmPawn[0x44] == 0xFB, hex(gmPawn[0x44]));
+
+        rc = Solitar::SetGodMode(false);
+        check("GODMODE: OFF reports the pawn can be damaged -- 0", rc == 0, std::to_string(rc).c_str());
+        check("GODMODE: OFF sets only bCanBeDamaged's bit back", gmPawn[0x44] == 0xFF, hex(gmPawn[0x44]));
+        check("GODMODE: OFF writes the native bool 0x00", gmPawn[0x48] == 0x00, hex(gmPawn[0x48]));
+        gmPawn[0x44] = 0xFB;
+        waitTicks(3);
+        check("GODMODE: OFF stops the worker -- nothing is re-asserted", gmPawn[0x44] == 0xFB, hex(gmPawn[0x44]));
+        gmPawn[0x44] = 0xFF;
+
+        std::vector<Solitar::ProtectBit> bits;
+        check("GODMODE: the trainer's bits resolve", Solitar::ResolveProtectBits(bits) == Solitar::PR_OK);
+        check("GODMODE: two protection bools", bits.size() == 2, std::to_string(bits.size()).c_str());
+        if (bits.size() == 2) {
+            check("GODMODE: bCanBeDamaged -- its byte, its bit, protected when 0",
+                  bits[0].name == "bCanBeDamaged" && bits[0].byteOffset == 0x44 && bits[0].mask == 0x04 && bits[0].protect == 0);
+            check("GODMODE ⭐: bInvincible -- a native bool's trainer bit is 0x01, protected when 1",
+                  bits[1].name == "bInvincible" && bits[1].byteOffset == 0x48 && bits[1].mask == 0x01 && bits[1].protect == 1);
+        }
+
+        check("GODMODE: SetActorBool clears one named packed bool, its siblings kept",
+              Solitar::SetActorBool(A(gmPawn), A(gmPawnCls), "bCanBeDamaged", false) == 0 && gmPawn[0x44] == 0xFB,
+              hex(gmPawn[0x44]));
+        check("GODMODE: GetActorBool reads it back", Solitar::GetActorBool(A(gmPawn), A(gmPawnCls), "bCanBeDamaged") == 0);
+        check("GODMODE: SetActorBool on the native bool writes 0x01",
+              Solitar::SetActorBool(A(gmPawn), A(gmPawnCls), "bInvincible", true) == 1 && gmPawn[0x48] == 0x01,
+              hex(gmPawn[0x48]));
+
+        g_cachedGWorld = 0;
+        check("GODMODE control: with no world, God Mode says the DLL is not ready",
+              Solitar::GetGodMode() == Solitar::PR_ERR_NOT_INIT);
+
+        Solitar::StopWorker();
+        DynOff::bUseFProperty = savedFPropGM;
     }
 
     // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
@@ -14821,12 +15093,14 @@ int main() {
         Serie::InitUE4(reinterpret_cast<uintptr_t>(a1Chunks), 0x10);
 
         // Genau validates through the objects: each one's ClassPrivate leads to a UClass whose own ClassPrivate is
-        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data).
+        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data), in a
+        // WHOLE chunk: Aura's item-layout probes read 200 items up to 32 bytes apart, and a chunk that ended after
+        // the 64th item let them read whatever the heap put next, so the verdict changed with the allocator.
         constexpr int kA1Items = 64;
         std::vector<uint8_t> a1Objs(static_cast<size_t>(kA1Items) * 0x40, 0), a1Cls(0x40, 0);
         const uintptr_t a1ClsAddr = reinterpret_cast<uintptr_t>(a1Cls.data());
         memcpy(a1Cls.data() + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
-        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(kA1Items) * 24, 0);
+        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 24, 0);
         for (int i = 0; i < kA1Items; ++i) {
             uint8_t* o = a1Objs.data() + static_cast<size_t>(i) * 0x40;
             memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
@@ -14838,6 +15112,13 @@ int main() {
         // Every table slot names a readable chunk, so a strict reading of up to 65 chunks finds each one.
         std::vector<uintptr_t> a1Table(65, reinterpret_cast<uintptr_t>(a1Chunk0.data()));
         const uintptr_t table = reinterpret_cast<uintptr_t>(a1Table.data());
+        // The same objects in MindsEye's own items -- 32 bytes, the UObject* at +0x10 -- for the shape whose preset
+        // carries that item as a hint.
+        std::vector<uint8_t> a1Chunk32(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 32, 0);
+        for (int i = 0; i < kA1Items; ++i)
+            memcpy(a1Chunk32.data() + static_cast<size_t>(i) * 32 + 0x10, a1Chunk0.data() + static_cast<size_t>(i) * 24, 8);
+        std::vector<uintptr_t> a1Table32(65, reinterpret_cast<uintptr_t>(a1Chunk32.data()));
+        const uintptr_t table32 = reinterpret_cast<uintptr_t>(a1Table32.data());
 
         alignas(16) static uint8_t a1[0x80] = {};
         const uintptr_t B = reinterpret_cast<uintptr_t>(a1);
@@ -14959,14 +15240,14 @@ int main() {
         }
 
         // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
-        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; };
+        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; bool mindsEyeItems = false; };
         const Stock stock[] = {
             { "Default (ObjObjects, 4.20-5.7)", 0x10, 0x00, 0x10, 0x14, 0x18, 0x1C },
             { "UE5-Extended (base, 4.20-5.7)",  0x00, 0x10, 0x20, 0x24, 0x28, 0x2C },
             { "UE4-Extended (base)",            0x00, 0x10, 0x18, 0x1C, 0x20, 0x24 },
             { "UE5.8 (ObjObjects first)",       0x00, 0x00, 0x0C, 0x08, 0x14, 0x10 },
             { "UE5.7-Mistfall (base)",          0x00, 0x10, 0x20, 0x24, 0x04, 0x08 },
-            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14 },
+            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14, true },
             { "Back4Blood",                     0x10, 0x10, 0x00, 0x04, 0x08, 0x0C },
             { "Multiversus",                    0x10, 0x18, 0x10, 0x00, 0x14, 0x20 },
             { "MindsEye",                       0x10, 0x18, 0x00, 0x14, 0x10, 0x04 },
@@ -14983,12 +15264,20 @@ int main() {
         for (const Stock& s : stock) {
             for (const Numbers& n : { Numbers{ "6 chunks, one in use", 6, 1, 0x4000, 0x60000 },
                                       Numbers{ "6 chunks, Num = Max - 1", 6, 6, 0x5FFFF, 0x60000 } }) {
-                const uintptr_t addr = buildStock(s, table, n.maxChunks, n.numChunks, n.num, n.maxE);
+                const uintptr_t addr = buildStock(s, s.mindsEyeItems ? table32 : table, n.maxChunks, n.numChunks, n.num,
+                                                  n.maxE);
                 const std::string tag = std::string(s.name) + ", " + n.what;
                 Aura::Init(addr);
                 check(("VND10-A1-01 control: " + tag + " -- Aura latches its own row").c_str(),
                       latched(n.num, s.obj, s.maxE, s.num, s.maxC, s.numC), layoutText().c_str());
                 check(("VND10-A1-01 control: " + tag + " -- Genau validates it").c_str(), Genau::ValidateGObjects(addr));
+                {
+                    const int wantSize = s.mindsEyeItems ? 32 : 24, wantObj = s.mindsEyeItems ? 0x10 : 0;
+                    char lay[64];
+                    snprintf(lay, sizeof lay, "%d bytes, object at +0x%X", (int)Aura::GetItemSize(), (int)Aura::GetItemObjOffset());
+                    check(("CEPTR-FAIL-ONCE: " + tag + " -- Aura reads the items the array holds").c_str(),
+                          Aura::GetItemSize() == wantSize && Aura::GetItemObjOffset() == wantObj, lay);
+                }
                 const std::string miss = ceChainMiss(addr);
                 check(("CEPTR-OBJECTS ⭐: " + tag + " -- a CE pointer from it reaches Aura's object").c_str(),
                       miss.empty(), miss.c_str());
@@ -15626,10 +15915,12 @@ int main() {
             // its CoreUObject core, named slot after slot. The larger count must not win on 8 names.
             {
                 std::vector<uint8_t> nothing(0x40, 0);   // a readable object that names nothing (index 0, "None")
-                std::vector<uint8_t> spChunk(1024 * 24, 0);
-                for (int i = 0; i < 1024; ++i) {
-                    const uintptr_t o = i % 128 == 0 ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
-                                                     : reinterpret_cast<uintptr_t>(nothing.data());
+                // A whole chunk: the scorer samples kRescanNameSampleSlots slots, more than the 1024-slot head, and a
+                // chunk that ended with the head let it read whatever the heap put next. Past the head, nothing named.
+                std::vector<uint8_t> spChunk(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 24, 0);
+                for (int i = 0; i < Grimoire::OBJECTS_PER_CHUNK; ++i) {
+                    const uintptr_t o = (i < 1024 && i % 128 == 0) ? reinterpret_cast<uintptr_t>(objs + (i / 128) * 0x40)
+                                                                   : reinterpret_cast<uintptr_t>(nothing.data());
                     memcpy(spChunk.data() + static_cast<size_t>(i) * 24, &o, 8);
                 }
                 std::vector<uintptr_t> spTable(6, reinterpret_cast<uintptr_t>(spChunk.data()));

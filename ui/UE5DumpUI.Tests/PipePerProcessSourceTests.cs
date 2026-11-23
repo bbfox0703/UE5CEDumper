@@ -266,8 +266,9 @@ public sealed class PipePerProcessSourceTests
             "ReleaseOwnedBy must take m_profileMu, check m_profileOwner == owner, then Linie::Reset");
     }
 
-    /// <summary>The owner key is the client process, read before the connection is registered; CE is one more
-    /// owner; and both places that turn See-through on say who asked.</summary>
+    /// <summary>The owner key is the client process, read before the connection is registered, and the pipe's
+    /// See-through says who asked. CE is one more owner: the mailbox's See-through is mimic_mailbox_test's
+    /// SEETHROUGH.</summary>
     [Fact]
     public void EveryEnableNamesItsOwner()
     {
@@ -276,7 +277,6 @@ public sealed class PipePerProcessSourceTests
         int reg = code.IndexOf("m_conns.push_back(conn)", StringComparison.Ordinal);
         Assert.True(key >= 0 && reg >= 0 && key < reg, "AcceptLoop must set conn->ownerKey before registering it");
         Assert.Matches(@"\bSchlacht::SetEnabled\s*\([^;]*,\s*conn->ownerKey\s*\)", CommandBranch(code, "CMD_SEE_THROUGH_SET"));
-        Assert.Matches(@"\bSchlacht::SetEnabled\s*\([^;]*,\s*Schlacht::kOwnerCe\s*\)", CodeOnly(DllSrc("Mimic.cpp")));
     }
 
     /// <summary>Starting a recording joins the old arm worker and installs a new one, and the pair is not atomic:
@@ -578,8 +578,9 @@ public sealed class PipePerProcessSourceTests
     }
 
     // ── who holds each gameplay hold ────────────────────────────────────────────────────────────────────────────────
-    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger. Fern.cpp and Mimic.cpp reach no test target,
-    // so where they use it is pinned here.
+    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger, and the mailbox's hold changes are
+    // mimic_mailbox_test's HOLDS. Fern.cpp reaches no test target yet and CMD_INVOKE is not driven there, so those uses
+    // are pinned here.
 
     /// <summary>Every pipe command that changes a hold runs under the hold's lock, and an if_free refusal is decided
     /// under it, before the first command branch: a check made anywhere else would race the other writers.</summary>
@@ -646,63 +647,6 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Voll::Holds().Owner(hold) != owner", body[owned..]);   // a hold taken over meanwhile stays
     }
 
-    /// <summary>The mailbox is the third writer: every command of it that changes a hold goes through the same lock
-    /// and names CE as the owner.</summary>
-    [Theory]
-    [InlineData("HandleSetDebugCamera", "HOLD_DEBUG_CAMERA")]
-    [InlineData("HandleProtect", "HOLD_GOD_MODE")]
-    [InlineData("HandleForeground", "HOLD_FOREGROUND_LOCK")]
-    [InlineData("HandleMovement", "HOLD_GRAVITY_DIRECTION")]
-    [InlineData("HandleMovement", "HOLD_MOVEMENT_PREFIX")]
-    [InlineData("HandleTime", "HOLD_TIME_PREFIX")]
-    [InlineData("HandleFly", "HOLD_FLY")]
-    public void TheMailbox_ChangesEachHoldAsCe(string handler, string hold)
-    {
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        int start = mimic.IndexOf("static void " + handler + "() {", StringComparison.Ordinal);
-        Assert.True(start > 0, handler);
-        int end = mimic.IndexOf("\nstatic void ", start + 10, StringComparison.Ordinal);
-        string body = mimic[start..(end > 0 ? end : mimic.Length)];
-        Assert.Contains("ChangeHoldAsCe", body);
-        Assert.Contains("Grimoire::" + hold, body);
-    }
-
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A CE record that runs the debug camera's own functions (a Console row
-    /// baked into a record: INVOKE_BY_NAME, or CMD_INVOKE by address) changes the camera as CMD_SET_DEBUG_CAMERA does.
-    /// Unrecorded, the camera it turned on would stay named for whoever held it before -- an AI session, whose end
-    /// would then turn it off.</summary>
-    [Fact]
-    public void TheMailboxsInvokes_OfTheCamerasFunctions_ChangeItsHoldAsCe()
-    {
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        Assert.Matches(@"case CMD_INVOKE:\s*HandleInvokeHeld\(\);", mimic);
-        string byName = Between(mimic, "static void HandleInvokeByName() {", "\nstatic void ");
-        Assert.Contains("HandleInvokeHeld();", byName);
-        Assert.DoesNotContain("HandleInvoke();", byName);
-        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
-        Assert.Contains("Voll::IsDebugCameraFunction(", held);
-        Assert.Contains("ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
-        Assert.Contains("HandleInvoke();", held);
-    }
-
-    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] A pipe writer holds the camera's lock across its own game-thread wait
-    /// (up to the invoke timeout, 5 s by default, more by override), and the mailbox has one poller. A CE invoke that
-    /// waited for the lock and then for its own toggle could pass CE's 10 s deadline, reporting "did not finish" where
-    /// the answer is "queued". Busy, it runs unrecorded instead.
-    /// </summary>
-    [Fact]
-    public void TheMailboxsCameraInvoke_NeverWaitsForTheHoldsLock()
-    {
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
-        Assert.Contains("TryChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
-        string tryChange = Between(mimic, "static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {",
-            "\n}");
-        Assert.Contains("std::try_to_lock", tryChange);
-        Assert.DoesNotContain("std::lock_guard", tryChange);
-        Assert.Contains("RecordCeChange(hold);", tryChange);   // recorded as ChangeHoldAsCe records, when it got the lock
-    }
-
     /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
     /// would let an if_free request through and never be released.</summary>
     [Fact]
@@ -728,7 +672,8 @@ public sealed class PipePerProcessSourceTests
     // ── write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────────────────
     // The pure rules are dll_helpers_test's (Lager::ClassifyWriteRegion, Stark::InvokeBlocks,
     // Voll::InvokeRefusedForBackground) and dll_core_test's (Macht::ClassifyWriteRange / WriteDataBytes on real pages).
-    // Fern, Stark, Frieren and Mimic reach no test target, so where they use them, and in what order, is pinned here.
+    // Fern, Stark and Frieren reach no test target yet, so where they use them, and in what order, is pinned here; the
+    // mailbox's invoke path is mimic_mailbox_test's INVOKE, INVOKEHELD and INVOKEOWNER blocks.
 
     private static string Between(string text, string start, string end)
     {
@@ -853,14 +798,8 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Stark::LastInvokeBlocker()", handler);
         Assert.Contains("state == Stark::kInvokeNeedsGameThread", handler);
 
-        // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        string ce = Between(mimic, "static void RecordCeChange(const std::string& hold) {", "\n}");
-        int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
-        int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
-        Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
-        Assert.Contains("RecordCeChange(hold);", Between(mimic,
-            "static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {", "\n}"));
+        // CE's recorder agrees -- its answer that sent nothing never takes another client's pending ON, and CE's own
+        // pending ON is CE's: mimic_mailbox_test's DEBUGCAM and INVOKEHELD blocks.
     }
 
     /// <summary>[DBGCAM-RELEASE-STALLED] An AI's camera release that timed out with the game thread stalled is owed,
@@ -976,9 +915,7 @@ public sealed class PipePerProcessSourceTests
         int drop = release.IndexOf("Stark::DropQueuedInvokesOf(owner)", StringComparison.Ordinal);
         int holds = release.IndexOf("Voll::Holds().OwnedBy(owner)", StringComparison.Ordinal);
         Assert.True(gate > 0 && drop > gate && holds > drop, "only a background owner's, and before its holds");
-
-        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
-        Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
+        // The mailbox's poller runs its invokes as CE's: mimic_mailbox_test's INVOKEOWNER.
     }
 
     /// <summary>[MCP-WRITE-GRANTS-2026-11-14] An invoke under a grant (`grant`, background clients only)

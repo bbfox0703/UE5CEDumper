@@ -1145,9 +1145,9 @@ size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candid
 //
 // The proper fix is to intern ownerClass the way the per-candidate metadata is interned
 // (GroupSession already carries `descriptors` and `instances` pools for exactly this).
-// Not done here: the producers live in Aura.cpp and the reader in Fern.cpp. Fern.cpp is
-// compiled by no test target; Aura.cpp reaches only `dll_core_test`'s fake pool. So it is a
-// change that can only be verified end to end in-game. Tracked in docs/todo.md.
+// Not done here: the producers live in Aura.cpp and the reader in Fern.cpp. Aura.cpp's half can
+// be tested in `dll_core_test`; Fern.cpp's reader needs Fern.cpp in a test target first.
+// Tracked in docs/todo.md.
 //
 // Derived from sizeof rather than restated as a literal, so it cannot go stale.
 inline constexpr size_t kGroupSlotMatchBytes = sizeof(GroupSlotMatch);

@@ -173,38 +173,6 @@ public class Vnd584InvokeObjectParamTests
     }
 
     [Fact]
-    public void Mimic_ChecksTheFunctionIsTheInstancesClass_BeforeBothCalls()
-    {
-        // [VND584-06] A CE form's cached UFunction* can hold another class's function after a Blueprint reload.
-        var s = Src("dll/src/Mimic.cpp");
-        int start = s.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
-        int end = s.IndexOf("static void HandleInvokeByName() {", start, StringComparison.Ordinal);
-        Assert.True(start > 0 && end > start);
-        var body = s[start..end];
-        int check = body.IndexOf("Ubel::IsClassInChain(", StringComparison.Ordinal);
-        Assert.True(check > 0, "HandleInvoke does not check the function against the instance's class");
-        Assert.True(body.IndexOf("MB_ERR_INVOKE_NOT_OWNED", check, StringComparison.Ordinal) > check);
-        Assert.True(body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal) > check);
-        Assert.True(body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal) > check);
-    }
-
-    [Fact]
-    public void Mimic_ConvertsBeforeBothCalls_AndRefusesWithItsOwnCode()
-    {
-        var s = Src("dll/src/Mimic.cpp");
-        // The bodies, not the forward declarations above them.
-        int start = s.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
-        int end = s.IndexOf("static void HandleInvokeByName() {", start, StringComparison.Ordinal);
-        Assert.True(start > 0 && end > start);
-        var body = s[start..end];
-        int convert = body.IndexOf("FrierenInvoke::PrepareObjectParams(", StringComparison.Ordinal);
-        Assert.True(convert > 0);
-        Assert.True(body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal) > convert);
-        Assert.True(body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal) > convert);
-        Assert.True(body.IndexOf("MB_ERR_INVOKE_OBJECT_PARAM", convert, StringComparison.Ordinal) > convert);
-    }
-
-    [Fact]
     public void AnObjectPointer_StillDecodesAsAnAddress()
     {
         // Control: a UObject* IS its address.

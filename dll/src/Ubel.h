@@ -324,8 +324,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
 // instance, K2_TeleportTo, SetActorLocation and Jump among them.
 //
 // The traversal lives here, in the header, ON PURPOSE: its two call sites are in Frieren.cpp
-// and Mimic.cpp, which no test target compiles; Ubel.cpp itself reaches only `dll_core_test`.
-// So a rule left in a .cpp could not be pinned at those sites. Taking the per-class listing and the super read as callables lets a test
+// and Mimic.cpp. Taking the per-class listing and the super read as callables lets a test
 // drive a synthetic class chain and keeps this free of any memory access.
 //
 // ⚠ Both passes run over the WHOLE chain before the other begins. An exact match on a base

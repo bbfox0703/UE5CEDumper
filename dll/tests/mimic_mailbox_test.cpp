@@ -1,0 +1,1758 @@
+// mimic_mailbox_test.cpp
+// UE5CEDumper — the Cheat Engine mailbox (Mimic.cpp), served one command at a time against fake modules.
+//
+// WHAT IT DRIVES
+//   Mimic::ServeOne, the one pass the polling thread makes over a mailbox: the init gate, the dispatch, the error and
+//   done bookkeeping, a handler that throws, a mailbox another poller is busy with, and an adopted mailbox answered in
+//   place; CMD_TELEPORT's marshalling, op by op; the lookups, listings and pointer queries; and CMD_INVOKE's
+//   refusals, route and parameter conversion; every handler reading and answering through the mailbox its command
+//   came from; and the polling thread itself -- served, mirrored, stopped and restarted. Commands are served on the
+//   test's own thread, exactly when it says, except in INVOKEOWNER and LIFECYCLE, which start the real thread.
+//   LIFECYCLE takes other mailboxes over for good, so it runs last.
+//
+// WHAT IS FAKED
+//   Everything Mimic dispatches TO: the Frieren C ABI (UE5_*), Wirbel, Grausam, Schlacht, Dunste's status, Stark's
+//   invoke-owner scope and Frieren's debug-camera pending state. Each fake records its arguments and returns what the
+//   test chose. The hold ledger is the real one (Voll::Holds, header-inline), so "CE now holds it" is read back from it.
+//   The core the lookups walk -- Aura, Ubel, Serie -- is the real one, over objects built in the test's own memory
+//   (Fx); Sein::Info can carry a test's hook into one log line, and Sleep inside Mimic.cpp is MimicSleep.
+//
+// WHY IT #includes THE .cpp
+//   ServeOne, the handlers and the mailbox pointer are statics of Mimic.cpp. The core it reaches (Aura, Ubel, ...) is
+//   ue5_testcore, linked.
+
+#include <windows.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>   // getenv_s: the AddressSanitizer build's negative control
+#include <atomic>
+#include <cstring>
+#include <functional>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+static std::function<void(const char* fmt)> g_onInfo;   // a test's hook, armed around one command
+namespace Sein {
+void Info(const char*, const char* fmt, ...) {
+    if (g_onInfo) g_onInfo(fmt);
+}
+void Error(const char*, const char*, ...) {}
+void Warn(const char*, const char*, ...) {}
+void Debug(const char*, const char*, ...) {}
+void Summary(const char*, ...) {}
+}  // namespace Sein
+
+// A seam into Mimic.cpp's sleeps -- ServeOne's one-millisecond second look and the poll interval. Unhooked it is Sleep;
+// a block that hooks it runs no polling thread.
+void MimicSleep(DWORD ms);
+#define Sleep MimicSleep
+#include "../src/Mimic.cpp"  // NOLINT -- see "WHY IT #includes THE .cpp" above
+#undef Sleep
+static std::function<void()> g_onSleep;
+static int g_sleeps = 0;
+void MimicSleep(DWORD ms) {
+    if (g_onSleep) {
+        ++g_sleeps;
+        g_onSleep();
+    }
+    ::Sleep(ms);
+}
+#include "../src/Serie.h"   // the fixture's name pool
+
+// ── Frieren's globals ───────────────────────────────────────────────────────────────────────────────────────────
+uintptr_t g_cachedGObjects = 0;
+uintptr_t g_cachedGNames = 0;
+uintptr_t g_cachedGWorld = 0;
+uintptr_t g_cachedGEngine = 0;
+uint32_t g_cachedUEVersion = 0;
+std::atomic<bool> g_initInProgress{false};
+
+// ── the fakes ───────────────────────────────────────────────────────────────────────────────────────────────────
+static int g_initCalls = 0;
+static std::function<void()> g_onInit;          // what a UE5_Init call does to the globals
+static std::vector<int32_t> g_godModeCalls, g_debugCameraCalls;
+static int32_t g_godModeRc = 1, g_debugCameraRc = 1, g_debugCameraState = 0;
+static int32_t g_protectWant = 1, g_protectLive = -1, g_protectResolvable = 1;
+static bool g_pendingOn = false;
+static uint64_t g_pendingOwner = 0;
+static std::vector<bool> g_foregroundCalls;
+static bool g_foregroundThrows = false;
+static std::vector<std::pair<bool, uint64_t>> g_seeThroughCalls;
+static std::vector<int32_t> g_pierceCalls;
+
+// The C ABI's movement, time and fly setters: each call logged with the values Mimic passed.
+static std::vector<std::string> g_abiCalls;
+static int32_t g_movementRc = 0, g_timeRc = 0;
+static Dunste::FlyStatus g_flyStatus{};
+static void AbiCall(const char* fmt, ...) {
+    char line[160];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    g_abiCalls.emplace_back(line);
+}
+// What an invoke reached: the route, the arguments, and what was true at the moment of the call -- the parameter bytes
+// it saw, the mailbox's out-flags, the invoke owner it ran under, and whether the debug camera's hold was locked.
+struct PeCall {
+    char route;   // 'Q' queued (size-aware), 'D' direct, 'P' the size-less entry
+    uintptr_t inst, func, parms;
+    uint32_t size;
+    std::vector<uint8_t> params;
+    uint32_t outFlags;
+    uint64_t owner;
+    bool ifFree;
+    uint64_t camHolder;
+    bool camLockHeld;
+};
+static std::vector<PeCall> g_peCalls;
+static std::vector<std::string> g_order;   // "prepare" / "pe", in the order they happened
+static int32_t g_peRc = 0;
+static bool g_peThrows = false;   // a call that throws, as a game's function can
+struct PrepareCall { uintptr_t func; uint8_t* params; size_t size; bool direct; };
+static std::vector<PrepareCall> g_prepareCalls;
+static bool g_prepareOk = true, g_prepareMarks = false;
+static std::string g_prepareWhy;
+static thread_local uint64_t t_invokeOwner = 0;
+static thread_local bool t_invokeIfFree = false;
+// try_lock from another thread: on the calling thread, a mutex it may already own cannot be asked.
+static bool CamLockFree() {
+    bool free = false;
+    std::thread probe([&] {
+        std::mutex& m = Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA);
+        if (m.try_lock()) {
+            free = true;
+            m.unlock();
+        }
+    });
+    probe.join();
+    return free;
+}
+static int32_t RecordPe(char route, uintptr_t inst, uintptr_t func, uintptr_t parms, uint32_t size) {
+    if (g_peThrows) throw std::runtime_error("ProcessEvent threw");
+    PeCall c{};
+    c.route = route; c.inst = inst; c.func = func; c.parms = parms; c.size = size;
+    uint8_t* slab = Mimic::Box().paramsData;
+    if (parms == reinterpret_cast<uintptr_t>(slab)) c.params.assign(slab, slab + sizeof Mimic::Box().paramsData);
+    c.outFlags = Mimic::Box().cmdOutFlags;
+    c.owner = t_invokeOwner;
+    c.ifFree = t_invokeIfFree;
+    c.camHolder = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA);
+    c.camLockHeld = !CamLockFree();
+    g_peCalls.push_back(std::move(c));
+    g_order.push_back("pe");
+    return g_peRc;
+}
+extern "C" {
+__declspec(dllexport) bool UE5_Init() {
+    ++g_initCalls;
+    if (g_onInit) g_onInit();
+    return g_cachedGObjects != 0;
+}
+__declspec(dllexport) int32_t UE5_SetGodMode(int32_t enable) { g_godModeCalls.push_back(enable); return g_godModeRc; }
+__declspec(dllexport) int32_t UE5_GetGodMode() { return 1; }
+__declspec(dllexport) int32_t UE5_GetProtectState(int32_t* outWant, int32_t* outLive, int32_t* outResolvable) {
+    *outWant = g_protectWant; *outLive = g_protectLive; *outResolvable = g_protectResolvable;
+    return 0;
+}
+__declspec(dllexport) int32_t UE5_SetDebugCamera(int32_t enable) { g_debugCameraCalls.push_back(enable); return g_debugCameraRc; }
+__declspec(dllexport) int32_t UE5_GetDebugCameraState() { return g_debugCameraState; }
+__declspec(dllexport) int32_t UE5_GetOffsetsVerdict(char* reasonBuf, int32_t bufLen) {
+    snprintf(reasonBuf, static_cast<size_t>(bufLen), "%s", "measured by the probe");
+    return 1;
+}
+__declspec(dllexport) int32_t UE5_SetMovementPercent(int32_t knob, double pct) {
+    AbiCall("SetMovementPercent(%d,%g)", knob, pct);
+    return g_movementRc;
+}
+__declspec(dllexport) int32_t UE5_SetTimeDilation(int32_t target, double value) {
+    AbiCall("SetTimeDilation(%d,%g)", target, value);
+    return g_timeRc;
+}
+__declspec(dllexport) int32_t UE5_ResetTimeDilation(int32_t target) {
+    AbiCall("ResetTimeDilation(%d)", target);
+    return g_timeRc;
+}
+__declspec(dllexport) int32_t UE5_SetGravityDirection(double x, double y, double z) {
+    AbiCall("SetGravityDirection(%g,%g,%g)", x, y, z);
+    return g_movementRc;
+}
+__declspec(dllexport) int32_t UE5_SetFly(int32_t on) { AbiCall("SetFly(%d)", on); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlySpeed(double speed) { AbiCall("SetFlySpeed(%g)", speed); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlyPreset(int32_t preset) { AbiCall("SetFlyPreset(%d)", preset); return 0; }
+__declspec(dllexport) int32_t UE5_SetFlyNoclip(int32_t on) { AbiCall("SetFlyNoclip(%d)", on); return 0; }
+__declspec(dllexport) bool UE5_GetObjectName(uintptr_t obj, char* buf, int32_t bufLen) {
+    // What the real export answers: the object's own name, read through Ubel.
+    if (buf && bufLen > 0) buf[0] = '\0';
+    const std::string name = obj ? Ubel::GetName(obj) : std::string();
+    if (name.empty() || !buf || bufLen <= 0) return false;
+    snprintf(buf, static_cast<size_t>(bufLen), "%s", name.c_str());
+    return true;
+}
+__declspec(dllexport) int32_t UE5_CallProcessEvent(uintptr_t inst, uintptr_t func, uintptr_t parms) {
+    return RecordPe('P', inst, func, parms, 0);
+}
+int32_t UE5_CallProcessEventEx(uintptr_t inst, uintptr_t func, uintptr_t parms, uint32_t size) {   // Mimic declares it plain
+    return RecordPe('Q', inst, func, parms, size);
+}
+__declspec(dllexport) int32_t UE5_CallProcessEventDirect(uintptr_t inst, uintptr_t func, uintptr_t parms) {
+    return RecordPe('D', inst, func, parms, 0);
+}
+}  // extern "C"
+
+namespace FrierenInvoke {
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why) {
+    g_prepareCalls.push_back({ ufunc, params, size, direct });
+    g_order.push_back("prepare");
+    if (g_prepareMarks && params && size) params[0] = 0xC7;   // what a conversion writes, for the call to see
+    if (!g_prepareOk) {
+        why = g_prepareWhy;
+        return false;
+    }
+    return true;
+}
+}
+namespace FrierenDebugCamera {
+bool PendingOn(uint64_t& owner) { owner = g_pendingOwner; return g_pendingOn; }
+}
+namespace Stark {
+void SetInvokeTimeoutMs(int32_t) {}
+InvokeOwnerScope::InvokeOwnerScope(uint64_t owner, bool ifFree) : m_prevOwner(t_invokeOwner), m_prevIfFree(t_invokeIfFree) {
+    t_invokeOwner = owner;
+    t_invokeIfFree = ifFree;
+}
+InvokeOwnerScope::~InvokeOwnerScope() {
+    t_invokeOwner = m_prevOwner;
+    t_invokeIfFree = m_prevIfFree;
+}
+}
+namespace Grausam {
+int SetForegroundLock(bool enable) {
+    g_foregroundCalls.push_back(enable);
+    if (g_foregroundThrows) throw std::runtime_error("a handler that throws");
+    return enable ? 1 : 0;
+}
+int IsForegroundLockEnabled() { return g_foregroundCalls.empty() ? 0 : (g_foregroundCalls.back() ? 1 : 0); }
+}
+namespace Schlacht {
+int32_t SetEnabled(bool enable, uint64_t owner) { g_seeThroughCalls.emplace_back(enable, owner); return enable ? 1 : 0; }
+void SetPierceCount(int32_t count) { g_pierceCalls.push_back(count); }
+}
+namespace Dunste {
+int32_t GetStatus(FlyStatus& out) { out = g_flyStatus; return FR_OK; }
+}
+// Wirbel: every call is logged with the arguments Mimic passed, and answers what the test chose. An unknown landing
+// leaves outNewPose as the caller set it, as Wirbel.h says the real one does.
+static int32_t g_tpRc = 0;
+static uint8_t g_tpTier = 0, g_tpSource = 0;
+static Wirbel::Pose g_tpPose{};
+static const char* g_tpMap = "";
+static bool g_tpParentRel = false, g_tpLandingKnown = true, g_tpUsedCenter = false, g_tpCursorState = false;
+static Wirbel::Marker g_tpMarker{};
+static Wirbel::Pov g_tpPov{};
+static std::vector<std::string> g_tpCalls;
+static void TpCall(const char* fmt, ...) {
+    char line[160];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    g_tpCalls.emplace_back(line);
+}
+static int32_t TpPoseRead(const char* what, Wirbel::Pose& out, char* map, int32_t cap, uint8_t* src, bool* parentRel) {
+    TpCall("%s", what);
+    out = g_tpPose;
+    snprintf(map, static_cast<size_t>(cap), "%s", g_tpMap);
+    if (src) *src = g_tpSource;
+    if (parentRel) *parentRel = g_tpParentRel;
+    return g_tpRc;
+}
+static int32_t TpTier(uint8_t* tier) {
+    if (tier) *tier = g_tpTier;
+    return g_tpRc;
+}
+namespace Wirbel {
+int32_t GetPose(Pose& out, char* map, int32_t cap, uint8_t* src, bool* parentRel) {
+    return TpPoseRead("GetPose", out, map, cap, src, parentRel);
+}
+int32_t BugItSave(Pose& out, char* map, int32_t cap, uint8_t* src, bool* parentRel) {
+    return TpPoseRead("BugItSave", out, map, cap, src, parentRel);
+}
+int32_t GetPov(Pov& out) { TpCall("GetPov"); out = g_tpPov; return g_tpRc; }
+int32_t SaveMarker(int32_t slot) { TpCall("SaveMarker(%d)", slot); return g_tpRc; }
+int32_t RecallMarker(int32_t slot, bool force, uint8_t* tier) {
+    TpCall("RecallMarker(%d,%d)", slot, force ? 1 : 0);
+    return TpTier(tier);
+}
+int32_t RecallExplicit(const Pose& p, bool hasRot, uint8_t* tier, bool keepUndo) {
+    TpCall("RecallExplicit(%g,%g,%g,%g,%g,%g,%d,%d)", p.X, p.Y, p.Z, p.Pitch, p.Yaw, p.Roll, hasRot ? 1 : 0,
+           keepUndo ? 1 : 0);
+    return TpTier(tier);
+}
+int32_t GetMarker(int32_t slot, Marker& out) { TpCall("GetMarker(%d)", slot); out = g_tpMarker; return g_tpRc; }
+int32_t ClearMarker(int32_t slot) { TpCall("ClearMarker(%d)", slot); return g_tpRc; }
+int32_t RecallLast(uint8_t* tier) { TpCall("RecallLast"); return TpTier(tier); }
+int32_t GetLast(Marker& out) { TpCall("GetLast"); out = g_tpMarker; return g_tpRc; }
+int32_t BugItGo(uint8_t* tier) { TpCall("BugItGo"); return TpTier(tier); }
+int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose, uint8_t* tier, bool* landingKnown) {
+    TpCall("TeleportRelative(%g,%d)", distance, horizontalOnly ? 1 : 0);
+    if (landingKnown) *landingKnown = g_tpLandingKnown;
+    if (g_tpLandingKnown) outNewPose = g_tpPose;
+    return TpTier(tier);
+}
+int32_t TeleportToCursor(double zOffset, int32_t channel, bool fallbackCenter, Pose* hit, uint8_t* tier, bool* usedCenter) {
+    TpCall("TeleportToCursor(%g,%d,%d)", zOffset, channel, fallbackCenter ? 1 : 0);
+    if (hit) *hit = g_tpPose;
+    if (usedCenter) *usedCenter = g_tpUsedCenter;
+    return TpTier(tier);
+}
+int32_t SetMouseCursor(bool show, bool* state) {
+    TpCall("SetMouseCursor(%d)", show ? 1 : 0);
+    if (state) *state = g_tpCursorState;
+    return g_tpRc;
+}
+int32_t GetMouseCursor(bool* state) { TpCall("GetMouseCursor"); if (state) *state = g_tpCursorState; return g_tpRc; }
+}
+
+// ── harness ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+static int g_pass = 0, g_fail = 0;
+static void check(const char* label, bool cond, const char* got = nullptr) {
+    if (cond) { ++g_pass; }
+    else { ++g_fail; printf("  FAIL  %s%s%s\n", label, got ? "   got: " : "", got ? got : ""); }
+}
+static void blk(const char* name) { printf("- %s\n", name); }
+
+// What CE does: clear the status, fill the inputs, write cmd last. Then one poller pass over that mailbox.
+static void Send(Mimic::MailboxData& box, int32_t cmd, uint64_t instanceAddr = 0, uint64_t ufuncAddr = 0) {
+    box.status = Mimic::STATUS_IDLE;
+    box.result = 0x5A5A;
+    box.instanceAddr = instanceAddr;
+    box.ufuncAddr = ufuncAddr;
+    box.cmd = cmd;
+    bool warned = false;
+    Mimic::ServeOne(&box, warned);
+}
+static std::string Msg(const Mimic::MailboxData& box) { return std::string(box.errorMsg); }
+static bool Answered(const Mimic::MailboxData& box) { return box.status == Mimic::STATUS_DONE && box.cmd == Mimic::CMD_IDLE; }
+
+// ── the reflection fixture ──────────────────────────────────────────────────────────────────────────────────────
+// One name pool, one object array and one set of DynOff values for every block that walks reflection: Serie, Aura and
+// the DynOff offsets are process globals, so a second fixture would overwrite the first. Built once and static, so a
+// polling thread can read it too. The shapes are dll_core_test's USERPICK: a UE4 name table with the string at +0x10,
+// 24-byte FUObjectItems, FProperty mode. Every wrong answer sits BELOW the right one in the array.
+namespace Fx {
+enum : int32_t {
+    nClass = 1, nFunction, nObject, nChannel, nActorChannel, nActor, nHero, nSidekick, nHeroComp, nSwarm, nGameEngine,
+    nMany, nCdoActorChannel, nCdoActor, nCdoHero, nHeroCompTpl, nHeroCompScs, nHero0, nHero1, nSidekick0, nHeroComp0,
+    nHeroComp1, nCdoGameEngine, nGameEngine0, nSwarm0, nGameViewport, nChannelOnly, nK2Loc, nHeroOnly, nFn00,
+    nLong = nFn00 + 15, nMany0, nTestActor, nDerivedActor, nOtherActor, nFooInterface, nTestActor0, nDerivedActor0,
+    nCdoTestActor, nSetHealth, nToggleDebugCamera, nPureMath, nPureMathBig, nStaticOnOther, nOtherFunc, nFooFunc,
+    nBigParms, nFitParms, nNames };
+enum {
+    bClass, bFunction, bObject, bChannel, bActorChannel, bActor, bHero, bSidekick, bHeroComp, bSwarm, bGameEngine, bMany,
+    bCdoActorChannel, bCdoActor, bCdoHero, bHeroCompTpl, bHeroCompScs, bHero0, bHero1, bSidekick0, bHeroComp0,
+    bHeroComp1, bCdoGameEngine, bGameEngine0, bMany0, bNoClass, bChannelOnly, bK2Loc, bHeroOnly, bFn00,
+    bLong = bFn00 + 15, bGameViewport, bTest, bDerived, bOther, bIFoo, bInstLive, bInstDerived, bInstCdo, bFnPlain,
+    bFnCamera, bFnPure, bFnPureBig, bFnStaticOther, bFnOther, bFnIFace, bFnBig, bFnFit, bParmA, bParmB, bParmBig,
+    bParmBig2, bParmFit, bIfaceEntry, kBlobs };
+constexpr int kFlood = 2000;   // archetypes met before the live HeroComps: more than either LIST_INSTANCES cap
+constexpr int kSwarm = 2100;   // live Swarm_C objects: past the exact-scope cap
+
+static const std::string kLong = "LongFunctionName_" + std::string(43, 'x');   // 60 characters
+static uint8_t s_entry[nNames][0x80];
+static uintptr_t s_chunk[nNames + 1];
+static uintptr_t s_chunks[2];
+alignas(16) static uint8_t s_b[kBlobs][0x200];
+alignas(16) static uint8_t s_flood[kFlood][0x40];
+alignas(16) static uint8_t s_swarm[kSwarm][0x40];
+static uint8_t s_items[Grimoire::OBJECTS_PER_CHUNK * 24];
+static uintptr_t s_table[1];
+alignas(16) static uint8_t s_header[0x40];
+static int32_t s_count = 0;
+static int32_t s_hero0Index = -1;
+
+static uintptr_t A(int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(s_b[b]); }
+static void P64(uint8_t* b, int off, uint64_t v) { memcpy(b + off, &v, sizeof v); }
+static void P32(uint8_t* b, int off, uint32_t v) { memcpy(b + off, &v, sizeof v); }
+static void Obj(uint8_t* b, uintptr_t cls, int32_t name, uintptr_t outer, uint32_t flags = 0) {
+    P64(b, Grimoire::OFF_UOBJECT_CLASS, cls);
+    P32(b, Grimoire::OFF_UOBJECT_NAME, static_cast<uint32_t>(name));
+    P64(b, DynOff::UOBJECT_OUTER, outer);
+    P32(b, Grimoire::OFF_UOBJECT_FLAGS, flags);
+}
+static void Klass(int b, int32_t name, int super, int children = -1, int childProps = -1) {
+    Obj(s_b[b], A(bClass), name, 0);
+    P64(s_b[b], DynOff::USTRUCT_SUPER, A(super));
+    P64(s_b[b], DynOff::USTRUCT_CHILDREN, A(children));
+    P64(s_b[b], DynOff::USTRUCT_CHILDPROPS, A(childProps));
+}
+// A UFunction with no parameters. FunctionFlags, NumParms and ParmsSize read as 0x03 bytes wherever the reader looks;
+// the checks take the expected values from Ubel::WalkFunctions, never from a literal.
+static void Fn(int b, int32_t name, int outerCls, int next) {
+    memset(s_b[b] + 0x60, 0x03, sizeof s_b[b] - 0x60);
+    Obj(s_b[b], A(bFunction), name, A(outerCls));
+    P64(s_b[b], DynOff::UFIELD_NEXT, A(next));
+}
+static void P16(uint8_t* b, int off, uint16_t v) { memcpy(b + off, &v, sizeof v); }
+// A UFunction the invoke path sizes and routes, its tail where the decided flags offset puts it: FunctionFlags +0xB0,
+// NumParms +0xB4, ParmsSize +0xB6, ReturnValueOffset +0xB8 (0xFFFF = none).
+static void InvokeFn(int b, int32_t name, int outerCls, uint32_t flags, uint8_t numParms, uint16_t parmsSize,
+                     uint16_t retOff, int firstParam = -1) {
+    Obj(s_b[b], A(bFunction), name, A(outerCls));
+    P64(s_b[b], DynOff::USTRUCT_CHILDPROPS, A(firstParam));
+    P32(s_b[b], 0xB0, flags);
+    s_b[b][0xB4] = numParms;
+    P16(s_b[b], 0xB6, parmsSize);
+    P16(s_b[b], 0xB8, retOff);
+}
+static void Param(int b, int32_t offset, int32_t size, uint64_t flags, int next = -1) {
+    P64(s_b[b], DynOff::FFIELD_NEXT, A(next));
+    P32(s_b[b], DynOff::FPROPERTY_ELEMSIZE, static_cast<uint32_t>(size));
+    P64(s_b[b], DynOff::FPROPERTY_FLAGS, flags);
+    P32(s_b[b], DynOff::FPROPERTY_OFFSET, static_cast<uint32_t>(offset));
+}
+static void Add(uintptr_t obj) {
+    memcpy(s_items + static_cast<size_t>(s_count) * 24, &obj, sizeof obj);
+    memcpy(s_items + static_cast<size_t>(s_count) * 24 + 12, &s_count, sizeof s_count);
+    ++s_count;
+}
+static void Publish() {
+    s_table[0] = reinterpret_cast<uintptr_t>(s_items);
+    const uintptr_t tbl = reinterpret_cast<uintptr_t>(s_table);
+    const int32_t one = 1;
+    memcpy(s_header + 0x10, &tbl, sizeof tbl);
+    memcpy(s_header + 0x20, &s_count, sizeof s_count);
+    memcpy(s_header + 0x24, &s_count, sizeof s_count);
+    memcpy(s_header + 0x28, &one, sizeof one);
+    memcpy(s_header + 0x2C, &one, sizeof one);
+    Aura::InitWithExtendedLayout(reinterpret_cast<uintptr_t>(s_header), 24);
+}
+
+static void Build() {
+    static bool built = false;
+    if (built) return;
+    built = true;
+
+    std::string nm[nNames];
+    nm[nClass] = "Class"; nm[nFunction] = "Function"; nm[nObject] = "Object"; nm[nChannel] = "Channel";
+    nm[nActorChannel] = "ActorChannel"; nm[nActor] = "Actor"; nm[nHero] = "BP_Hero_C"; nm[nSidekick] = "BP_Sidekick_C";
+    nm[nHeroComp] = "HeroComp"; nm[nSwarm] = "Swarm_C"; nm[nGameEngine] = "GameEngine"; nm[nMany] = "BP_Many_C";
+    nm[nCdoActorChannel] = "Default__ActorChannel"; nm[nCdoActor] = "Default__Actor"; nm[nCdoHero] = "Default__BP_Hero_C";
+    nm[nHeroCompTpl] = "HeroComp_Tpl"; nm[nHeroCompScs] = "HeroComp_SCS"; nm[nHero0] = "BP_Hero_C_0";
+    nm[nHero1] = "BP_Hero_C_1"; nm[nSidekick0] = "BP_Sidekick_C_0"; nm[nHeroComp0] = "HeroComp_0";
+    nm[nHeroComp1] = "HeroComp_1"; nm[nCdoGameEngine] = "Default__GameEngine"; nm[nGameEngine0] = "GameEngine_0";
+    nm[nSwarm0] = "Swarm_C_0"; nm[nGameViewport] = "GameViewport"; nm[nChannelOnly] = "ChannelOnly";
+    nm[nK2Loc] = "K2_GetActorLocation"; nm[nHeroOnly] = "HeroOnly"; nm[nLong] = kLong; nm[nMany0] = "Many_0";
+    nm[nTestActor] = "TestActor"; nm[nDerivedActor] = "DerivedActor"; nm[nOtherActor] = "OtherActor";
+    nm[nFooInterface] = "FooInterface"; nm[nTestActor0] = "TestActor_0"; nm[nDerivedActor0] = "DerivedActor_0";
+    nm[nCdoTestActor] = "Default__TestActor"; nm[nSetHealth] = "SetHealth"; nm[nToggleDebugCamera] = "ToggleDebugCamera";
+    nm[nPureMath] = "PureMath"; nm[nPureMathBig] = "PureMathBig"; nm[nStaticOnOther] = "StaticOnOther";
+    nm[nOtherFunc] = "OtherFunc"; nm[nFooFunc] = "FooFunc"; nm[nBigParms] = "BigParms"; nm[nFitParms] = "FitParms";
+    for (int i = 0; i < 15; ++i) {
+        char b[8];
+        snprintf(b, sizeof b, "Fn%02d", i);
+        nm[nFn00 + i] = b;
+    }
+    for (int i = 1; i < nNames; ++i) {
+        memcpy(s_entry[i] + 0x10, nm[i].c_str(), nm[i].size() + 1);
+        s_chunk[i] = reinterpret_cast<uintptr_t>(s_entry[i]);
+    }
+    s_chunks[0] = reinterpret_cast<uintptr_t>(s_chunk);
+    Serie::InitUE4(reinterpret_cast<uintptr_t>(s_chunks), 0x10);
+
+    DynOff::bCasePreservingName = false;
+    DynOff::bUseFProperty = true;
+    g_cachedUEVersion = 508;
+    // The function-flags reader decided once, as the offsets probe would: FunctionFlags at +0xB0, the tail after it.
+    DynOff::UFUNCTION_FLAGS = 0xB0;
+    DynOff::UFUNCTION_TAIL_EXTRA = 0;
+    DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+    DynOff::bUFunctionFlagsDetected.store(true);
+    // UClass::Interfaces measured at +0xC0, so no lookup probes for it: every class here reads none unless it says so.
+    DynOff::UCLASS_INTERFACES.store(0xC0);
+
+    Obj(s_b[bClass], A(bClass), nClass, 0);
+    Obj(s_b[bFunction], A(bClass), nFunction, 0);
+    Klass(bObject, nObject, -1);
+    Klass(bChannel, nChannel, bObject);
+    Klass(bActorChannel, nActorChannel, bChannel, bChannelOnly);
+    Klass(bActor, nActor, bObject, bK2Loc);
+    Klass(bHero, nHero, bActor, bHeroOnly);
+    Klass(bSidekick, nSidekick, bHero);
+    Klass(bHeroComp, nHeroComp, bObject);
+    Klass(bSwarm, nSwarm, bObject);
+    Klass(bGameEngine, nGameEngine, bObject, -1, bGameViewport);
+    Klass(bMany, nMany, bObject, bFn00);
+    Fn(bChannelOnly, nChannelOnly, bActorChannel, -1);
+    Fn(bK2Loc, nK2Loc, bActor, -1);
+    Fn(bHeroOnly, nHeroOnly, bHero, -1);
+    for (int i = 0; i < 15; ++i) Fn(bFn00 + i, nFn00 + i, bMany, bFn00 + i + 1);   // Fn14 -> the long name
+    Fn(bLong, nLong, bMany, -1);
+    P32(s_b[bGameViewport], DynOff::FFIELD_NAME, nGameViewport);
+    P32(s_b[bGameViewport], DynOff::FPROPERTY_OFFSET, 0x100);
+
+    const uint32_t cdo = Grimoire::RF_CLASS_DEFAULT_OBJECT, arch = Grimoire::RF_ARCHETYPE_OBJECT;
+    Obj(s_b[bCdoActorChannel], A(bActorChannel), nCdoActorChannel, 0, cdo);
+    Obj(s_b[bCdoActor], A(bActor), nCdoActor, 0, cdo);
+    Obj(s_b[bCdoHero], A(bHero), nCdoHero, 0, cdo);
+    Obj(s_b[bHeroCompTpl], A(bHeroComp), nHeroCompTpl, A(bCdoHero));        // a default subobject: a CDO is its outer
+    Obj(s_b[bHeroCompScs], A(bHeroComp), nHeroCompScs, A(bHero), arch);     // a Blueprint component template
+    Obj(s_b[bHero0], A(bHero), nHero0, 0);
+    Obj(s_b[bHero1], A(bHero), nHero1, 0);
+    Obj(s_b[bSidekick0], A(bSidekick), nSidekick0, 0);
+    Obj(s_b[bHeroComp0], A(bHeroComp), nHeroComp0, A(bHero0));
+    Obj(s_b[bHeroComp1], A(bHeroComp), nHeroComp1, A(bHero1));
+    Obj(s_b[bCdoGameEngine], A(bGameEngine), nCdoGameEngine, 0, cdo);
+    P64(s_b[bCdoGameEngine], 0x100, 0x7FF000001000ull);                      // a viewport, but a class default object
+    Obj(s_b[bGameEngine0], A(bGameEngine), nGameEngine0, 0);
+    P64(s_b[bGameEngine0], 0x100, 0x10000000ull);
+    Obj(s_b[bMany0], A(bMany), nMany0, 0);
+    for (int i = 0; i < kFlood; ++i) Obj(s_flood[i], A(bHeroComp), nHeroCompScs, A(bHero), arch);
+    for (int i = 0; i < kSwarm; ++i) Obj(s_swarm[i], A(bSwarm), nSwarm0, 0);
+
+    // The invoke path's world: TestActor declares SetHealth, the camera's own function and the slab-size cases;
+    // DerivedActor inherits them; OtherActor declares functions TestActor does not own; FooInterface is one TestActor
+    // implements. Flags: 0x401 = Final|Native, 0x2401 adds Static (the direct route), 0x2000 Static alone (queued).
+    Klass(bTest, nTestActor, -1, bFnCamera);
+    P64(s_b[bTest], 0xC0, A(bIfaceEntry));   // UClass::Interfaces: one entry, FooInterface
+    P32(s_b[bTest], 0xC8, 1);
+    P64(s_b[bIfaceEntry], 0, A(bIFoo));
+    Klass(bDerived, nDerivedActor, bTest);
+    Klass(bOther, nOtherActor, -1);
+    Klass(bIFoo, nFooInterface, -1);
+    Obj(s_b[bInstLive], A(bTest), nTestActor0, 0);
+    Obj(s_b[bInstDerived], A(bDerived), nDerivedActor0, 0);
+    Obj(s_b[bInstCdo], A(bTest), nCdoTestActor, 0, Grimoire::RF_CLASS_DEFAULT_OBJECT);
+    const uint64_t parm = 0x80, ret = 0x400;
+    InvokeFn(bFnPlain, nSetHealth, bTest, 0x401, 2, 12, 8, bParmA);
+    Param(bParmA, 0, 8, parm, bParmB);
+    Param(bParmB, 8, 4, parm | ret);
+    InvokeFn(bFnCamera, nToggleDebugCamera, bTest, 0x401, 0, 0, 0xFFFF);
+    P64(s_b[bFnCamera], DynOff::UFIELD_NEXT, A(bFnPlain));   // TestActor's functions: the camera's, then SetHealth
+    InvokeFn(bFnPure, nPureMath, bOther, 0x2401, 0, 0, 0xFFFF);
+    InvokeFn(bFnPureBig, nPureMathBig, bOther, 0x2401, 1, 8, 0xFFFF, bParmBig2);
+    Param(bParmBig2, 1017, 8, parm);
+    InvokeFn(bFnStaticOther, nStaticOnOther, bOther, 0x2000, 0, 0, 0xFFFF);
+    InvokeFn(bFnOther, nOtherFunc, bOther, 0x401, 0, 0, 0xFFFF);
+    InvokeFn(bFnIFace, nFooFunc, bIFoo, 0x401, 0, 0, 0xFFFF);
+    InvokeFn(bFnBig, nBigParms, bTest, 0x401, 1, 8, 0xFFFF, bParmBig);       // ParmsSize says 8; the chain ends at 1025
+    Param(bParmBig, 1017, 8, parm);
+    InvokeFn(bFnFit, nFitParms, bTest, 0x401, 1, 8, 0xFFFF, bParmFit);       // ends at the slab's last byte
+    Param(bParmFit, 1016, 8, parm);
+
+    for (int b : { bCdoActorChannel, bCdoActor, bCdoHero, bHeroCompTpl, bHeroCompScs }) Add(A(b));
+    for (int i = 0; i < kFlood; ++i) Add(reinterpret_cast<uintptr_t>(s_flood[i]));
+    s_hero0Index = s_count;
+    for (int b : { bHero0, bHero1, bSidekick0, bHeroComp0, bHeroComp1, bCdoGameEngine, bGameEngine0 }) Add(A(b));
+    for (int i = 0; i < kSwarm; ++i) Add(reinterpret_cast<uintptr_t>(s_swarm[i]));
+    for (int b : { bInstLive, bInstCdo, bInstDerived }) Add(A(b));
+    Publish();
+}
+}  // namespace Fx
+
+int main() {
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    printf("mimic_mailbox_test — the Cheat Engine mailbox, one command at a time against fake modules\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] The AddressSanitizer build only: the banner and negative control
+    // build_dll.py --asan --run needs (a deliberate heap overflow that must be reported).
+    printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
+    Mimic::MailboxData& mb = g_invokeMailbox;
+    char got[160];
+    auto num = [&](long long v) { snprintf(got, sizeof got, "%lld", v); return got; };
+
+    {   blk("UNKNOWN - a command nobody handles is answered, never left processing");
+        g_cachedGObjects = g_cachedGNames = 1;
+        Send(mb, 99);
+        check("UNKNOWN: answered -- status DONE, cmd back to IDLE", Answered(mb));
+        check("UNKNOWN: result -1, 'Unknown command'", mb.result == -1 && Msg(mb) == "Unknown command", Msg(mb).c_str());
+    }
+
+    {   blk("OFFSETS - the offsets verdict needs no init, and a success carries no earlier error text");
+        g_cachedGObjects = g_cachedGNames = 0;
+        g_initCalls = 0;
+        Send(mb, Mimic::CMD_OFFSETS_VERDICT);
+        check("OFFSETS ⭐: answered with nothing initialised -- its answer IS the init state", Answered(mb) && mb.result == 1,
+              num(mb.result));
+        check("OFFSETS ⭐: ...and it ran no auto-init to answer", g_initCalls == 0, num(g_initCalls));
+        check("OFFSETS: the reason reaches the mailbox",
+              std::string(reinterpret_cast<const char*>(mb.paramsData)) == "measured by the probe");
+        check("OFFSETS ⭐: the previous command's error text is gone", Msg(mb).empty(), Msg(mb).c_str());
+    }
+
+    {   blk("INITGATE - a command that walks reflection waits for an init, and refuses without one");
+        g_cachedGObjects = g_cachedGNames = 0;
+        g_initCalls = 0;
+        g_onInit = nullptr;
+        g_godModeCalls.clear();
+        Send(mb, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        check("INITGATE: an auto-init is attempted", g_initCalls >= 1, num(g_initCalls));
+        check("INITGATE ⭐: it fails, so the command is refused -10 and never reaches God Mode",
+              Answered(mb) && mb.result == -10 && g_godModeCalls.empty(), num(mb.result));
+        g_foregroundCalls.clear();
+        g_initCalls = 0;
+        Send(mb, Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1);
+        check("INITGATE ⭐: Keep Foreground is pure Win32 -- served with no init, and none attempted",
+              mb.result == 1 && g_foregroundCalls.size() == 1 && g_initCalls == 0, num(mb.result));
+
+        // An init that is still scanning: UE5_Init returns while another thread holds the fence. The gate asks again
+        // while the fence is up, and the third call finds the globals.
+        g_initCalls = 0;
+        g_initInProgress.store(true);
+        g_onInit = [] {
+            if (g_initCalls >= 3) { g_cachedGObjects = g_cachedGNames = 1; g_initInProgress.store(false); }
+        };
+        Send(mb, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        check("INITGATE ⭐: while an init is scanning, the gate calls UE5_Init again until it settles",
+              g_initCalls == 3 && mb.result == g_godModeRc && g_godModeCalls.size() == 1, num(g_initCalls));
+        g_onInit = nullptr;
+        g_initInProgress.store(false);
+
+        // [R7-S9] Globals published under a fence that never drops are not "initialised": the gate asks UE5_Init
+        // again while the fence is up -- bounded -- and then refuses, rather than run the command on a half-applied pool.
+        g_cachedGObjects = g_cachedGNames = 0;
+        g_initCalls = 0;
+        g_godModeCalls.clear();
+        g_initInProgress.store(true);
+        g_onInit = [] { g_cachedGObjects = g_cachedGNames = 1; };
+        Send(mb, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        check("INITGATE ⭐: globals published while the fence stays up are not an init -- four more asks, then -10",
+              g_initCalls == 5 && mb.result == -10 && g_godModeCalls.empty(), num(g_initCalls));
+        g_onInit = nullptr;
+        g_initInProgress.store(false);
+    }
+
+    g_cachedGObjects = g_cachedGNames = 1;
+
+    {   blk("PROTECT - God Mode through the mailbox, and CE recorded as its holder");
+        Voll::Holds().SetOwner(Grimoire::HOLD_GOD_MODE, 0);
+        g_godModeCalls.clear();
+        Send(mb, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        check("PROTECT: UE5_SetGodMode(1), its result published", g_godModeCalls == std::vector<int32_t>{ 1 }
+              && mb.result == g_godModeRc && Answered(mb));
+        check("PROTECT ⭐: the hold is CE's now", Voll::Holds().Owner(Grimoire::HOLD_GOD_MODE) == Voll::kHoldOwnerCe);
+        g_protectWant = 1; g_protectLive = -1; g_protectResolvable = 1;
+        Send(mb, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_GET_STATE);
+        check("PROTECT: the state is want / live / resolvable, an unreadable live as 0xFF",
+              mb.paramsData[0] == 1 && mb.paramsData[1] == 0xFF && mb.paramsData[2] == 1);
+        Send(mb, Mimic::CMD_PROTECT, 7);
+        check("PROTECT: an unknown op is refused", mb.result == -1 && Msg(mb) == "Protect: unknown op", Msg(mb).c_str());
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] A change CE makes through the mailbox makes CE the holder, so an AI session never
+    // replaces or ends it. Each handler that changes a hold, and the hold it names.
+    {   blk("HOLDS - every handler that changes a hold records CE as its holder");
+        struct Case { const char* what; int32_t cmd; uint64_t inst; uint64_t ufunc; std::string hold; };
+        const Case cases[] = {
+            { "Keep Foreground",   Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1, Grimoire::HOLD_FOREGROUND_LOCK },
+            { "walk speed",        Mimic::CMD_MOVEMENT, 0, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "walk_speed" },
+            { "gravity scale",     Mimic::CMD_MOVEMENT, 1, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "gravity" },
+            { "jump",              Mimic::CMD_MOVEMENT, 2, 0, std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + "jump" },
+            { "gravity direction", Mimic::CMD_MOVEMENT, 3, 0, Grimoire::HOLD_GRAVITY_DIRECTION },
+            { "world time",        Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, std::string(Grimoire::HOLD_TIME_PREFIX) + "global" },
+            { "pawn time reset",   Mimic::CMD_TIME, Mimic::TIME_OP_RESET, 1, std::string(Grimoire::HOLD_TIME_PREFIX) + "pawn" },
+            { "Fly on",            Mimic::CMD_FLY, Mimic::FLY_OP_SET_ENABLED, 1, Grimoire::HOLD_FLY },
+            { "Fly speed",         Mimic::CMD_FLY, Mimic::FLY_OP_SET_SPEED, 0, Grimoire::HOLD_FLY },
+            { "Fly preset",        Mimic::CMD_FLY, Mimic::FLY_OP_SET_PRESET, 1, Grimoire::HOLD_FLY },
+            { "Fly noclip",        Mimic::CMD_FLY, Mimic::FLY_OP_SET_NOCLIP, 1, Grimoire::HOLD_FLY },
+        };
+        for (const Case& c : cases) {
+            Voll::Holds().SetOwner(c.hold, 0);
+            Send(mb, c.cmd, c.inst, c.ufunc);
+            check((std::string("HOLDS ⭐: ") + c.what + " -- CE holds '" + c.hold + "'").c_str(),
+                  Answered(mb) && Voll::Holds().Owner(c.hold) == Voll::kHoldOwnerCe);
+        }
+        const std::string worldTime = std::string(Grimoire::HOLD_TIME_PREFIX) + "global";
+        Voll::Holds().SetOwner(worldTime, 0);
+        Send(mb, Mimic::CMD_TIME, Mimic::TIME_OP_SET, 5);
+        check("HOLDS control: a time target that is neither world nor pawn takes no hold",
+              Voll::Holds().Owner(worldTime) == 0);
+    }
+
+    // [W3-DEBUGCAM-QUEUED] [DBGCAM-OFF-OVER-QUEUED-ON] A queued toggle runs later and a blocked one never ran: the text
+    // CE shows verbatim says which, in each direction.
+    {   blk("DEBUGCAM - a queued or blocked toggle says what to do next, and a pending ON stays its sender's");
+        g_debugCameraRc = Stark::kInvokeTimedOutStillQueued;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM ⭐: a queued ON passes the code through and says not to re-send",
+              mb.result == Stark::kInvokeTimedOutStillQueued && Msg(mb).find("ON queued") != std::string::npos
+              && Msg(mb).find("do not re-send") != std::string::npos, Msg(mb).c_str());
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 0);
+        check("DEBUGCAM ⭐: a queued OFF says to send OFF again -- never that a second toggle undoes the first",
+              Msg(mb).find("send OFF again") != std::string::npos && Msg(mb).find("undo") == std::string::npos,
+              Msg(mb).c_str());
+        g_debugCameraRc = Stark::kToggleBlockedByQueued;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM ⭐: an ON refused over a queued OFF says it was not sent",
+              mb.result == Stark::kToggleBlockedByQueued
+              && Msg(mb).find("ON not sent -- an earlier OFF is still queued") != std::string::npos, Msg(mb).c_str());
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 0);
+        check("DEBUGCAM ⭐: an OFF refused over a queued ON says it was not sent",
+              Msg(mb).find("OFF not sent -- an earlier ON is still queued") != std::string::npos, Msg(mb).c_str());
+
+        // An AI's ON is still pending: CE's toggle does not take the hold from its sender.
+        g_debugCameraRc = 1;
+        g_debugCameraState = 0;
+        g_pendingOn = true;
+        g_pendingOwner = 0x1234;
+        Voll::Holds().SetOwner(Grimoire::HOLD_DEBUG_CAMERA, 0x1234);
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM ⭐: a pending ON is its sender's -- CE's toggle does not record CE as the holder",
+              Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA) == 0x1234);
+        g_pendingOn = false;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM control: with nothing pending, CE's toggle makes CE the holder",
+              Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA) == Voll::kHoldOwnerCe);
+        g_debugCameraState = 7;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 2);
+        check("DEBUGCAM: request 2 is a query -- the state, and no toggle", mb.result == 7, num(mb.result));
+        // [DEBUGCAM-FORCEON-CDO] A toggle never goes to the CheatManager's class default object, so the command raises
+        // no template warning; the dispatcher's clear is what leaves cmdOutFlags at 0.
+        g_debugCameraRc = Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
+        mb.cmdOutFlags = 0xFFFFFFFF;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM -17: no live CheatManager says so, and no template bit", mb.result == -17
+              && Msg(mb).find("no live CheatManager") != std::string::npos && mb.cmdOutFlags == 0, Msg(mb).c_str());
+        g_debugCameraRc = -1;
+        mb.cmdOutFlags = 0xFFFFFFFF;
+        Send(mb, Mimic::CMD_SET_DEBUG_CAMERA, 1);
+        check("DEBUGCAM -1: an unreadable state says so -- never that the CheatManager is missing", mb.result == -1
+              && Msg(mb).find("unreadable state") != std::string::npos
+              && Msg(mb).find("no live CheatManager") == std::string::npos && mb.cmdOutFlags == 0, Msg(mb).c_str());
+        g_debugCameraRc = 1;
+    }
+
+    {   blk("THREW - a handler that throws loses its command, not the mailbox");
+        g_foregroundThrows = true;
+        Send(mb, Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1);
+        check("THREW ⭐: answered with -11 and says the operation did not complete",
+              Answered(mb) && mb.result == Mimic::MB_ERR_HANDLER_THREW && Msg(mb).find("did NOT complete") != std::string::npos,
+              Msg(mb).c_str());
+        g_foregroundThrows = false;
+        Send(mb, Mimic::CMD_FOREGROUND, Mimic::FG_OP_GET);
+        check("THREW ⭐: the next command is served", Answered(mb) && mb.result >= 0 && Msg(mb).empty(), num(mb.result));
+    }
+
+    {   blk("ADOPTED - a mailbox taken over from an earlier copy is answered in that mailbox");
+        static Mimic::MailboxData other = {};
+        mb.result = 0x1111;
+        Send(other, Mimic::CMD_OFFSETS_VERDICT);
+        check("ADOPTED ⭐: the answer lands in the adopted mailbox", Answered(other) && other.result == 1, num(other.result));
+        check("ADOPTED ⭐: ...and this copy's own mailbox is untouched", mb.result == 0x1111, num(mb.result));
+    }
+
+    {   blk("BUSY - a mailbox another poller is mid-command on is left to it");
+        g_godModeCalls.clear();
+        mb.instanceAddr = Mimic::PROTECT_OP_SET_GODMODE;
+        mb.ufuncAddr = 1;
+        mb.cmd = Mimic::CMD_PROTECT;
+        mb.status = Mimic::STATUS_PROCESSING;
+        bool warned = false;
+        Mimic::ServeOne(&mb, warned);
+        check("BUSY ⭐: not run a second time -- the other poller answers it", g_godModeCalls.empty()
+              && mb.status == Mimic::STATUS_PROCESSING && mb.cmd == Mimic::CMD_PROTECT);
+        mb.cmd = Mimic::CMD_IDLE;
+        mb.status = Mimic::STATUS_IDLE;
+    }
+
+    {   blk("SEETHROUGH - the count and the toggle reach Schlacht, as CE's");
+        g_seeThroughCalls.clear();
+        g_pierceCalls.clear();
+        Send(mb, Mimic::CMD_SEETHROUGH, 3, 1);
+        check("SEETHROUGH: the pierce count is set first", g_pierceCalls == std::vector<int32_t>{ 3 });
+        check("SEETHROUGH ⭐: enabled, owned by CE", g_seeThroughCalls.size() == 1 && g_seeThroughCalls[0].first
+              && g_seeThroughCalls[0].second == Schlacht::kOwnerCe);
+        check("SEETHROUGH: its result published", mb.result == 1 && Answered(mb), num(mb.result));
+    }
+
+    // [W2-MARKER-PARENTREL] [W2-TPREL-TRANSPORTS] [TPREL-ZEROPOSE-2026-09-10] The mailbox only marshals: inputs read
+    // before the shared buffer is overwritten, Wirbel's code passed through, and the pose block's flags byte saying
+    // what kind of pose each op read. paramsData is filled with 0xCC before each send, so a byte the handler did not
+    // write is visible.
+    {   blk("TELEPORT - each op's inputs reach Wirbel, and its pose, tier and flags come back");
+        using Calls = std::vector<std::string>;
+        const Wirbel::Pose kPose{ 1, 2, 3, 4, 5, 6 };
+        const Wirbel::Pose kLanding{ 10, 20, 30, 0, 90, 0 };
+        auto reset = [&] {
+            g_tpRc = 0; g_tpTier = 0; g_tpSource = 0; g_tpPose = {}; g_tpMap = "";
+            g_tpParentRel = false; g_tpLandingKnown = true; g_tpUsedCenter = false; g_tpCursorState = false;
+            g_tpMarker = {}; g_tpPov = {};
+            g_tpCalls.clear();
+            memset(mb.paramsData, 0xCC, sizeof mb.paramsData);
+        };
+        auto dbl = [&](size_t at) { double d; memcpy(&d, mb.paramsData + at, sizeof d); return d; };
+        auto bits = [&](size_t at) { uint64_t u; memcpy(&u, mb.paramsData + at, sizeof u); return u; };
+        auto pose = [&](const Wirbel::Pose& p) {
+            return dbl(0) == p.X && dbl(8) == p.Y && dbl(16) == p.Z && dbl(24) == p.Pitch && dbl(32) == p.Yaw
+                && dbl(40) == p.Roll;
+        };
+        auto mapName = [&] { return std::string(reinterpret_cast<const char*>(mb.paramsData + 48)); };
+        auto marker = [&](bool parentRel) {
+            g_tpMarker.Valid = true;
+            g_tpMarker.P = kPose;
+            snprintf(g_tpMarker.MapName, sizeof g_tpMarker.MapName, "%s", "Map_B");
+            g_tpMarker.ParentRelative = parentRel;
+        };
+        auto input = [&](double d, uint8_t b8, uint8_t b9) {
+            memcpy(mb.paramsData, &d, sizeof d);
+            mb.paramsData[8] = b8;
+            mb.paramsData[9] = b9;
+        };
+        const uint64_t kNan = 0x7FF8000000000000ull;
+
+        reset(); g_tpPose = kPose; g_tpMap = "Map_A"; g_tpSource = 1; g_tpParentRel = true;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE);
+        check("TELEPORT GET_POSE ⭐: the pose, its map and source, and bit0 for a parent-relative read",
+              g_tpCalls == Calls{ "GetPose" } && Answered(mb) && mb.result == 0 && Msg(mb).empty() && pose(kPose)
+              && mapName() == "Map_A" && mb.paramsData[176] == 1 && mb.paramsData[177] == 0 && mb.paramsData[178] == 0x01);
+        reset(); g_tpPose = kPose; g_tpMap = "Map_A";
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE);
+        check("TELEPORT GET_POSE world: a world-space read publishes flags 0", mb.result == 0 && mb.paramsData[178] == 0);
+        reset(); g_tpPose = kPose; g_tpRc = Wirbel::TP_ERR_NO_PAWN;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE);
+        check("TELEPORT GET_POSE failed: the code and its text, and no pose published",
+              Answered(mb) && mb.result == -3 && Msg(mb) == "Teleport: op=0 slot=0 failed code=-3"
+              && mb.paramsData[0] == 0xCC, Msg(mb).c_str());
+
+        reset(); g_tpPose = Wirbel::Pose{ 7, 8, 9, 10, 11, 12 }; g_tpMap = "Map_A"; g_tpSource = 1; g_tpParentRel = true;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_BUGIT_SAVE);
+        check("TELEPORT BUGIT_SAVE ⭐: the BugIt pose, its source, and bit0 for a parent-relative read",
+              g_tpCalls == Calls{ "BugItSave" } && mb.result == 0 && pose(Wirbel::Pose{ 7, 8, 9, 10, 11, 12 })
+              && mapName() == "Map_A" && mb.paramsData[176] == 1 && mb.paramsData[178] == 0x01);
+
+        reset(); marker(true);
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_SAVE, 2);
+        check("TELEPORT SAVE ⭐: saved, then the same slot read back -- its pose, map and bit0",
+              g_tpCalls == (Calls{ "SaveMarker(2)", "GetMarker(2)" }) && mb.result == 0 && pose(kPose)
+              && mapName() == "Map_B" && mb.paramsData[176] == 0 && mb.paramsData[177] == 0 && mb.paramsData[178] == 0x01);
+        reset(); marker(true); g_tpRc = Wirbel::TP_ERR_NO_PAWN;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_SAVE, 2);
+        check("TELEPORT SAVE failed: nothing is read back and nothing published",
+              g_tpCalls == Calls{ "SaveMarker(2)" } && mb.result == -3 && mb.paramsData[0] == 0xCC);
+        reset(); marker(true);
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_MARKER, 1);
+        check("TELEPORT GET_MARKER: the slot's pose, map and bit0", g_tpCalls == Calls{ "GetMarker(1)" }
+              && mb.result == 0 && pose(kPose) && mapName() == "Map_B" && mb.paramsData[178] == 0x01);
+        reset(); marker(true);
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_LAST);
+        check("TELEPORT GET_LAST: the last slot's pose and bit0", g_tpCalls == Calls{ "GetLast" } && mb.result == 0
+              && pose(kPose) && mb.paramsData[178] == 0x01);
+        reset();
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_CLEAR_MARKER, 4);
+        check("TELEPORT CLEAR_MARKER: the slot reaches Wirbel", g_tpCalls == Calls{ "ClearMarker(4)" } && mb.result == 0);
+
+        reset(); g_tpTier = 2;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL, 2);
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL_FORCE, 1);
+        check("TELEPORT RECALL: the slot reaches Wirbel, and force only for RECALL_FORCE",
+              g_tpCalls == (Calls{ "RecallMarker(2,0)", "RecallMarker(1,1)" }) && mb.result == 0);
+        check("TELEPORT RECALL tier: the tier published over a cleared buffer",
+              mb.paramsData[177] == 2 && mb.paramsData[0] == 0 && mb.paramsData[178] == 0);
+        reset(); g_tpRc = Wirbel::TP_ERR_PARENT_RELATIVE;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL_FORCE, 1);
+        check("TELEPORT RECALL_FORCE ⭐: a parent-relative refusal reaches CE as -16, with its text",
+              Answered(mb) && mb.result == -16 && Msg(mb) == "Teleport: op=3 slot=1 failed code=-16", Msg(mb).c_str());
+        reset(); g_tpTier = 1;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL_LAST);
+        check("TELEPORT RECALL_LAST: the undo recall, its tier published", g_tpCalls == Calls{ "RecallLast" }
+              && mb.result == 0 && mb.paramsData[177] == 1 && mb.paramsData[0] == 0);
+        reset(); g_tpRc = Wirbel::TP_ERR_PARENT_RELATIVE;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_BUGIT_GO);
+        check("TELEPORT BUGIT_GO ⭐: a parent-relative refusal reaches CE as -16, over a cleared buffer",
+              g_tpCalls == Calls{ "BugItGo" } && Answered(mb) && mb.result == -16
+              && Msg(mb) == "Teleport: op=10 slot=0 failed code=-16" && mb.paramsData[177] == 0 && mb.paramsData[0] == 0,
+              Msg(mb).c_str());
+
+        reset(); input(50.0, 3, 0); g_tpPose = kLanding; g_tpTier = 2;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_CURSOR);
+        check("TELEPORT CURSOR ⭐: the Z offset, trace channel and fallback are read before the buffer is reused",
+              g_tpCalls == Calls{ "TeleportToCursor(50,3,0)" } && mb.result == 0, g_tpCalls.empty() ? "" : g_tpCalls[0].c_str());
+        check("TELEPORT CURSOR: the hit published, the rest cleared, the tier, and no center fallback",
+              dbl(0) == 10 && dbl(8) == 20 && dbl(16) == 30 && bits(24) == 0 && mb.paramsData[177] == 2
+              && mb.paramsData[178] == 0);
+        reset(); input(50.0, 3, 1); g_tpUsedCenter = true;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_CURSOR);
+        check("TELEPORT CURSOR center: the fallback asked for, and the screen center used is published",
+              g_tpCalls == Calls{ "TeleportToCursor(50,3,1)" } && mb.paramsData[178] == 1);
+        reset(); input(50.0, 3, 0); g_tpPose = kLanding; g_tpTier = 1; g_tpRc = Wirbel::TP_ERR_NO_HIT;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_CURSOR);
+        check("TELEPORT CURSOR failed: no hit published, the tier still is",
+              mb.result == -8 && bits(0) == 0 && bits(8) == 0 && bits(16) == 0 && mb.paramsData[177] == 1);
+
+        reset();
+        g_tpPov.Cam = Wirbel::Pose{ 1, 2, 3, 4, 5, 6 };
+        g_tpPov.Fov = 90.0;
+        g_tpPov.HasPawn = true;
+        g_tpPov.Pawn = Wirbel::Pose{ 7, 8, 9, 0, 0, 0 };
+        g_tpPov.Source = 2;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POV);
+        check("TELEPORT GET_POV ⭐: camera pose, FOV, pawn location, has-pawn and source at their offsets",
+              g_tpCalls == Calls{ "GetPov" } && mb.result == 0 && pose(kPose) && dbl(48) == 90.0 && dbl(56) == 7
+              && dbl(64) == 8 && dbl(72) == 9 && mb.paramsData[80] == 1 && mb.paramsData[81] == 2);
+        reset(); g_tpPov.Fov = 90.0; g_tpRc = Wirbel::TP_ERR_INVOKE;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POV);
+        check("TELEPORT GET_POV failed: a cleared buffer", mb.result == -5 && bits(48) == 0 && mb.paramsData[0] == 0);
+
+        reset(); input(250.0, 1, 0xCC); g_tpPose = kLanding; g_tpTier = 1;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RELATIVE);
+        check("TELEPORT RELATIVE: distance and mode reach Wirbel, the landing and tier published, flags 0",
+              g_tpCalls == Calls{ "TeleportRelative(250,0)" } && mb.result == 0 && pose(kLanding)
+              && mb.paramsData[48] == 0 && mb.paramsData[176] == 0 && mb.paramsData[177] == 1 && mb.paramsData[178] == 0,
+              g_tpCalls.empty() ? "" : g_tpCalls[0].c_str());
+        reset(); input(250.0, 0, 0xCC); g_tpPose = kLanding; g_tpTier = 2; g_tpLandingKnown = false;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RELATIVE);
+        check("TELEPORT RELATIVE unknown ⭐: an unknown landing publishes NaN and bit1, never a landing at the origin",
+              g_tpCalls == Calls{ "TeleportRelative(250,1)" } && mb.result == 0 && bits(0) == kNan && bits(8) == kNan
+              && bits(16) == kNan && bits(24) == kNan && bits(32) == kNan && bits(40) == kNan
+              && mb.paramsData[177] == 2 && mb.paramsData[178] == 0x02);
+        reset(); input(250.0, 0, 0xCC); g_tpRc = Wirbel::TP_ERR_PARENT_RELATIVE;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_RELATIVE);
+        check("TELEPORT RELATIVE refused: a parent-relative start's refusal reaches CE as -16",
+              mb.result == -16 && Msg(mb) == "Teleport: op=12 slot=0 failed code=-16", Msg(mb).c_str());
+
+        reset();
+        {
+            const double v[6] = { 100, 200, 300, 10, 20, 30 };
+            memcpy(mb.paramsData, v, sizeof v);
+            mb.paramsData[48] = 1;
+        }
+        g_tpTier = 2;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_EXPLICIT);
+        check("TELEPORT EXPLICIT ⭐: the six coordinates and the rotation flag reach Wirbel, the undo point kept",
+              g_tpCalls == Calls{ "RecallExplicit(100,200,300,10,20,30,1,0)" } && mb.result == 0,
+              g_tpCalls.empty() ? "" : g_tpCalls[0].c_str());
+        check("TELEPORT EXPLICIT tier: published over a cleared buffer", mb.paramsData[177] == 2 && mb.paramsData[0] == 0);
+        reset();
+        mb.paramsData[48] = 0;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_EXPLICIT);
+        check("TELEPORT EXPLICIT no rotation: a zero flag keeps the pawn's rotation",
+              g_tpCalls.size() == 1 && g_tpCalls[0].find(",0,0)") != std::string::npos,
+              g_tpCalls.empty() ? "" : g_tpCalls[0].c_str());
+
+        reset(); g_tpCursorState = true;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_SET_CURSOR, 1);
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_SET_CURSOR, 0);
+        check("TELEPORT SET_CURSOR: the slot is the wanted state", g_tpCalls == (Calls{ "SetMouseCursor(1)", "SetMouseCursor(0)" }));
+        check("TELEPORT SET_CURSOR state: the state that resulted is published", mb.paramsData[0] == 1 && mb.paramsData[1] == 0);
+        reset(); g_tpCursorState = true;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_CURSOR);
+        check("TELEPORT GET_CURSOR: the state published", g_tpCalls == Calls{ "GetMouseCursor" } && mb.paramsData[0] == 1);
+        reset(); g_tpCursorState = true; g_tpRc = Wirbel::TP_ERR_NO_CONTROLLER;
+        Send(mb, Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_CURSOR);
+        check("TELEPORT GET_CURSOR failed: no state published", mb.result == -2 && mb.paramsData[0] == 0);
+
+        reset();
+        Send(mb, Mimic::CMD_TELEPORT, 99);
+        check("TELEPORT unknown op: refused -1 with its own text, and Wirbel never asked",
+              Answered(mb) && mb.result == -1 && Msg(mb) == "Teleport: unknown op" && g_tpCalls.empty(), Msg(mb).c_str());
+    }
+
+    // [FINDINSTANCE-SUBSTRING-USERFACING] [INVOKEINHERIT-2026-08-20] [LISTINSTANCES-KEEPS-TEMPLATES]
+    // [FREEZESCOPE-2026-08-18] Lookups, listings and pointer queries over the reflection fixture: a user-facing class
+    // name picks by derivation, a function is found on the class or its bases, and a pool a freeze writes to never
+    // holds a template. paramsData is filled with 0xCC past the page index, so every byte a handler publishes is seen
+    // written.
+    Fx::Build();
+    {   blk("FINDLIST - lookups pick by derivation, listings page, and a pool never holds a template");
+        using namespace Fx;
+        auto named = [&](int32_t cmd, const char* cls, const char* fn, uint64_t inst, uint64_t ufunc = 0,
+                         uint32_t page = 0, uint32_t flags = 0) {
+            snprintf(mb.className, sizeof mb.className, "%s", cls);
+            snprintf(mb.funcName, sizeof mb.funcName, "%s", fn);
+            memset(mb.paramsData, 0xCC, sizeof mb.paramsData);
+            memcpy(mb.paramsData, &page, sizeof page);
+            mb.cmdFlags = flags;
+            Send(mb, cmd, inst, ufunc);
+        };
+        auto q = [&](size_t at) { uint64_t v; memcpy(&v, mb.paramsData + at, sizeof v); return v; };
+        auto u16 = [&](size_t at) { uint16_t v; memcpy(&v, mb.paramsData + at, sizeof v); return v; };
+        auto u32 = [&](size_t at) { uint32_t v; memcpy(&v, mb.paramsData + at, sizeof v); return v; };
+        auto str = [&](size_t at) { return std::string(reinterpret_cast<const char*>(mb.paramsData + at)); };
+        auto zeroFrom = [&](size_t from) {
+            for (size_t i = from; i < sizeof mb.paramsData; ++i) if (mb.paramsData[i]) return false;
+            return true;
+        };
+        auto nameOf = [](uint64_t o) { return o ? Ubel::GetName(static_cast<uintptr_t>(o)) : std::string("(0)"); };
+        std::string shown;
+
+        const auto w = Ubel::WalkFunctions(A(bHero));
+        check("FINDLIST setup: the long name resolves, the array holds every object, and the class's one function reads "
+              "non-zero metadata", Serie::GetString(nLong) == kLong && Aura::GetCount() == s_count && w.size() == 1
+              && w[0].name == "HeroOnly" && w[0].parmsSize != 0 && w[0].numParms != 0 && w[0].functionFlags != 0);
+
+        named(Mimic::CMD_FIND_INSTANCE, "Actor", "", 0xDEAD);
+        shown = nameOf(mb.instanceAddr);
+        check("FIND_INSTANCE ⭐: a base-class name finds a live object of a subclass, not a class default object whose "
+              "name holds it", Answered(mb) && mb.result == 0 && mb.instanceAddr == A(bHero0) && Msg(mb).empty(),
+              shown.c_str());
+        named(Mimic::CMD_FIND_INSTANCE, "NoSuchClass_Xyz", "", 0xDEAD);
+        char want[192];
+        snprintf(want, sizeof want, "No instance of 'NoSuchClass_Xyz' found (scanned=%d)", Aura::GetCount());
+        check("FIND_INSTANCE not found: -2, the address cleared, and how many objects were looked at",
+              mb.result == -2 && mb.instanceAddr == 0 && Msg(mb) == want, Msg(mb).c_str());
+        Tot::RequestShutdown();
+        named(Mimic::CMD_FIND_INSTANCE, "Actor", "", 0xDEAD);
+        Tot::ResetShutdown();
+        check("FIND_INSTANCE cancelled: a shutdown cuts the walk short, and the answer says so", Answered(mb)
+              && mb.result == -2 && mb.instanceAddr == 0
+              && Msg(mb) == "Instance lookup for 'Actor' was cut short: the DLL is shutting down", Msg(mb).c_str());
+        named(Mimic::CMD_FIND_INSTANCE, "", "", 0);
+        check("FIND_INSTANCE empty name: refused -1", mb.result == -1 && Msg(mb) == "Empty class name", Msg(mb).c_str());
+
+        mb.parmsSize = 0; mb.numParms = 0; mb.functionFlags = 0;
+        named(Mimic::CMD_FIND_FUNCTION, "", "HeroOnly", A(bHero0));
+        check("FIND_FUNCTION ⭐: the class's own function, with the metadata its walk reads", mb.result == 0
+              && mb.ufuncAddr == A(bHeroOnly) && mb.parmsSize == w[0].parmsSize && mb.numParms == w[0].numParms
+              && mb.functionFlags == w[0].functionFlags);
+        named(Mimic::CMD_FIND_FUNCTION, "", "K2_GetActorLocation", A(bHero0));
+        check("FIND_FUNCTION inherited ⭐: a function its base class declares is found through the super chain",
+              mb.result == 0 && mb.ufuncAddr == A(bK2Loc), Msg(mb).c_str());
+        named(Mimic::CMD_FIND_FUNCTION, "", "Nope", A(bHero0), 0xBEEF);
+        check("FIND_FUNCTION not found: -3, a stale address cleared, and the class levels searched", mb.result == -3
+              && mb.ufuncAddr == 0
+              && Msg(mb) == "Function 'Nope' not found (3 class level(s) searched, own class + supers)", Msg(mb).c_str());
+        named(Mimic::CMD_FIND_FUNCTION, "", "HeroOnly", 0);
+        const bool nullInst = mb.result == -1 && Msg(mb) == "Instance address is null";
+        named(Mimic::CMD_FIND_FUNCTION, "", "", A(bHero0));
+        const bool emptyFn = mb.result == -1 && Msg(mb) == "Empty function name";
+        named(Mimic::CMD_FIND_FUNCTION, "", "HeroOnly", A(bNoClass));
+        check("FIND_FUNCTION refusals: no instance, no name, an object with no class", nullInst && emptyFn
+              && mb.result == -2 && Msg(mb) == "Cannot read UClass from instance", Msg(mb).c_str());
+
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", A(bHero0));
+        check("LIST_FUNCTIONS by instance: the header, and the entry's address, metadata and name", mb.result == 0
+              && mb.parmsSize == 1 && mb.numParms == 1 && mb.functionFlags == 1 && q(0) == A(bHeroOnly)
+              && u16(8) == w[0].parmsSize && u16(10) == w[0].numParms && u32(12) == w[0].functionFlags
+              && str(16) == "HeroOnly" && zeroFrom(64));
+        named(Mimic::CMD_LIST_FUNCTIONS, "Actor", "", 0);
+        shown = nameOf(mb.instanceAddr) + " / " + str(16);
+        check("LIST_FUNCTIONS by class ⭐: the derivation pick is published, and its own class's functions listed",
+              mb.result == 0 && mb.instanceAddr == A(bHero0) && mb.parmsSize == 1 && str(16) == "HeroOnly", shown.c_str());
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", A(bMany0), 0, 0);
+        bool page0 = mb.result == 0 && mb.parmsSize == 16 && mb.numParms == 15 && mb.functionFlags == 2;
+        for (int i = 0; i < 15; ++i) {
+            char fn[8];
+            snprintf(fn, sizeof fn, "Fn%02d", i);
+            page0 = page0 && q(static_cast<size_t>(i) * 64) == A(bFn00 + i) && str(static_cast<size_t>(i) * 64 + 16) == fn;
+        }
+        check("LIST_FUNCTIONS page 0: 15 entries of 64 bytes, 16 in all over 2 pages", page0 && zeroFrom(15 * 64));
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", A(bMany0), 0, 1);
+        check("LIST_FUNCTIONS page 1: the rest, a long name cut to 47 characters, and nothing after it",
+              mb.numParms == 1 && mb.parmsSize == 16 && mb.functionFlags == 2 && q(0) == A(bLong)
+              && str(16) == kLong.substr(0, 47) && zeroFrom(64), str(16).c_str());
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", A(bMany0), 0, 2);
+        check("LIST_FUNCTIONS past the end: no entries and a cleared buffer", Answered(mb) && mb.result == 0
+              && mb.numParms == 0 && mb.parmsSize == 16 && mb.functionFlags == 2 && zeroFrom(0));
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", 0);
+        const bool noInput = mb.result == -1 && Msg(mb) == "No instance address or class name provided";
+        named(Mimic::CMD_LIST_FUNCTIONS, "NoSuchClass_Xyz", "", 0);
+        const bool noClass = mb.result == -2 && Msg(mb) == "No instance of 'NoSuchClass_Xyz' found";
+        named(Mimic::CMD_LIST_FUNCTIONS, "", "", A(bNoClass));
+        check("LIST_FUNCTIONS refusals: nothing named, a class with no instance, an object with no class", noInput
+              && noClass && mb.result == -2 && Msg(mb) == "Cannot read UClass from instance", Msg(mb).c_str());
+        Tot::RequestShutdown();
+        named(Mimic::CMD_LIST_FUNCTIONS, "Actor", "", 0);
+        Tot::ResetShutdown();
+        check("LIST_FUNCTIONS cancelled: a shutdown cuts the lookup short, and the answer says so", mb.result == -2
+              && Msg(mb) == "Instance lookup for 'Actor' was cut short: the DLL is shutting down", Msg(mb).c_str());
+
+        named(Mimic::CMD_LIST_INSTANCES, "BP_Hero_C", "", 0xDEAD, 0xBEEF);
+        check("LIST_INSTANCES exact: the class's live objects only -- no subclass, no class default object -- and the "
+              "class witness", mb.result == 0 && mb.parmsSize == 2 && mb.numParms == 2 && mb.functionFlags == 1
+              && mb.cmdOutFlags == 0 && q(0) == A(bHero0) && q(8) == A(bHero1) && zeroFrom(16)
+              && mb.instanceAddr == A(bHero) && mb.ufuncAddr == static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS));
+        named(Mimic::CMD_LIST_INSTANCES, "BP_Hero_C", "", 0xDEAD, 0xBEEF, 0, Mimic::LI_IN_DERIVED);
+        check("LIST_INSTANCES derived ⭐: subclasses too, each entry with its own class, no page witness, the flag "
+              "consumed", mb.result == 0 && mb.parmsSize == 3 && mb.numParms == 3 && q(0) == A(bHero0)
+              && q(8) == A(bHero) && q(16) == A(bHero1) && q(24) == A(bHero) && q(32) == A(bSidekick0)
+              && q(40) == A(bSidekick) && mb.instanceAddr == 0
+              && mb.ufuncAddr == static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS) && mb.cmdFlags == 0);
+        named(Mimic::CMD_LIST_INSTANCES, "HeroComp", "", 0, 0, 0);
+        check("LIST_INSTANCES exact ⭐: the templates met first take no slot under the cap", mb.result == 0
+              && mb.parmsSize == 2 && q(0) == A(bHeroComp0) && q(8) == A(bHeroComp1)
+              && (mb.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) == 0, nameOf(q(0)).c_str());
+        named(Mimic::CMD_LIST_INSTANCES, "HeroComp", "", 0, 0, 0, Mimic::LI_IN_DERIVED);
+        check("LIST_INSTANCES derived ⭐: ...nor under the derived cap", mb.result == 0 && mb.parmsSize == 2
+              && q(0) == A(bHeroComp0) && q(16) == A(bHeroComp1) && (mb.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) == 0,
+              nameOf(q(0)).c_str());
+
+        // A walk that let a template through: the hook turns an object the walk already took into an archetype, on the
+        // walk's closing log line -- after it collected its results, before the pool is published.
+        int fired = 0;
+        g_onInfo = [&](const char* fmt) {
+            if (std::string(fmt).rfind("FindInstancesByClass class=", 0) == 0) {
+                P32(s_b[bHero1], Grimoire::OFF_UOBJECT_FLAGS, Grimoire::RF_ARCHETYPE_OBJECT);
+                ++fired;
+            }
+        };
+        named(Mimic::CMD_LIST_INSTANCES, "BP_Hero_C", "", 0, 0);
+        g_onInfo = nullptr;
+        P32(s_b[bHero1], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        check("LIST_INSTANCES post-filter ⭐: an object that is a template when the pool is published is left out",
+              fired == 1 && mb.parmsSize == 1 && q(0) == A(bHero0), nameOf(q(8)).c_str());
+        fired = 0;
+        g_onInfo = [&](const char* fmt) {
+            if (std::string(fmt).rfind("FindInstancesDerivedFrom base=", 0) == 0) {
+                P32(s_b[bSidekick0], Grimoire::OFF_UOBJECT_FLAGS, Grimoire::RF_ARCHETYPE_OBJECT);
+                ++fired;
+            }
+        };
+        named(Mimic::CMD_LIST_INSTANCES, "BP_Hero_C", "", 0, 0, 0, Mimic::LI_IN_DERIVED);
+        g_onInfo = nullptr;
+        P32(s_b[bSidekick0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        check("LIST_INSTANCES post-filter derived: ...in the derived scope too", fired == 1 && mb.parmsSize == 2
+              && q(0) == A(bHero0) && q(16) == A(bHero1));
+
+        named(Mimic::CMD_LIST_INSTANCES, "ActorChannel", "", 0xDEAD, 0xBEEF);
+        check("LIST_INSTANCES nothing live: no witness -- a previous command's pointers are cleared", mb.result == 0
+              && mb.parmsSize == 0 && mb.numParms == 0 && mb.functionFlags == 1 && mb.instanceAddr == 0
+              && mb.ufuncAddr == 0);
+        const uint32_t per = Mimic::ListInstancesPerPage(false);
+        const uint32_t cap = static_cast<uint32_t>(Mimic::LIST_INSTANCES_MAX_EXACT);
+        const uint32_t pages = (cap + per - 1) / per;
+        named(Mimic::CMD_LIST_INSTANCES, "Swarm_C", "", 0, 0, 0);
+        check("LIST_INSTANCES capped ⭐: the pool stops at the cap and says so", mb.parmsSize == cap
+              && mb.numParms == per && mb.functionFlags == pages && (mb.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) != 0);
+        named(Mimic::CMD_LIST_INSTANCES, "Swarm_C", "", 0, 0, pages - 1);
+        check("LIST_INSTANCES last page: what is left of the cap, its witness, and the cap still reported",
+              mb.numParms == cap - (pages - 1) * per && q(0) == reinterpret_cast<uintptr_t>(s_swarm[(pages - 1) * per])
+              && mb.instanceAddr == A(bSwarm) && (mb.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) != 0);
+        named(Mimic::CMD_LIST_INSTANCES, "", "", 0, 0, 0, Mimic::LI_IN_DERIVED);
+        check("LIST_INSTANCES empty name: refused, and the scope flag consumed anyway", mb.result == -1
+              && Msg(mb) == "Empty class name" && mb.cmdFlags == 0, Msg(mb).c_str());
+
+        static uintptr_t s_worldSlot = 0x0000123456789AB0ull, s_engineSlot = 0x00004567890ABCD0ull;
+        const uint64_t worldSlot = reinterpret_cast<uintptr_t>(&s_worldSlot);
+        const uint64_t engineSlot = reinterpret_cast<uintptr_t>(&s_engineSlot);
+        g_cachedGWorld = static_cast<uintptr_t>(worldSlot);
+        g_cachedGEngine = static_cast<uintptr_t>(engineSlot);
+        memset(mb.paramsData, 0xCC, sizeof mb.paramsData);
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GWORLD);
+        check("QUERY_PTR GWorld ⭐: the slot and the world it holds, the rest cleared", Answered(mb) && mb.result == 0
+              && q(0) == worldSlot && q(8) == s_worldSlot && zeroFrom(16));
+        g_cachedGWorld = 0;
+        memset(mb.paramsData, 0xCC, sizeof mb.paramsData);
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GWORLD);
+        check("QUERY_PTR GWorld unresolved: -1 with its text, nothing published", mb.result == -1
+              && Msg(mb) == "GWorld not resolved (no static slot / recovery failed)" && q(0) == 0 && q(8) == 0,
+              Msg(mb).c_str());
+        g_cachedGWorld = static_cast<uintptr_t>(worldSlot);
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GENGINE_SLOT);
+        const bool slotOk = mb.result == 0 && q(0) == engineSlot && q(8) == s_engineSlot;
+        g_cachedGEngine = 0;
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GENGINE_SLOT);
+        check("QUERY_PTR GEngine slot: the slot and the engine it holds; unresolved, -1 with its text", slotOk
+              && mb.result == -1 && Msg(mb) == "GEngine slot not resolved (no AOB validated)" && q(0) == 0,
+              Msg(mb).c_str());
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GAME_ENGINE);
+        shown = nameOf(q(0));
+        check("QUERY_PTR GameEngine ⭐: the live engine, not its class default object, with its class and its name",
+              mb.result == 0 && q(0) == A(bGameEngine0) && q(8) == A(bGameEngine) && str(16) == "GameEngine",
+              shown.c_str());
+        P64(s_b[bGameEngine0], 0x100, 0);
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GAME_ENGINE);
+        P64(s_b[bGameEngine0], 0x100, 0x10000000ull);
+        check("QUERY_PTR GameEngine, none live: -1 with its text", mb.result == -1
+              && Msg(mb) == "GameEngine not found (no live UEngine in GObjects)" && q(0) == 0, Msg(mb).c_str());
+        Send(mb, Mimic::CMD_QUERY_PTR, 7);
+        check("QUERY_PTR unknown op: -1", Answered(mb) && mb.result == -1 && Msg(mb) == "QueryPtr: unknown op");
+        g_cachedGObjects = g_cachedGNames = 0;
+        Send(mb, Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GWORLD);
+        g_cachedGObjects = g_cachedGNames = 1;
+        check("QUERY_PTR needs an init: it reads what a scan fills, so it is refused -10 without one",
+              mb.result == -10 && Msg(mb) == "DLL not initialized", Msg(mb).c_str());
+        g_cachedGWorld = 0;
+        g_cachedGEngine = 0;
+    }
+
+    // [UE-OVERRIDE-411] [VND584-04] [VND584-06] [INVOKE-NONSTATIC-ON-CDO] [B636-NOACCIDENT-2026-08-23] CMD_INVOKE over
+    // the fixture's functions: refused before the conversion and the call when it cannot be sized or is not the
+    // instance's own; routed by the function's own flags; the converted parameters are what the call sees; a template
+    // is warned about, never refused.
+    {   blk("INVOKE - sized, owned and converted before the call; routed by the function's own flags");
+        using namespace Fx;
+        const uintptr_t live = A(bInstLive), derivedInst = A(bInstDerived), cdo = A(bInstCdo);
+        const uintptr_t slab = reinterpret_cast<uintptr_t>(mb.paramsData);
+        auto reset = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_prepareOk = true; g_prepareMarks = false; g_prepareWhy.clear(); g_peRc = 0;
+            mb.cmdOutFlags = 0; mb.functionFlags = 0;
+            memset(mb.paramsData, 0, sizeof mb.paramsData);
+            g_pendingOn = false;
+        };
+        auto one = [&](char route, uintptr_t func) {
+            return g_peCalls.size() == 1 && g_peCalls[0].route == route && g_peCalls[0].func == func;
+        };
+        auto has = [&](const char* text) { return Msg(mb).find(text) != std::string::npos; };
+
+        FunctionInfo fi{};
+        const bool plainOk = Ubel::ResolveFunctionInfo(A(bFnPlain), fi);
+        const bool plainShape = plainOk && fi.name == "SetHealth" && fi.functionFlags == 0x401 && fi.parmsSize == 12
+                                && fi.returnValueOffset == 8;
+        check("INVOKE setup: a function resolves with its own flags, size and return slot, an instance does not; the "
+              "chains size 1025 and 1024; a class default object is a template; TestActor implements one interface",
+              plainShape && !Ubel::ResolveFunctionInfo(live, fi) && Ubel::ParamBufferSize(A(bFnBig), 8) == 1025
+              && Ubel::ParamBufferSize(A(bFnFit), 8) == 1024
+              && Aura::TemplateOf(cdo).kind == Aura::TemplateKind::ClassDefault
+              && Aura::TemplateOf(live).kind == Aura::TemplateKind::None && Ubel::ClassInterfaces(A(bTest)).size() == 1);
+
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnBig));
+        check("INVOKE too large ⭐: a chain that ends past the slab is refused -13, before the conversion and any call",
+              Answered(mb) && mb.result == Mimic::MB_ERR_INVOKE_TOO_LARGE && has("'BigParms' needs 1025 bytes")
+              && has("the mailbox holds 1024") && g_peCalls.empty() && g_prepareCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnFit));
+        check("INVOKE fits: a chain that ends at the slab's last byte is invoked, queued with the slab's size",
+              Answered(mb) && mb.result == 0 && one('Q', A(bFnFit)) && g_peCalls[0].parms == slab
+              && g_peCalls[0].size == 1024);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, live);
+        check("INVOKE unresolved ⭐: an address that is not a UFunction is refused -12, nothing converted or called",
+              mb.result == Mimic::MB_ERR_INVOKE_UNRESOLVED && has("is not a live UFunction") && g_peCalls.empty()
+              && g_prepareCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPureBig));
+        check("INVOKE direct too large ⭐: the static-native route is refused by the same slab", mb.result == -13
+              && has("'PureMathBig' needs 1025 bytes") && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, 0, A(bFnPlain));
+        check("INVOKE null: no instance is refused -1", mb.result == -1
+              && Msg(mb) == "Instance or UFunction address is null" && g_peCalls.empty(), Msg(mb).c_str());
+
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnOther));
+        check("INVOKE not owned ⭐: another class's function is refused -15, before the conversion and any call",
+              mb.result == Mimic::MB_ERR_INVOKE_NOT_OWNED && has("'OtherFunc' (0x")
+              && has("is not a function of this instance's class") && g_peCalls.empty() && g_prepareCalls.empty(),
+              Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, derivedInst, A(bFnPlain));
+        check("INVOKE super: a function the instance's base class declares is invoked", mb.result == 0
+              && one('Q', A(bFnPlain)) && g_peCalls[0].inst == derivedInst, Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnStaticOther));
+        check("INVOKE static ⭐: another class's static function is invoked -- it takes no instance",
+              mb.result == 0 && one('Q', A(bFnStaticOther)), Msg(mb).c_str());
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnIFace));
+        check("INVOKE interface ⭐: a function of an interface the class implements is invoked", mb.result == 0
+              && one('Q', A(bFnIFace)), Msg(mb).c_str());
+
+        reset();
+        g_prepareOk = false;
+        g_prepareWhy = "the weak pointer's object is gone";
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE object parameter ⭐: a refused conversion answers -14 with its reason, and nothing is called",
+              mb.result == Mimic::MB_ERR_INVOKE_OBJECT_PARAM && Msg(mb) == "Not invoked: the weak pointer's object is gone"
+              && g_prepareCalls.size() == 1 && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        g_prepareMarks = true;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE queued converted ⭐: the conversion is given the slab, and the queued call sees what it wrote",
+              mb.result == 0 && g_prepareCalls.size() == 1 && g_prepareCalls[0].func == A(bFnPlain)
+              && g_prepareCalls[0].params == mb.paramsData && g_prepareCalls[0].size == 1024 && !g_prepareCalls[0].direct
+              && one('Q', A(bFnPlain)) && g_peCalls[0].params.size() == 1024 && g_peCalls[0].params[0] == 0xC7
+              && g_order == (std::vector<std::string>{ "prepare", "pe" }));
+        reset();
+        g_prepareMarks = true;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPure));
+        check("INVOKE direct converted ⭐: the conversion is told the call is direct, and the direct call sees what it "
+              "wrote", mb.result == 0 && g_prepareCalls.size() == 1 && g_prepareCalls[0].direct && one('D', A(bFnPure))
+              && g_peCalls[0].params.size() == 1024 && g_peCalls[0].params[0] == 0xC7
+              && g_order == (std::vector<std::string>{ "prepare", "pe" }));
+        reset();
+        mb.functionFlags = 0x2400;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        const bool staleStatic = mb.result == 0 && one('Q', A(bFnPlain)) && g_peCalls[0].size == 1024;
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPure));
+        check("INVOKE route ⭐: the function's own flags choose the route, never the mailbox's stale ones", staleStatic
+              && mb.result == 0 && one('D', A(bFnPure)));
+        reset();
+        {
+            const double in = 4.5;
+            memcpy(mb.paramsData, &in, sizeof in);
+            memset(mb.paramsData + 8, 0xAB, 4);
+        }
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        {
+            double seen = 0;
+            uint32_t slot = 1;
+            if (g_peCalls.size() == 1 && g_peCalls[0].params.size() == 1024) {
+                memcpy(&seen, g_peCalls[0].params.data(), sizeof seen);
+                memcpy(&slot, g_peCalls[0].params.data() + 8, sizeof slot);
+            }
+            check("INVOKE return slot: cleared before the call, the inputs beside it kept", mb.result == 0
+                  && seen == 4.5 && slot == 0);
+        }
+        reset();
+        g_peRc = -5;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE call failed: answered with ProcessEvent's code and its text", Answered(mb) && mb.result == -5
+              && Msg(mb) == "ProcessEvent returned -5", Msg(mb).c_str());
+
+        reset();
+        mb.functionFlags = 0x2000;
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnPlain));
+        check("INVOKE template ⭐: a function that is not static, on a class default object, is warned before the call "
+              "and still invoked", mb.result == 0
+              && (mb.cmdOutFlags & Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE) != 0 && one('Q', A(bFnPlain))
+              && (g_peCalls[0].outFlags & Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE) != 0);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnStaticOther));
+        check("INVOKE template static: a static function on a class default object is not warned", mb.result == 0
+              && mb.cmdOutFlags == 0 && g_peCalls.size() == 1);
+        reset();
+        mb.cmdOutFlags = Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKE warning cleared ⭐: the previous command's warning is gone before the next one", mb.result == 0
+              && mb.cmdOutFlags == 0);
+        reset();
+        g_prepareOk = false;
+        g_prepareWhy = "x";
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnPlain));
+        const bool refusedConv = mb.result == -14 && mb.cmdOutFlags == 0;
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, cdo, A(bFnOther));
+        check("INVOKE template refused ⭐: a call refused on a template carries no warning", refusedConv
+              && mb.result == -15 && mb.cmdOutFlags == 0 && g_peCalls.empty());
+    }
+
+    // [MCP-WRITE-GRANTS-2026-11-14] A record that runs the debug camera's own function changes the camera as
+    // CMD_SET_DEBUG_CAMERA does: under the hold's lock, CE's afterwards, a pending ON left to its sender -- and it never
+    // waits for a lock another writer holds.
+    {   blk("INVOKEHELD - the debug camera's own function, invoked, changes the camera as CE's");
+        using namespace Fx;
+        const uintptr_t live = A(bInstLive);
+        const std::string cam = Grimoire::HOLD_DEBUG_CAMERA;
+        auto reset = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_prepareOk = true; g_prepareMarks = false; g_peRc = 0;
+            mb.cmdOutFlags = 0; mb.functionFlags = 0;
+            memset(mb.paramsData, 0, sizeof mb.paramsData);
+            g_pendingOn = false;
+            Voll::Holds().SetOwner(cam, 0x1234);
+        };
+
+        reset();
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD ⭐: the camera's own function runs under the camera's lock, and CE holds the camera after",
+              mb.result == 0 && g_peCalls.size() == 1 && g_peCalls[0].func == A(bFnCamera) && g_peCalls[0].camLockHeld
+              && g_peCalls[0].camHolder == 0x1234 && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe);
+        reset();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnPlain));
+        check("INVOKEHELD control: another function takes no lock and leaves the camera's holder alone",
+              mb.result == 0 && g_peCalls.size() == 1 && !g_peCalls[0].camLockHeld && Voll::Holds().Owner(cam) == 0x1234);
+        reset();
+        g_debugCameraState = 0;
+        g_pendingOn = true;
+        g_pendingOwner = 0x1234;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD pending ⭐: an AI's pending ON stays its sender's when CE runs the camera's function",
+              mb.result == 0 && g_peCalls.size() == 1 && Voll::Holds().Owner(cam) == 0x1234);
+        reset();
+        g_debugCameraState = 0;
+        g_pendingOn = true;
+        g_pendingOwner = Voll::kHoldOwnerCe;
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        check("INVOKEHELD pending CE: a pending ON that CE sent is CE's -- it takes the hold", mb.result == 0
+              && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe);
+        reset();
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE, A(bInstCdo), A(bFnCamera));
+        check("INVOKEHELD template: on a class default object the camera's function is warned like any other, and "
+              "nothing else is raised", mb.result == 0 && mb.cmdOutFlags == Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE);
+
+        // Another writer holds the camera's lock across its own game-thread wait: the mailbox's poller must not wait.
+        reset();
+        HANDLE locked = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::thread holder([&] {
+            std::lock_guard<std::mutex> hold(Voll::Holds().LockFor(cam));
+            SetEvent(locked);
+            WaitForSingleObject(release, 3000);
+        });
+        WaitForSingleObject(locked, 2000);
+        const ULONGLONG t0 = GetTickCount64();
+        Send(mb, Mimic::CMD_INVOKE, live, A(bFnCamera));
+        const ULONGLONG ms = GetTickCount64() - t0;
+        SetEvent(release);
+        holder.join();
+        CloseHandle(locked);
+        CloseHandle(release);
+        check("INVOKEHELD busy ⭐: a camera lock another writer holds is not waited for -- the invoke runs, unrecorded",
+              ms < 1500 && mb.result == 0 && g_peCalls.size() == 1 && Voll::Holds().Owner(cam) == 0x1234, num(static_cast<long long>(ms)));
+
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "TestActor");
+        snprintf(mb.funcName, sizeof mb.funcName, "%s", "ToggleDebugCamera");
+        g_debugCameraState = 1;
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKEHELD by name ⭐: a name lookup that lands on the camera's function changes the camera as CE's",
+              Answered(mb) && mb.result == 0 && mb.instanceAddr == live && mb.ufuncAddr == A(bFnCamera)
+              && g_peCalls.size() == 1 && g_peCalls[0].inst == live && g_peCalls[0].camLockHeld
+              && Voll::Holds().Owner(cam) == Voll::kHoldOwnerCe, Msg(mb).c_str());
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "NoSuchClass_Xyz");
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKE_BY_NAME no instance: the lookup's refusal is the answer, and nothing is called", Answered(mb)
+              && mb.result == -2 && g_peCalls.empty(), Msg(mb).c_str());
+        reset();
+        snprintf(mb.className, sizeof mb.className, "%s", "TestActor");
+        snprintf(mb.funcName, sizeof mb.funcName, "%s", "Nope");
+        Send(mb, Mimic::CMD_INVOKE_BY_NAME);
+        check("INVOKE_BY_NAME no function: the lookup's refusal is the answer, and nothing is called", Answered(mb)
+              && mb.result == -3 && g_peCalls.empty(), Msg(mb).c_str());
+        g_debugCameraState = 0;
+    }
+
+    // [D2-3-INVOKE] Every invoke the poller queues is CE's, for the queue's owner rule. The first block that starts the
+    // real polling thread: the command is written before the thread exists, and the calls are read after it stopped.
+    {   blk("INVOKEOWNER - the poller's invokes are CE's, never if_free");
+        using namespace Fx;
+        g_peCalls.clear();
+        Send(mb, Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain));
+        check("INVOKEOWNER control: an invoke served on this thread runs under no owner", g_peCalls.size() == 1
+              && g_peCalls[0].owner == 0 && !g_peCalls[0].ifFree);
+        g_peCalls.clear();
+        mb.status = Mimic::STATUS_IDLE;
+        mb.result = 0x5A5A;
+        mb.instanceAddr = A(bInstLive);
+        mb.ufuncAddr = A(bFnPlain);
+        mb.cmd = Mimic::CMD_INVOKE;
+        Mimic::StartThread();
+        const ULONGLONG until = GetTickCount64() + 3000;
+        while (!Answered(mb) && GetTickCount64() < until) Sleep(1);
+        Mimic::StopThread(false);
+        check("INVOKEOWNER ⭐: the polling thread's invoke runs as CE's, never if_free", Answered(mb) && mb.result == 0
+              && g_peCalls.size() == 1 && g_peCalls[0].owner == Voll::kHoldOwnerCe && !g_peCalls[0].ifFree,
+              num(mb.result));
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] DONE beside a live command is another poller between its two stores, or a sender
+    // that did not clear status: one more look after a millisecond tells them apart. The seam plays the other poller.
+    {   blk("WINDOW - DONE beside a live command: a second look before running it");
+        static Mimic::MailboxData win = {};
+        auto stage = [&] {
+            win.status = Mimic::STATUS_DONE;
+            win.instanceAddr = Mimic::PROTECT_OP_SET_GODMODE;
+            win.ufuncAddr = 1;
+            win.cmd = Mimic::CMD_PROTECT;
+            g_godModeCalls.clear();
+            g_sleeps = 0;
+        };
+        bool warned = false;
+        stage();
+        g_onSleep = [&] { win.cmd = Mimic::CMD_IDLE; };   // the other poller finishes its command in that moment
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW ⭐: the other poller finished it in that moment -- not run a second time", g_sleeps == 1
+              && g_godModeCalls.empty() && win.cmd == Mimic::CMD_IDLE && win.status == Mimic::STATUS_DONE,
+              num(static_cast<long long>(g_godModeCalls.size())));
+        stage();
+        g_onSleep = [] {};
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW: a sender that left DONE and wrote a command is still served after the look", g_sleeps == 1
+              && g_godModeCalls == std::vector<int32_t>{ 1 } && Answered(win));
+        stage();
+        win.status = Mimic::STATUS_IDLE;
+        Mimic::ServeOne(&win, warned);
+        check("WINDOW control: a command after a cleared status runs at once, with no look", g_sleeps == 0
+              && g_godModeCalls == std::vector<int32_t>{ 1 } && Answered(win));
+        g_onSleep = nullptr;
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] Every handler reads its inputs from, and answers into, the mailbox its command came
+    // from -- this copy's own, or an earlier copy's it took over. Each row sends to another mailbox while this copy's
+    // own holds a decoy: inputs that would change the answer if read, and fields that must come through untouched.
+    {   blk("BOX - every handler reads and answers through the mailbox its command came from");
+        using namespace Fx;
+        static Mimic::MailboxData box = {};
+        static uintptr_t s_slot = 0x0000123456789AB0ull;
+        auto bq = [&](size_t at) { uint64_t v; memcpy(&v, box.paramsData + at, sizeof v); return v; };
+        auto bd = [&](size_t at, double v) { memcpy(box.paramsData + at, &v, sizeof v); };
+        auto bstr = [&](size_t at) { return std::string(reinterpret_cast<const char*>(box.paramsData + at)); };
+        auto bmsg = [&] { return std::string(box.errorMsg); };
+        auto bname = [&](const char* cls, const char* fn) {
+            snprintf(box.className, sizeof box.className, "%s", cls);
+            snprintf(box.funcName, sizeof box.funcName, "%s", fn);
+        };
+        auto log1 = [&](const char* line) { return g_abiCalls == std::vector<std::string>{ line }; };
+        struct Row {
+            const char* what;
+            int32_t cmd;
+            uint64_t inst, ufunc;
+            std::function<void()> prep;
+            std::function<bool()> answer;
+        };
+        const Row rows[] = {
+            { "FIND_INSTANCE", Mimic::CMD_FIND_INSTANCE, 0, 0, [&] { bname("Actor", ""); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bHero0); } },
+            { "FIND_FUNCTION", Mimic::CMD_FIND_FUNCTION, A(bHero0), 0, [&] { bname("", "HeroOnly"); },
+              [&] { return box.result == 0 && box.ufuncAddr == A(bHeroOnly) && box.numParms != 0x3333; } },
+            { "FIND_FUNCTION not found", Mimic::CMD_FIND_FUNCTION, A(bHero0), 0x77, [&] { bname("", "Nope"); },
+              [&] { return box.result == -3 && box.ufuncAddr == 0 && bmsg().find("'Nope'") != std::string::npos; } },
+            { "INVOKE", Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain), [&] { bd(0, 4.5); g_prepareMarks = true; },
+              [&] { return box.result == 0 && g_peCalls.size() == 1
+                       && g_peCalls[0].parms == reinterpret_cast<uintptr_t>(box.paramsData)
+                       && g_peCalls[0].params.size() == 1024 && g_prepareCalls.size() == 1
+                       && g_prepareCalls[0].params == box.paramsData && box.paramsData[0] == 0xC7; } },
+            { "INVOKE on a template", Mimic::CMD_INVOKE, A(bInstCdo), A(bFnPlain), nullptr,
+              [&] { return box.result == 0 && box.cmdOutFlags == Mimic::INV_OUT_NONSTATIC_ON_TEMPLATE; } },
+            { "INVOKE refused", Mimic::CMD_INVOKE, A(bInstLive), A(bFnBig), nullptr,
+              [&] { return box.result == -13 && bmsg().find("'BigParms'") != std::string::npos; } },
+            { "INVOKE failed", Mimic::CMD_INVOKE, A(bInstLive), A(bFnPlain), [&] { g_peRc = -5; },
+              [&] { return box.result == -5 && bmsg() == "ProcessEvent returned -5"; } },
+            { "INVOKE_BY_NAME", Mimic::CMD_INVOKE_BY_NAME, 0, 0, [&] { bname("TestActor", "SetHealth"); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bInstLive) && box.ufuncAddr == A(bFnPlain)
+                       && g_peCalls.size() == 1 && g_peCalls[0].parms == reinterpret_cast<uintptr_t>(box.paramsData); } },
+            { "INVOKE_BY_NAME threw", Mimic::CMD_INVOKE_BY_NAME, 0, 0, [&] { bname("TestActor", "SetHealth"); g_peThrows = true; },
+              [&] { return box.result == Mimic::MB_ERR_HANDLER_THREW && bmsg().find("did NOT complete") != std::string::npos; } },
+            { "LIST_FUNCTIONS", Mimic::CMD_LIST_FUNCTIONS, 0, 0, [&] { bname("Actor", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && box.instanceAddr == A(bHero0) && box.parmsSize == 1 && bstr(16) == "HeroOnly"; } },
+            { "LIST_INSTANCES exact", Mimic::CMD_LIST_INSTANCES, 0, 0, [&] { bname("BP_Hero_C", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && box.parmsSize == 2 && bq(0) == A(bHero0) && box.instanceAddr == A(bHero); } },
+            { "LIST_INSTANCES derived", Mimic::CMD_LIST_INSTANCES, 0, 0,
+              [&] { bname("BP_Hero_C", ""); memset(box.paramsData, 0, 4); box.cmdFlags = Mimic::LI_IN_DERIVED; },
+              [&] { return box.result == 0 && box.parmsSize == 3 && box.cmdFlags == 0 && bq(40) == A(bSidekick); } },
+            { "LIST_INSTANCES capped", Mimic::CMD_LIST_INSTANCES, 0, 0, [&] { bname("Swarm_C", ""); memset(box.paramsData, 0, 4); },
+              [&] { return box.result == 0 && (box.cmdOutFlags & Mimic::LI_OUT_TRUNCATED) != 0; } },
+            { "SET_DEBUG_CAMERA", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER; },
+              [&] { return box.result == -17 && bmsg().find("no live CheatManager") != std::string::npos
+                       && g_debugCameraCalls == std::vector<int32_t>{ 1 }; } },
+            { "SET_DEBUG_CAMERA queued", Mimic::CMD_SET_DEBUG_CAMERA, 0, 0, [&] { g_debugCameraRc = Stark::kInvokeTimedOutStillQueued; },
+              [&] { return bmsg().find("send OFF again") != std::string::npos; } },
+            { "SET_DEBUG_CAMERA blocked", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = Stark::kToggleBlockedByQueued; },
+              [&] { return bmsg().find("ON not sent") != std::string::npos; } },
+            { "SET_DEBUG_CAMERA unreadable", Mimic::CMD_SET_DEBUG_CAMERA, 1, 0, [&] { g_debugCameraRc = -1; },
+              [&] { return bmsg().find("unreadable state") != std::string::npos; } },
+            { "TELEPORT GET_POSE", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE, 0,
+              [&] { g_tpPose = Wirbel::Pose{ 1, 2, 3, 4, 5, 6 }; g_tpMap = "Map_A"; g_tpParentRel = true; },
+              [&] { double x; memcpy(&x, box.paramsData, sizeof x);
+                    return box.result == 0 && x == 1 && bstr(48) == "Map_A" && box.paramsData[178] == 1; } },
+            { "TELEPORT RELATIVE", Mimic::CMD_TELEPORT, Mimic::TP_OP_RELATIVE, 0, [&] { bd(0, 250); box.paramsData[8] = 0; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "TeleportRelative(250,1)" }; } },
+            { "TELEPORT CURSOR", Mimic::CMD_TELEPORT, Mimic::TP_OP_CURSOR, 0,
+              [&] { bd(0, 50); box.paramsData[8] = 3; box.paramsData[9] = 0; g_tpUsedCenter = true; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "TeleportToCursor(50,3,0)" } && box.paramsData[178] == 1; } },
+            { "TELEPORT EXPLICIT", Mimic::CMD_TELEPORT, Mimic::TP_OP_EXPLICIT, 0,
+              [&] { for (int i = 0; i < 6; ++i) bd(static_cast<size_t>(i) * 8, i + 1.0); box.paramsData[48] = 0; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "RecallExplicit(1,2,3,4,5,6,0,0)" }; } },
+            { "TELEPORT RECALL", Mimic::CMD_TELEPORT, Mimic::TP_OP_RECALL, 2, [&] { g_tpTier = 2; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "RecallMarker(2,0)" } && box.paramsData[177] == 2; } },
+            { "TELEPORT GET_POV", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POV, 0, [&] { g_tpPov.Fov = 90.0; g_tpPov.Source = 2; },
+              [&] { double f; memcpy(&f, box.paramsData + 48, sizeof f); return f == 90.0 && box.paramsData[81] == 2; } },
+            { "TELEPORT SET_CURSOR", Mimic::CMD_TELEPORT, Mimic::TP_OP_SET_CURSOR, 0, [&] { g_tpCursorState = true; },
+              [&] { return g_tpCalls == std::vector<std::string>{ "SetMouseCursor(0)" } && box.paramsData[0] == 1; } },
+            { "TELEPORT failed", Mimic::CMD_TELEPORT, Mimic::TP_OP_GET_POSE, 0, [&] { g_tpRc = Wirbel::TP_ERR_NO_PAWN; },
+              [&] { return box.result == -3 && bmsg() == "Teleport: op=0 slot=0 failed code=-3"; } },
+            { "TELEPORT unknown op", Mimic::CMD_TELEPORT, 99, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Teleport: unknown op"; } },
+            { "PROTECT SET", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 0, nullptr,
+              [&] { return g_godModeCalls == std::vector<int32_t>{ 0 } && box.result == g_godModeRc; } },
+            { "PROTECT GET_STATE", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_GET_STATE, 0, nullptr,
+              [&] { return box.paramsData[0] == 1 && box.paramsData[1] == 0xFF && box.paramsData[2] == 1; } },
+            { "PROTECT failed", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 0, [&] { g_godModeRc = -2; },
+              [&] { return box.result == -2 && bmsg() == "GodMode: op=0 failed code=-2"; } },
+            { "PROTECT unknown op", Mimic::CMD_PROTECT, 7, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Protect: unknown op"; } },
+            { "FOREGROUND SET", Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 0, nullptr,
+              [&] { return g_foregroundCalls == std::vector<bool>{ false } && box.result == 0; } },
+            { "FOREGROUND unknown op", Mimic::CMD_FOREGROUND, 9, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Foreground: unknown op"; } },
+            { "FOREGROUND threw", Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1, [&] { g_foregroundThrows = true; },
+              [&] { return box.result == Mimic::MB_ERR_HANDLER_THREW && bmsg().find("did NOT complete") != std::string::npos; } },
+            { "SEETHROUGH", Mimic::CMD_SEETHROUGH, 3, 0, nullptr,
+              [&] { return g_pierceCalls == std::vector<int32_t>{ 3 } && g_seeThroughCalls.size() == 1
+                       && !g_seeThroughCalls[0].first; } },
+            { "MOVEMENT speed", Mimic::CMD_MOVEMENT, 0, 0, [&] { bd(0, 150); },
+              [&] { return log1("SetMovementPercent(0,150)"); } },
+            { "MOVEMENT gravity direction", Mimic::CMD_MOVEMENT, 3, 0, [&] { bd(0, 0); bd(8, 0); bd(16, -1); },
+              [&] { return log1("SetGravityDirection(0,0,-1)"); } },
+            { "MOVEMENT failed", Mimic::CMD_MOVEMENT, 0, 0, [&] { bd(0, 150); g_movementRc = -4; },
+              [&] { return box.result == -4 && bmsg() == "Movement: knob=0 failed code=-4"; } },
+            { "TIME set", Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, [&] { bd(0, 0.5); },
+              [&] { return log1("SetTimeDilation(0,0.5)"); } },
+            { "TIME reset", Mimic::CMD_TIME, Mimic::TIME_OP_RESET, 1, nullptr, [&] { return log1("ResetTimeDilation(1)"); } },
+            { "TIME failed", Mimic::CMD_TIME, Mimic::TIME_OP_SET, 0, [&] { bd(0, 0.5); g_timeRc = -3; },
+              [&] { return box.result == -3 && bmsg() == "Time: op=0 target=0 failed code=-3"; } },
+            { "FLY enable", Mimic::CMD_FLY, Mimic::FLY_OP_SET_ENABLED, 0, nullptr, [&] { return log1("SetFly(0)"); } },
+            { "FLY speed", Mimic::CMD_FLY, Mimic::FLY_OP_SET_SPEED, 0, [&] { bd(0, 1200); }, [&] { return log1("SetFlySpeed(1200)"); } },
+            { "FLY preset", Mimic::CMD_FLY, Mimic::FLY_OP_SET_PRESET, 2, nullptr, [&] { return log1("SetFlyPreset(2)"); } },
+            { "FLY noclip", Mimic::CMD_FLY, Mimic::FLY_OP_SET_NOCLIP, 0, nullptr, [&] { return log1("SetFlyNoclip(0)"); } },
+            { "FLY state", Mimic::CMD_FLY, Mimic::FLY_OP_GET_STATE, 0,
+              [&] { g_flyStatus.active = true; g_flyStatus.preset = 3; g_flyStatus.noclip = true; g_flyStatus.speed = 900.0; },
+              [&] { double v; memcpy(&v, box.paramsData + 8, sizeof v);
+                    return box.paramsData[0] == 1 && box.paramsData[1] == 3 && box.paramsData[2] == 1 && v == 900.0; } },
+            { "FLY unknown op", Mimic::CMD_FLY, 9, 0, nullptr,
+              [&] { return box.result < 0 && bmsg().rfind("Fly: op=9 failed code=", 0) == 0; } },
+            { "QUERY_PTR GWorld", Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GWORLD, 0,
+              [&] { g_cachedGWorld = reinterpret_cast<uintptr_t>(&s_slot); },
+              [&] { return box.result == 0 && bq(0) == reinterpret_cast<uintptr_t>(&s_slot) && bq(8) == s_slot; } },
+            { "QUERY_PTR GameEngine", Mimic::CMD_QUERY_PTR, Mimic::QUERY_OP_GAME_ENGINE, 0, nullptr,
+              [&] { return box.result == 0 && bq(0) == A(bGameEngine0) && bstr(16) == "GameEngine"; } },
+            { "QUERY_PTR unknown op", Mimic::CMD_QUERY_PTR, 7, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "QueryPtr: unknown op"; } },
+            { "OFFSETS_VERDICT", Mimic::CMD_OFFSETS_VERDICT, 0, 0, nullptr,
+              [&] { return box.result == 1 && bstr(0) == "measured by the probe"; } },
+            { "an unknown command", 99, 0, 0, nullptr,
+              [&] { return box.result == -1 && bmsg() == "Unknown command"; } },
+            { "an init refused", Mimic::CMD_PROTECT, Mimic::PROTECT_OP_GET_STATE, 0,
+              [&] { g_cachedGObjects = g_cachedGNames = 0; },
+              [&] { return box.result == -10 && bmsg() == "DLL not initialized"; } },
+        };
+        auto resetAll = [&] {
+            g_peCalls.clear(); g_prepareCalls.clear(); g_order.clear();
+            g_peRc = 0; g_peThrows = false; g_prepareOk = true; g_prepareMarks = false;
+            g_tpCalls.clear(); g_tpRc = 0; g_tpTier = 0; g_tpPose = {}; g_tpMap = ""; g_tpParentRel = false;
+            g_tpLandingKnown = true; g_tpUsedCenter = false; g_tpCursorState = false; g_tpMarker = {}; g_tpPov = {};
+            g_abiCalls.clear(); g_movementRc = 0; g_timeRc = 0; g_flyStatus = {};
+            g_godModeCalls.clear(); g_godModeRc = 1; g_debugCameraCalls.clear(); g_debugCameraRc = 1;
+            g_protectWant = 1; g_protectLive = -1; g_protectResolvable = 1;
+            g_foregroundCalls.clear(); g_foregroundThrows = false; g_seeThroughCalls.clear(); g_pierceCalls.clear();
+            g_pendingOn = false; g_cachedGWorld = 0; g_cachedGEngine = 0;
+        };
+        // What a handler that read this copy's mailbox would find: another object, another function, another class
+        // name, a derived scope, 0xEE where a parameter or an operand would be.
+        auto decoy = [&] {
+            memset(&mb, 0xEE, sizeof mb);
+            mb.cmd = Mimic::CMD_IDLE;
+            mb.status = Mimic::STATUS_IDLE;
+            mb.result = 0x1111;
+            mb.instanceAddr = 0x10;
+            mb.ufuncAddr = 0x20;
+            snprintf(mb.className, sizeof mb.className, "%s", "DecoyClass");
+            snprintf(mb.funcName, sizeof mb.funcName, "%s", "DecoyFunc");
+            snprintf(mb.errorMsg, sizeof mb.errorMsg, "%s", "decoy");
+            mb.cmdFlags = Mimic::LI_IN_DERIVED;
+            mb.cmdOutFlags = 0x40;
+        };
+        for (const Row& r : rows) {
+            resetAll();
+            memset(&box, 0x33, sizeof box);
+            box.className[0] = box.funcName[0] = '\0';
+            snprintf(box.errorMsg, sizeof box.errorMsg, "%s", "stale");
+            box.cmdFlags = 0;
+            if (r.prep) r.prep();
+            decoy();
+            Mimic::MailboxData snap;
+            memcpy(&snap, &mb, sizeof snap);
+            Send(box, r.cmd, r.inst, r.ufunc);
+            g_cachedGObjects = g_cachedGNames = 1;
+            const bool answered = Answered(box) && r.answer();
+            check((std::string("BOX ⭐: ") + r.what + " -- read from and answered in its own mailbox").c_str(),
+                  answered, std::string(box.errorMsg).c_str());
+            check((std::string("BOX: ") + r.what + " -- this copy's mailbox untouched").c_str(),
+                  memcmp(&mb, &snap, sizeof snap) == 0);
+        }
+        resetAll();
+        memset(&mb, 0, sizeof mb);
+    }
+
+    // [DUMPER-SECOND-COPY-AUTOSTART] The real polling thread over this copy's mailbox and the earlier copies' it took
+    // over: one that forwards its exports here, and one that cannot. Adoption lasts for the process, so this block is
+    // the last. A command is posted as CE posts one -- inputs, then cmd last -- and waited for with a deadline.
+    {   blk("LIFECYCLE - the poller serves this copy's mailbox and the ones it took over; a stop keeps or clears");
+        static Mimic::MailboxData fwd = {}, old = {}, extra[8] = {};
+        auto post = [](Mimic::MailboxData& b, int32_t cmd, uint64_t inst = 0, uint64_t ufunc = 0) {
+            b.status = Mimic::STATUS_IDLE;
+            b.result = 0x5A5A;
+            b.instanceAddr = inst;
+            b.ufuncAddr = ufunc;
+            b.cmd = cmd;
+        };
+        auto waitFor = [](const std::function<bool()>& done) {
+            const ULONGLONG until = GetTickCount64() + 3000;
+            while (!done() && GetTickCount64() < until) Sleep(1);
+            return done();
+        };
+        g_godModeCalls.clear();
+        g_foregroundCalls.clear();
+        g_foregroundThrows = false;
+
+        const bool refusesNull = !Mimic::AdoptMailbox(nullptr, true);
+        const bool refusesOwn = !Mimic::AdoptMailbox(&mb, true);
+        mb.initState = Mimic::INIT_READY;
+        const bool tookFwd = Mimic::AdoptMailbox(&fwd, true);
+        const int32_t fwdAtAdopt = fwd.initState;
+        const bool tookAgain = Mimic::AdoptMailbox(&fwd, true);
+        mb.initState = Mimic::INIT_RUNNING;
+        const bool tookOld = Mimic::AdoptMailbox(&old, false);
+        check("LIFECYCLE adopt: nothing and this copy's own are refused; a taken-over mailbox is taken once, and says "
+              "this copy's state -- or, where its owner cannot forward, READY or SKIPPED only", refusesNull && refusesOwn
+              && tookFwd && fwdAtAdopt == Mimic::INIT_READY && tookAgain && tookOld && old.initState == Mimic::INIT_SKIPPED);
+
+        Mimic::StartThread();
+        post(mb, Mimic::CMD_OFFSETS_VERDICT);
+        const bool ownServed = waitFor([&] { return Answered(mb); }) && mb.result == 1;
+        post(fwd, Mimic::CMD_PROTECT, Mimic::PROTECT_OP_SET_GODMODE, 1);
+        const bool fwdServed = waitFor([&] { return Answered(fwd); }) && fwd.result == g_godModeRc;
+        post(old, Mimic::CMD_FOREGROUND, Mimic::FG_OP_SET, 1);
+        const bool oldServed = waitFor([&] { return Answered(old); }) && old.result == 1;
+        check("LIFECYCLE serve ⭐: the polling thread answers this copy's mailbox and each one it took over, in that "
+              "mailbox", ownServed && fwdServed && oldServed && g_godModeCalls == std::vector<int32_t>{ 1 }
+              && g_foregroundCalls == std::vector<bool>{ true }, num(fwd.result));
+
+        mb.initState = Mimic::INIT_FAILED;
+        const bool mirroredFailed = waitFor([&] { return fwd.initState == Mimic::INIT_FAILED; })
+                                    && waitFor([&] { return old.initState == Mimic::INIT_SKIPPED; });
+        mb.initState = Mimic::INIT_READY;
+        const bool mirroredReady = waitFor([&] { return fwd.initState == Mimic::INIT_READY && old.initState == Mimic::INIT_READY; });
+        check("LIFECYCLE mirror ⭐: each pass a taken-over mailbox says this copy's state -- READY or SKIPPED where its "
+              "owner cannot forward", mirroredFailed && mirroredReady, num(old.initState));
+
+        // A hand-off: the copy taking over serves this mailbox next, so the stop leaves every byte of it.
+        mb.result = 0x7777;
+        memset(mb.paramsData, 0x5C, sizeof mb.paramsData);
+        Mimic::MailboxData snap;
+        memcpy(&snap, &mb, sizeof snap);
+        Mimic::StopThread(false);
+        const bool kept = memcmp(&mb, &snap, sizeof snap) == 0;
+        post(fwd, Mimic::CMD_OFFSETS_VERDICT);
+        Sleep(50);
+        const bool stoppedServesNothing = fwd.cmd == Mimic::CMD_OFFSETS_VERDICT;
+        check("LIFECYCLE hand-off ⭐: a stop that hands over keeps this copy's mailbox, and says SKIPPED in the ones it "
+              "took over", kept && mb.result == 0x7777 && fwd.initState == Mimic::INIT_SKIPPED
+              && old.initState == Mimic::INIT_SKIPPED, num(fwd.initState));
+        check("LIFECYCLE stopped: a stopped poller serves nothing", stoppedServesNothing);
+
+        Mimic::StartThread();
+        const bool restarted = waitFor([&] { return Answered(fwd); }) && fwd.result == 1;
+        Mimic::StopThread(true);
+        bool cleared = true;
+        const uint8_t* raw = reinterpret_cast<const uint8_t*>(&mb);
+        for (size_t i = 0; i < sizeof mb; ++i) cleared = cleared && raw[i] == 0;
+        check("LIFECYCLE restart: a restarted poller serves what waited", restarted);
+        check("LIFECYCLE unload ⭐: a stop that does not hand over clears this copy's mailbox, and says IDLE where the "
+              "owner forwards -- a revival reaches this copy -- SKIPPED where it cannot", cleared
+              && fwd.initState == Mimic::INIT_IDLE && old.initState == Mimic::INIT_SKIPPED, num(fwd.initState));
+
+        memset(&mb, 0x5D, sizeof mb);
+        Mimic::StopThread(true);
+        check("LIFECYCLE idle stop: stopping a poller that is not running clears nothing", raw[0] == 0x5D
+              && raw[sizeof mb - 1] == 0x5D);
+        memset(&mb, 0, sizeof mb);
+
+        int took = 0;
+        for (int i = 0; i < 8; ++i) took += Mimic::AdoptMailbox(&extra[i], false) ? 1 : 0;
+        check("LIFECYCLE slots: eight mailboxes in all -- two taken, six more, then refused; one taken already is "
+              "still answered yes", took == Land::kMaxCopies - 2 && Mimic::AdoptMailbox(&fwd, true), num(took));
+    }
+
+    printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
+    return g_fail == 0 ? 0 : 1;
+}

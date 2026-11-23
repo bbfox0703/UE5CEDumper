@@ -29,6 +29,161 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (build 3779) — Tests for God Mode, Fly and the Cheat Engine mailbox `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** nothing in the UI or the DLL's behaviour. Since build 3778 three more DLL files are tested
+  by C++ tests that run their code rather than read their text: God Mode (`Solitar.cpp`, in `dll_core_test`),
+  Fly / Noclip (`Dunste.cpp`, `dunste_fly_test`) and the Cheat Engine mailbox (`Mimic.cpp`,
+  `mimic_mailbox_test`, 255 checks over every command and the polling thread). The core files build once as a
+  library, `ue5_testcore`, that the per-module tests link. Two fixtures of `dll_core_test` read past their end
+  and are whole chunks now `[CEPTR-FAIL-ONCE-2026-11-23]`. 16 of the 33 `dll/src` .cpp files reach a test target.
+- **Tests:** C# 8527 (1 skipped), headless 74, the CE Lua host, and the eight C++ self-tests, each run by
+  `build.cmd publish`; no compiler, trimming or test warning in the build log.
+- AOT UI 62,980,608 bytes (sha256 2eee6b7da7ef930f...); UE5Dumper.dll 3,882,496 bytes (sha256 a22de10da870b194...).
+
+-----
+
+## 2026-11-23 (no build change) — Every mailbox command is tested, and the polling thread too `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `mimic_mailbox_test` grows from 41 checks to 255 and now drives every command
+  the Cheat Engine mailbox serves. A reflection fixture built in the test's own memory -- one name table, one
+  object array, the offsets set once -- lets the real lookup and invoke code run.
+- **Covered:** each teleport op's inputs, pose, tier and flags; class lookups that pick a live subclass object
+  over a class default object, function lookups through base classes, listings and their pages, a freeze pool
+  that never holds a template; CMD_INVOKE refused before anything is converted or called when it cannot be sized
+  or the function is not the instance's own, routed by the function's own flags, a template warned; the debug
+  camera's own function, invoked, changes the camera as CE's; every command answered in the mailbox it came from;
+  the real polling thread serving this copy's mailbox and two it took over, stopped for a hand-off or an unload,
+  and restarted.
+- **Negative controls:** 46 TELEPORT, 36 FINDLIST and 35 INVOKE and 58 WINDOW / BOX / LIFECYCLE mutants of Mimic.cpp, every one detected.
+- Of the 20 C# reads of Mimic.cpp's text, 16 are gone; the 4 that stay say why no behaviour test can see them.
+- **Tests:** `mimic_mailbox_test` 255 checks, 0 failures, five runs in a row, and under ASan; C# 8527 (1 skipped).
+
+-----
+
+## 2026-11-23 (no build change) — The Cheat Engine mailbox has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests and the test build only. `mimic_mailbox_test` #includes `Mimic.cpp`, links
+  `ue5_testcore`, and calls `Mimic::ServeOne` (one pass of the polling thread) against a mailbox in its own memory.
+  The C ABI and the modules the mailbox dispatches to are faked; the hold ledger is the real one, so "CE now holds
+  it" is read back from it. No polling thread runs, so each command is served exactly when the test says.
+- **Covered, 41 checks:** an unknown command is answered, never left processing; the offsets verdict needs no init
+  and a success carries no earlier error text; a command that walks reflection waits for an init and refuses
+  without one, while Foreground and the offsets verdict are exempt; the retry while another init scans; God Mode's
+  state bytes; every handler that changes a hold records CE as its holder; the debug camera's queued and blocked
+  texts, in each direction, and a pending ON kept as its sender's; a handler that throws loses its command, not the
+  mailbox; an adopted mailbox is answered in place; a mailbox another poller is busy with is left to it;
+  see-through's count and toggle. Negative controls: the earlier error text kept fails 2 checks, no command exempt
+  5, a throw not answered 1, no retry 1, a pending ON taken over 1, a busy mailbox served 1, CE never recorded 13.
+- Two C# text pins are gone and four keep only their other files' halves. The 20 reads of `Mimic.cpp` that remain
+  pin CMD_INVOKE, CMD_TELEPORT and StopThread's hand-over, which this test does not drive yet; their comments say so
+  instead of saying that `Mimic.cpp` reaches no test target. 16 of the 33 `dll/src` .cpp files reach a test target.
+- **Tests:** `mimic_mailbox_test` 41 checks, 0 failures, and under ASan (its negative control reported); every
+  other self-test green; C# 8532 (1 skipped); 40 gates. build.ps1 runs the new test in its C++ list; that line was
+  not run locally (a local run republishes dist\), so the next publish or CI run is its first.
+
+-----
+
+## 2026-11-23 (no build change) — Fly's failed MovementMode write is tested, not only read `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `dunste_fly_test`'s WRITEFAIL reaches the CharacterMovement through a read-only view
+  of a section, so the MovementMode write fails: an enable returns FR_ERR_WRITE and starts nothing, and a disable
+  whose restore fails returns FR_ERR_WRITE with the worker stopped. A read-only PAGE would not do: Macht::WriteBytes
+  raises a page to PAGE_READWRITE for its write. Negative controls: an enable that ignores the write fails 3 checks,
+  a disable that does not report the failed restore 1.
+- `tools/verify/sliceb_fly_arm.py` had said this path could only be checked by reading, because Dunste.cpp reached
+  no test target; `check_comment_refs` flagged the claim once it did, and the note now points at WRITEFAIL.
+- **Tests:** `dunste_fly_test` 57 checks, 0 failures, and under ASan.
+
+-----
+
+## 2026-11-23 (no build change) — Fly / Noclip has a test, on a core library the next module tests share `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests and the test build only. `Dunste.cpp` keeps file-local copies of the pawn chain that
+  `Solitar.cpp` keeps too, so it cannot join `dll_core_test`'s single translation unit. A new static library,
+  `ue5_testcore`, builds the core files once (Macht, Serie, Ubel, Radar, Denken, Flamme, Aura, Genau, Linie,
+  Solitar), and `dunste_fly_test` compiles `Dunste.cpp` as its own unit against it. The test fakes the world and the
+  game thread: `Stark::IsGameThreadResponsive` answers what the test says, and `UE5_CallProcessEventEx` records each
+  call and, on success, sets the pawn's bActorEnableCollision as SetActorEnableCollision would.
+- **Covered, 51 checks:** refusals (no world, no CharacterMovement); enable, the held MOVE_Flying and the hover;
+  Noclip's one SetActorEnableCollision(false), and the status reading the collision that resulted; the disable
+  restoring the captured mode, zeroing the velocity and restoring collision; a restore deferred while the game
+  thread stalls, landing when it answers; the restore a refused enable re-arms; a queued call recorded so the next
+  toggle undoes it; a refused call left unrecorded and retried after its back-off; the speed and preset knobs.
+  Negative controls: no re-arm fails 2 checks, every outcome committed 1, a stall not looked at 3. The re-arm's C#
+  text pin is gone, and the observed-collision pin keeps only Fern's half. 15 of the 33 `dll/src` .cpp files reach
+  a test target.
+- **Tests:** `dunste_fly_test` 51 checks, 0 failures (and under ASan, its negative control reported); C# 8540
+  (1 skipped); the nodiscard probe checks the new library and test. build.ps1 runs the new test in its C++ list;
+  that line was not run locally (a local run republishes dist\), so the next publish or CI run is its first.
+
+-----
+
+## 2026-11-23 (no build change) — God Mode has a test: dll_core_test compiles Solitar.cpp `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `dll_core_test` #includes `Solitar.cpp` and its GODMODE block drives God Mode over a
+  fake world reached by reflection alone (GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController ->
+  Pawn): ON clears only bCanBeDamaged's bit in a byte of eight packed bools and writes a native bool 0x01; the
+  worker re-asserts a bit the game set back; the debug camera's controller is hopped through
+  OriginalControllerRef; targets are kept until the property family's epoch moves, then read again at the new
+  offset; OFF restores the bits and stops the worker; the trainer's bits; SetActorBool / GetActorBool; no world.
+  22 checks. Negative controls: a whole-byte stamp fails 6, targets keyed by the class alone 1, no hop 2. The three
+  C# tests that read Solitar.cpp as text are gone. 14 of the 33 `dll/src` .cpp files now reach a test target.
+- **Two failures seen once, found and fixed `[CEPTR-FAIL-ONCE-2026-11-23]`:** the ASan run of `dll_core_test` failed
+  the CEPTR MindsEye-Extended checks every time, which made them measurable. Both fixtures were shorter than what the
+  code reads: the CEPTR chunk held 64 items of 24 bytes while Aura's item-layout probes read 200 items up to 32 bytes
+  apart, and RESCAN's sparse chunk held 1024 slots while the scorer samples 4096. The reads past them met whatever
+  the heap put next, so MindsEye-Extended's preset item hint was refused in an ordinary build and taken under ASan.
+  Whole chunks now, MindsEye's own items for that shape, and a check of the item layout each stock shape latched.
+  Tests only; nothing in the DLL changed.
+- **Tests:** `dll_core_test` 2024 checks, 0 failures (three ordinary runs, and the ASan run with its negative control);
+  C# 8541 (1 skipped).
+
+-----
+
+## 2026-11-23 (build 3778) — The proxies build into their own folder; the Cheat Engine plugin has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** nothing in the UI or the DLL's behaviour. The four proxy DLLs build into `build\dll\proxy\`
+  instead of `build\dll\`, and `build.ps1` takes each one from there by name, deleting one an older tree left in
+  `build\dll\`. Until now a C++ test that imports `version.dll` (`dll_core_test`) loaded our proxy from its own
+  folder, and the proxy's DllMain ran inside the test: a MinHook block, a pipe server, and logs plus a retention
+  sweep in the user's Logs folder (working-lessons §3.xg).
+- **New test target `methode_plugin_test`:** it #includes `Methode.cpp` and drives the Cheat Engine plugin through a
+  fake Cheat Engine: GetVersion, InitializePlugin (a short table, a refused registration), the menu click with no
+  process, with CE reporting failure, success with nothing mapped (the ambiguous force-load message), and success
+  with the built UE5Dumper.dll mapped without running its DllMain; a second click with it loaded; the ProductName
+  identity rule; DisablePlugin. 61 checks. Negative controls: identity by file name only fails 18, no ambiguous
+  branch fails 5. Its three C# text pins of the dialogs are gone. 13 of the 33 `dll/src` .cpp files now reach a
+  test target.
+- **Also since build 3777 (docs and tests):** CLAUDE.md's rule "Everything testable is tested" was already in;
+  `dll_core_test`'s SCANSIBLING runs `ScanForValue` over two Vector fields (the A3 verification row's steps 1-2
+  close offline); rows that called Ubel / Genau / Flamme .cpp untestable carry a correction; census rows for the test
+  gap, the unfixed DLL cache wipe `[CACHEWIPE-DLL-2026-08-19]` and a CEPTR failure seen once.
+- **Tests:** C# 8544 (1 skipped), headless 74, the six C++ self-tests (`methode_plugin_test` also under ASan, its
+  negative control reported); 40 gates; the nodiscard probe.
+- AOT UI 62,980,608 bytes (sha256 bd7a4930c2a2555f...); UE5Dumper.dll 3,882,496 bytes (sha256 325c3a28dc8ec0b5...).
+
+-----
+
+## 2026-11-23 (build 3777) — Avalonia 12.1.6
+
+- **What changes:** Avalonia 12.1.3 → 12.1.6 (Avalonia, Win32, Skia, HarfBuzz, Themes.Fluent, Fonts.Inter and,
+  in the headless tests, Headless); Microsoft.NET.Test.Sdk 18.10.1 → 18.12.0 in both test projects.
+- **Pins kept, checked against the nuspecs:** Avalonia.Skia / Avalonia.HarfBuzz 12.1.6 are built against the same
+  SkiaSharp 3.119.4 and HarfBuzzSharp 8.3.1.3 as 12.1.3, and Avalonia 12.1.6 against the same MicroCom.Runtime
+  0.11.6 and Angle natives, so SkiaSharp 4.x, HarfBuzzSharp 14.x and MicroCom.Runtime 0.11.7 are not taken.
+  Microsoft.Data.Sqlite stays on `10.0.*` (the .NET 10 LTS patches); 11.0.0 is the .NET 11 train and needs the
+  same SQLitePCLRaw 3.0.5.
+- **Also since build 3776 (docs and tools only):** the README and Features pages describe the MCP server and the
+  experimental extras, and several stale lines are fixed; `check_derived_counts` pins the signature counts five
+  docs restate from `Himmel.h`; `test-games.md` has a row for every game in the README's version matrix; CLAUDE.md
+  says everything testable is tested, and that a `.cpp` no test target compiles yet is a gap to close.
+- **Tests:** C# 8547 (1 skipped), headless 74, the five C++ self-tests; `build.ps1` reports the native renderer
+  packages match what Avalonia was built against (2 pairs).
+- AOT UI 62,980,608 bytes (sha256 2470f75e69ecbfe1...); UE5Dumper.dll 3,882,496 bytes (sha256 83b7af4bfe51bb06...).
+
+-----
+
 ## 2026-11-20 (no build change) — The census keeps only what is not done `[OPEN-CENSUS-2026-10-28]`
 
 - **The decision:** the maintainer ruled that a done item leaves the open-work census for `docs/archive/` and an

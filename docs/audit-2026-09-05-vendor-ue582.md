@@ -248,7 +248,7 @@ The `>= 0` guard matters — an unmeasured probe must leave 0x70 alone, as the F
 
 **Also tighten** `dll/src/Ubel.cpp:2472` and `dll/src/Frieren.cpp:936`, which accept `fieldSize >= 1 && fieldSize <= 8` — the low byte of an 8-aligned pointer satisfies that, so those two can latch a garbage mask instead of falling through to 0. The other five copies already require `== 1`.
 
-**Pin it** with a `constexpr int UBoolPropFieldSizeFor(int)` in `Grimoire.h` beside `PropertyFamilyFor` (Genau.cpp is compiled by no test target), asserted at 0x44→0x70 (stock) and 0x54→0x80 (DQ XI S shift), next to `Test_PropertyFamilyIsCoherent` (`dll_helpers_test.cpp:5367`). **Verification row** needs a paired observable: the offsets log line for `UBoolProperty::FieldSize` on a UProperty-mode game **plus** two sibling bitfield bools on the same native class showing *different* values in ClassStructPanel. Negative control on a stock pre-4.25 title (OctoPath 4.18 / NEKOPALIVE 4.11) — must be byte-identical, since 0x44+0x2C == the existing default.
+**Pin it** with a `constexpr int UBoolPropFieldSizeFor(int)` in `Grimoire.h` beside `PropertyFamilyFor` (Genau.cpp is compiled by no test target -- corrected 2026-11-23: `dll_core_test` has compiled it since 2026-08-25), asserted at 0x44→0x70 (stock) and 0x54→0x80 (DQ XI S shift), next to `Test_PropertyFamilyIsCoherent` (`dll_helpers_test.cpp:5367`). **Verification row** needs a paired observable: the offsets log line for `UBoolProperty::FieldSize` on a UProperty-mode game **plus** two sibling bitfield bools on the same native class showing *different* values in ClassStructPanel. Negative control on a stock pre-4.25 title (OctoPath 4.18 / NEKOPALIVE 4.11) — must be byte-identical, since 0x44+0x2C == the existing default.
 
 ---
 
