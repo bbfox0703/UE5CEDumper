@@ -130,6 +130,7 @@ int32_t GetLast(Marker&) { return 0; }
 int32_t BugItSave(Pose&, char*, int32_t, uint8_t*, bool*) { return 0; }
 int32_t BugItGo(uint8_t*) { return 0; }
 int32_t TeleportRelative(double, bool, Pose&, uint8_t*, bool*) { return 0; }
+int32_t TeleportToCursor(double, int32_t, bool, Pose*, uint8_t*, bool*) { return 0; }
 int32_t SetMouseCursor(bool, bool*) { return 0; }
 int32_t GetMouseCursor(bool*) { return 0; }
 }
