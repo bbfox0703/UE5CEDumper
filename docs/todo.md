@@ -6169,7 +6169,8 @@ be trusted"*.
 - **Gate gap:** `check_all.py` does not run `gen_proxy_forwarders.py winmm --check`, though the winmm
   files are generated.
 - **Stale comments:**
-  - four places still say no test target compiles `Ubel.cpp` (`dll_core_test` has since 2026-08-25);
+  - ~~four places still say no test target compiles `Ubel.cpp` (`dll_core_test` has since 2026-08-25);~~
+    none left (grep, 2026-11-23);
   - `VersionNeedleScan.h:257-260`;
   - `Heiter.cpp:464` vs `Grimoire.h:937`;
   - `GetCachedStructFields :2580-2587`.

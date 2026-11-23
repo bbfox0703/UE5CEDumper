@@ -1695,7 +1695,7 @@ dll_core_test pins. The hint cache kept no override afterwards.
 
 **⛔ HOST GATE — test this first, and close the row if it fails.** The corpus holds exactly one UE 4.21 title: **Star Wars Jedi: Fallen Order** (`docs/test-games.md:24`), an EA-launcher title where `version.dll`/`dinput8.dll` proxies do **not** load — it must be CE-injected after the game is running. On the primary PC it is a **ghost install** (`H:\SteamLibrary\steamapps\common\Jedi Fallen Order\` holds only `steam_appid.txt`; an exe backup exists at `D:\UE_Analyze_data\Game Binary backup\Jedi Fallen Order`, which cannot be launched). If it is not installed on the verification PC either, close this row as *"no reachable victim in the corpus"* rather than forcing it. Second gate, in `scan-0.log`: the run must log `FindAll: UE Version = 421`. `4.21.` is a real needle rung, but if the tag scan misses, detection defaults to 504 and the `TNameEntryArray` override rewrites it to 422 → primary `0x98` → **the fix changes nothing** and the row is moot.
 
-**Why the suite cannot close it.** `dll_helpers_test.cpp:5539-5596` pins `FunctionFlagsOffsetFor` rows, the CPN `+8` invariant and the sweep contents — header arithmetic. `ReadFuncFlagsAndParams` lives in `Ubel.cpp`, which no test target compiles.
+**Why the suite cannot close it.** `dll_helpers_test.cpp:5539-5596` pins `FunctionFlagsOffsetFor` rows, the CPN `+8` invariant and the sweep contents — header arithmetic. `ReadFuncFlagsAndParams` lives in `Ubel.cpp`, which no test target compiles. *(Corrected 2026-11-23: `dll_core_test` has compiled `Ubel.cpp` since 2026-08-25.)*
 
 | side | where | expect |
 |---|---|---|
@@ -6273,7 +6273,7 @@ whether the record ends ticked or unticked.*
 **NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate**
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
-is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
+is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`. (Corrected 2026-11-23: `dll_core_test` has compiled both since 2026-08-25, so the wiring can be tested offline.)*
 
 1. **⚠ G12 REGRESSION — enums and TArray elements still read correctly.** Open Live Walker on a
    class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
@@ -6715,7 +6715,7 @@ exits immediately when its shipping exe is launched directly (Steam DRM wants th
 
 *Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
 against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
-no test target compiles `Genau.cpp`.*
+no test target compiles `Genau.cpp`. (Corrected 2026-11-23: `dll_core_test` has compiled it since 2026-08-25; what still needs a game is the real image.)*
 
 1. **✅ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
    version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
@@ -10968,7 +10968,7 @@ on it read dead memory.
 > stamp format byte-identical to `AtomicFileHygiene.QuarantineNameFor` so one sweep can bound both
 > sides' quarantine later. ⚠ No test target compiles `Flamme.cpp`, so the decision (`is this
 > document a wipe candidate, and may I proceed without a quarantine?`) must go in `Flamme.h` beside
-> `ShouldPublishAtomicWrite`, per the L4 precedent.
+> `ShouldPublishAtomicWrite`, per the L4 precedent. *(Corrected 2026-11-23: `dll_core_test` has compiled `Flamme.cpp` since 2026-08-25, so the decision can also be tested where it is.)*
 >
 > Not folded into L7 because that batch is scoped to `ui/UE5DumpUI/Services/`, and a DLL change
 > needs a `-Target DLL` build to mean anything.
