@@ -29,6 +29,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-23 (no build change) — Every mailbox command is tested, and the polling thread too `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `mimic_mailbox_test` grows from 41 checks to 255 and now drives every command
+  the Cheat Engine mailbox serves. A reflection fixture built in the test's own memory -- one name table, one
+  object array, the offsets set once -- lets the real lookup and invoke code run.
+- **Covered:** each teleport op's inputs, pose, tier and flags; class lookups that pick a live subclass object
+  over a class default object, function lookups through base classes, listings and their pages, a freeze pool
+  that never holds a template; CMD_INVOKE refused before anything is converted or called when it cannot be sized
+  or the function is not the instance's own, routed by the function's own flags, a template warned; the debug
+  camera's own function, invoked, changes the camera as CE's; every command answered in the mailbox it came from;
+  the real polling thread serving this copy's mailbox and two it took over, stopped for a hand-off or an unload,
+  and restarted.
+- **Negative controls:** 46 TELEPORT, 36 FINDLIST and 35 INVOKE and 58 WINDOW / BOX / LIFECYCLE mutants of Mimic.cpp, every one detected.
+- Of the 20 C# reads of Mimic.cpp's text, 16 are gone; the 4 that stay say why no behaviour test can see them.
+- **Tests:** `mimic_mailbox_test` 255 checks, 0 failures, five runs in a row, and under ASan; C# 8527 (1 skipped).
+
+-----
+
 ## 2026-11-23 (no build change) — The Cheat Engine mailbox has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests and the test build only. `mimic_mailbox_test` #includes `Mimic.cpp`, links
