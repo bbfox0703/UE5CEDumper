@@ -15093,12 +15093,14 @@ int main() {
         Serie::InitUE4(reinterpret_cast<uintptr_t>(a1Chunks), 0x10);
 
         // Genau validates through the objects: each one's ClassPrivate leads to a UClass whose own ClassPrivate is
-        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data).
+        // itself, and each is named. 64 items of 24 bytes, UObject* first, on the heap (the image is not data), in a
+        // WHOLE chunk: Aura's item-layout probes read 200 items up to 32 bytes apart, and a chunk that ended after
+        // the 64th item let them read whatever the heap put next, so the verdict changed with the allocator.
         constexpr int kA1Items = 64;
         std::vector<uint8_t> a1Objs(static_cast<size_t>(kA1Items) * 0x40, 0), a1Cls(0x40, 0);
         const uintptr_t a1ClsAddr = reinterpret_cast<uintptr_t>(a1Cls.data());
         memcpy(a1Cls.data() + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
-        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(kA1Items) * 24, 0);
+        std::vector<uint8_t> a1Chunk0(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 24, 0);
         for (int i = 0; i < kA1Items; ++i) {
             uint8_t* o = a1Objs.data() + static_cast<size_t>(i) * 0x40;
             memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &a1ClsAddr, 8);
@@ -15110,6 +15112,13 @@ int main() {
         // Every table slot names a readable chunk, so a strict reading of up to 65 chunks finds each one.
         std::vector<uintptr_t> a1Table(65, reinterpret_cast<uintptr_t>(a1Chunk0.data()));
         const uintptr_t table = reinterpret_cast<uintptr_t>(a1Table.data());
+        // The same objects in MindsEye's own items -- 32 bytes, the UObject* at +0x10 -- for the shape whose preset
+        // carries that item as a hint.
+        std::vector<uint8_t> a1Chunk32(static_cast<size_t>(Grimoire::OBJECTS_PER_CHUNK) * 32, 0);
+        for (int i = 0; i < kA1Items; ++i)
+            memcpy(a1Chunk32.data() + static_cast<size_t>(i) * 32 + 0x10, a1Chunk0.data() + static_cast<size_t>(i) * 24, 8);
+        std::vector<uintptr_t> a1Table32(65, reinterpret_cast<uintptr_t>(a1Chunk32.data()));
+        const uintptr_t table32 = reinterpret_cast<uintptr_t>(a1Table32.data());
 
         alignas(16) static uint8_t a1[0x80] = {};
         const uintptr_t B = reinterpret_cast<uintptr_t>(a1);
@@ -15231,14 +15240,14 @@ int main() {
         }
 
         // NO-STEAL: each stock shape, at its own anchor, latches its own row and still validates.
-        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; };
+        struct Stock { const char* name; int base; int obj, maxE, num, maxC, numC; bool mindsEyeItems = false; };
         const Stock stock[] = {
             { "Default (ObjObjects, 4.20-5.7)", 0x10, 0x00, 0x10, 0x14, 0x18, 0x1C },
             { "UE5-Extended (base, 4.20-5.7)",  0x00, 0x10, 0x20, 0x24, 0x28, 0x2C },
             { "UE4-Extended (base)",            0x00, 0x10, 0x18, 0x1C, 0x20, 0x24 },
             { "UE5.8 (ObjObjects first)",       0x00, 0x00, 0x0C, 0x08, 0x14, 0x10 },
             { "UE5.7-Mistfall (base)",          0x00, 0x10, 0x20, 0x24, 0x04, 0x08 },
-            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14 },
+            { "MindsEye-Extended (base)",       0x00, 0x28, 0x10, 0x24, 0x20, 0x14, true },
             { "Back4Blood",                     0x10, 0x10, 0x00, 0x04, 0x08, 0x0C },
             { "Multiversus",                    0x10, 0x18, 0x10, 0x00, 0x14, 0x20 },
             { "MindsEye",                       0x10, 0x18, 0x00, 0x14, 0x10, 0x04 },
@@ -15255,12 +15264,20 @@ int main() {
         for (const Stock& s : stock) {
             for (const Numbers& n : { Numbers{ "6 chunks, one in use", 6, 1, 0x4000, 0x60000 },
                                       Numbers{ "6 chunks, Num = Max - 1", 6, 6, 0x5FFFF, 0x60000 } }) {
-                const uintptr_t addr = buildStock(s, table, n.maxChunks, n.numChunks, n.num, n.maxE);
+                const uintptr_t addr = buildStock(s, s.mindsEyeItems ? table32 : table, n.maxChunks, n.numChunks, n.num,
+                                                  n.maxE);
                 const std::string tag = std::string(s.name) + ", " + n.what;
                 Aura::Init(addr);
                 check(("VND10-A1-01 control: " + tag + " -- Aura latches its own row").c_str(),
                       latched(n.num, s.obj, s.maxE, s.num, s.maxC, s.numC), layoutText().c_str());
                 check(("VND10-A1-01 control: " + tag + " -- Genau validates it").c_str(), Genau::ValidateGObjects(addr));
+                {
+                    const int wantSize = s.mindsEyeItems ? 32 : 24, wantObj = s.mindsEyeItems ? 0x10 : 0;
+                    char lay[64];
+                    snprintf(lay, sizeof lay, "%d bytes, object at +0x%X", (int)Aura::GetItemSize(), (int)Aura::GetItemObjOffset());
+                    check(("CEPTR-FAIL-ONCE: " + tag + " -- Aura reads the items the array holds").c_str(),
+                          Aura::GetItemSize() == wantSize && Aura::GetItemObjOffset() == wantObj, lay);
+                }
                 const std::string miss = ceChainMiss(addr);
                 check(("CEPTR-OBJECTS ⭐: " + tag + " -- a CE pointer from it reaches Aura's object").c_str(),
                       miss.empty(), miss.c_str());
