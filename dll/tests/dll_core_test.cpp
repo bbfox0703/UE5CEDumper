@@ -57,6 +57,8 @@ uint32_t g_cachedUEVersion = 0;
 
 // &GWorld, defined in Frieren.cpp in the DLL; Solitar reads the world through it. A test points it at a fake world.
 uintptr_t g_cachedGWorld = 0;
+// Defined in Frieren.cpp: raised while an init runs. Routine::ReassertLoop (Solitar's worker) skips its tick then.
+std::atomic<bool> g_initInProgress{false};
 
 // ⚠ #undef between every include, and it is not just warning silencing.
 // Each of these .cpp files is its own translation unit in the real DLL, and each either
