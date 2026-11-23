@@ -277,6 +277,8 @@ int main() {
               waitFor([&] { return collisionOn(); }, 8 * pendingTick));
     }
 
+    // [FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE] SetEnabled stops a deferred restore before it knows the enable
+    // will work; a refused enable never took the pawn over, so the restore is still owed and must be armed again.
     {   blk("REARM - an enable that is refused re-arms the restore it superseded");
         check("setup: Fly on with Noclip", Dunste::SetEnabled(true) == 1);
         check("setup: collision off", waitFor([&] { return !collisionOn(); }, 40 * tick));

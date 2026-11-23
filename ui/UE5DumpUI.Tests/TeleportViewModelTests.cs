@@ -2403,11 +2403,10 @@ public class TeleportViewModelTests
     }
 
     [Fact]
-    public void Fern_And_Dunste_PublishTheObservedCollision()
+    public void Fern_PublishesTheObservedCollision()
     {
-        var dunste = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Dunste.cpp"));
-        int gs = dunste.IndexOf("int32_t GetStatus(FlyStatus& out)", StringComparison.Ordinal);
-        Assert.True(dunste.IndexOf("\"bActorEnableCollision\"", gs, StringComparison.Ordinal) > gs);
+        // Dunste's half -- GetStatus reads the pawn's bActorEnableCollision -- is dunste_fly_test's NOCLIP. Fern.cpp
+        // reaches no C++ test target yet, so its reply is read as source.
         var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
         int f = fern.IndexOf("auto flyStatusJson = ", StringComparison.Ordinal);
         int end = fern.IndexOf("return data;", f, StringComparison.Ordinal);
