@@ -2322,8 +2322,8 @@ method with zero callers; **AC16 / AB21 / AF24 / AF26 / AE26** are re-verified n
 no code change; **AB23** was not fixed (see its row). Categories are §10's A/B/C/D.*
 
 ⚠ **MB3 is the row to run FIRST.** It restructures the CE mailbox poller — the loop every `.CT`
-command rides on, inside the game's own process — and **no test target compiles `Mimic.cpp`**, so
-none of it has executed. Two changes: the dispatch `switch` now runs inside
+command rides on, inside the game's own process. Since 2026-11-23 `mimic_mailbox_test` executes both
+changes (its THREW and BOX blocks); what this row still needs is the run inside a game. Two changes: the dispatch `switch` now runs inside
 `Routine::RunTickGuarded` so one throwing handler loses that command instead of ending the mailbox
 for the session, and `CompoundOpGuard`'s destructor now detects unwinding
 (`std::uncaught_exceptions()` vs the count at entry) and publishes `-11` instead of the stale

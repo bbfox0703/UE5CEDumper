@@ -465,8 +465,8 @@ static_assert(sizeof(MailboxData) <= 4096, "MailboxData must fit in a single pag
 //
 // The wire format depends on ONE input bit, so the DLL and the CE Lua helper must
 // derive it from the same rule or they disagree about where entry N begins. Kept
-// header-inline and pure precisely so `dll_helpers_test` can pin it: no test target
-// compiles Mimic.cpp, but every test compiles this header.
+// header-inline and pure precisely so `dll_helpers_test` can pin it case by case, and
+// the C++ and Lua sides read one definition.
 
 constexpr uint32_t LIST_INSTANCES_ENTRY_EXACT   = 8;   // UObject*
 constexpr uint32_t LIST_INSTANCES_ENTRY_DERIVED = 16;  // UObject* + its UClass*
