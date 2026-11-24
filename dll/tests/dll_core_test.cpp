@@ -15923,7 +15923,11 @@ int main() {
                                                                    : reinterpret_cast<uintptr_t>(nothing.data());
                     memcpy(spChunk.data() + static_cast<size_t>(i) * 24, &o, 8);
                 }
-                std::vector<uintptr_t> spTable(6, reinterpret_cast<uintptr_t>(spChunk.data()));
+                // Aura also probes a chunk table as a flat item array, when no chunked probe finds an object at one item
+                // offset, and reads it far past six slots. Past the six chunk pointers, zeros: empty slots, so the table
+                // never reads as items, whatever the heap holds beyond a six-slot block.
+                std::vector<uintptr_t> spTable(Grimoire::OBJECTS_PER_CHUNK, 0);
+                std::fill_n(spTable.begin(), 6, reinterpret_cast<uintptr_t>(spChunk.data()));
                 alignas(16) static uint8_t sp[0x80] = {};
                 putStock(sp, reinterpret_cast<uintptr_t>(spTable.data()), 6, 4, 0x30000);
                 const uintptr_t S = reinterpret_cast<uintptr_t>(sp);
