@@ -535,8 +535,8 @@ static bool EnsureMinHookLocked() {
 }
 
 // MH_CreateHook refuses a detour that is not executable (IsExecutableAddress), so the holder needs one. It never
-// runs: the holder is created and never enabled, and nothing in this DLL enables every hook at once
-// (InvokeScriptTests pins both).
+// runs: the holder is created and never enabled (stark_dispatch_test's HOOK HOLD), and nothing in this DLL enables
+// every hook at once (InvokeScriptTests, over every dll/src file).
 static void HolderDetour() {}
 
 // May MinHook read `target`? It reads a hook target with no SEH, inside its spin lock, so a fault there would end
