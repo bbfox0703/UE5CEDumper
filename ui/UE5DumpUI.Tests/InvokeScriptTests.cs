@@ -3230,9 +3230,10 @@ public class InvokeScriptTests
         Assert.DoesNotContain("pProcessEvent(", body, StringComparison.Ordinal);   // no unmarked raw call left
     }
 
-    // [MH-PRERESERVE-PROXY] Stark's MinHook glue. stark_dispatch_test does not install a hook yet, and Frieren.cpp and
-    // Heiter.cpp reach no test target, so these pin their source with comments removed; the rules the glue calls are
-    // dll_helpers_test's (Test_Lager_*).
+    // [MH-PRERESERVE-PROXY] The MinHook glue. Stark's -- the install, the held block, the header read, the window walk --
+    // is stark_dispatch_test's HOOK blocks, with real hooks. What these read is Frieren.cpp, Heiter.cpp and Grausam.cpp,
+    // which reach no test target yet, and rules over every MinHook call site in dll/src, which a behaviour test of one
+    // file cannot hold; the rules the glue calls are dll_helpers_test's (Test_Lager_*).
     private static string MinHookGlue(string file) => string.Join('\n', DllSource(file).Split('\n').Select(l =>
     {
         int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3246,111 +3247,6 @@ public class InvokeScriptTests
         int end = code.IndexOf("\n}", at, StringComparison.Ordinal);
         Assert.True(end > at, signature + ": no closing brace at column 0");
         return code[at..end];
-    }
-
-    [Fact]
-    public void HookAllocFailure_LogsTheWindowMinHookSearched()
-    {
-        // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. On that answer Stark walks the window MinHook's
-        // GetMemoryBlock searched for ProcessEvent and logs Lager's summary of it: what is free, where a new block would
-        // go, what took the rest, and the main image with its ASLR bit.
-        var stark = MinHookGlue("Stark.cpp");
-        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
-        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
-        int enable = install.IndexOf("status = MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr));", StringComparison.Ordinal);
-        Assert.True(create >= 0 && enable > create, "InstallHook's MH_CreateHook / MH_EnableHook pair not found");
-        Assert.Contains("if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr, mhLastError);",
-            install[create..enable], StringComparison.Ordinal);
-
-        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
-        Assert.Contains("GetSystemInfo(&si);", log, StringComparison.Ordinal);
-        Assert.Contains("Lager::SearchWindow(target, appMin, appMax)", log, StringComparison.Ordinal);
-        // The walk spans every byte a block could occupy: up to the last block start plus the block.
-        Assert.Contains("WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize, stop)", log, StringComparison.Ordinal);
-        Assert.Contains("Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity)", log,
-            StringComparison.Ordinal);
-        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)",
-            log, StringComparison.Ordinal);
-        // The picks are measured LIVE, not read from the (possibly budget-truncated) byte-totals map, so a cut-short
-        // map never makes a pick read "none".
-        Assert.Contains("summary.pickBelow = Lager::FindPrevFreeRegionWith(LiveQueryRegion, target, w.minAddr", log,
-            StringComparison.Ordinal);
-        Assert.Contains("summary.pickAbove = Lager::FindNextFreeRegionWith(LiveQueryRegion, target, w.maxAddr", log,
-            StringComparison.Ordinal);
-        // WalkRegions reports WHY it stopped, so a budget/cap stop is not logged as a phantom VirtualQuery failure.
-        var walkStop = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
-        Assert.Contains("stop = Lager::WalkStop::QueryFailed;", walkStop, StringComparison.Ordinal);
-        Assert.Contains("stop = Lager::WalkStop::Budget;", walkStop, StringComparison.Ordinal);
-        Assert.Contains("stop = Lager::WalkStop::RegionCap;", walkStop, StringComparison.Ordinal);
-
-        var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
-        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
-        Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
-        Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
-        // The walk is bounded two ways, neither depending on the other: a time budget AND a region count. Without the
-        // deadline, a heap-filled window can hold s_mhMutex for minutes.
-        Assert.Contains("const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;", walk, StringComparison.Ordinal);
-        Assert.Contains("GetTickCount64() > deadline", walk, StringComparison.Ordinal);
-        Assert.Contains("map.size() >= kWindowWalkMaxRegions", walk, StringComparison.Ordinal);
-        Assert.Contains("kWindowWalkBudgetMs = 2000;", stark, StringComparison.Ordinal);
-        Assert.Contains("kWindowWalkMaxRegions = 200000;", stark, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void MemoryAllocDiagnostic_CapturesLastErrorBeforeItIsClobbered()
-    {
-        // MH_ERROR_MEMORY_ALLOC is not only "no free block start": MinHook returns it when a found granule's
-        // VirtualAlloc(PAGE_EXECUTE_READWRITE) is refused (commit limit, ACG/ProhibitDynamicCode) or when AddHookEntry's
-        // HeapAlloc on MinHook's private heap fails. LastError tells those apart, but the LOG_ERROR that runs before the
-        // window walk clobbers it. Capture it right after MH_CreateHook so the window line can say "a block start WAS
-        // free -- the failure is not the window". Stark.cpp reaches no test target: pin the capture.
-        var stark = MinHookGlue("Stark.cpp");
-        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
-        int zero = install.IndexOf("SetLastError(0);", StringComparison.Ordinal);
-        int create = install.IndexOf("MH_STATUS status = MH_CreateHook(", StringComparison.Ordinal);
-        int grab = install.IndexOf("const DWORD mhLastError = GetLastError();", StringComparison.Ordinal);
-        Assert.True(zero >= 0 && create > zero, "SetLastError(0) must come before ProcessEvent's MH_CreateHook");
-        Assert.True(grab > create, "GetLastError() must be captured right after MH_CreateHook, before any LOG_ERROR");
-        Assert.Contains("LogTrampolineWindow(processEventAddr, mhLastError);", install, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void MemoryAllocWindow_WalkIsThrottledPerTarget()
-    {
-        // Each failing Live Funcs Start fails twice (EnsureProcessEventReady's automatic attempt, then the forced one),
-        // so an unthrottled window walk runs twice -- up to ~4 s under s_mhMutex, holding the pe_profile_start reply.
-        // LogTrampolineWindow skips a re-walk for the same target within a short window and says it did. Stark.cpp
-        // reaches no test target: pin the throttle.
-        var stark = MinHookGlue("Stark.cpp");
-        Assert.Contains("kWindowLogThrottleMs", stark, StringComparison.Ordinal);
-        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
-        Assert.Contains("s_lastWindowLogTarget", log, StringComparison.Ordinal);
-        Assert.Contains("s_lastWindowLogMs", log, StringComparison.Ordinal);
-        int gate = log.IndexOf("kWindowLogThrottleMs", StringComparison.Ordinal);
-        int walk = log.IndexOf("WalkRegions(", StringComparison.Ordinal);
-        Assert.True(gate >= 0 && walk > gate, "the throttle must be decided before the (expensive) WalkRegions call");
-        Assert.Contains("return;", log[..walk], StringComparison.Ordinal);   // an early return skips the walk
-    }
-
-    [Fact]
-    public void MainImageHeaderRead_QueriesThePageBeforeCopyingIt()
-    {
-        // In proxy mode the holder runs at every process start, before the game's init -- including launches where
-        // Live Funcs is never opened. ReadMainImageLayout copies the 4 KB header page; a protector that PAGE_GUARDs its
-        // header to detect dumpers would have the guard consumed and its vectored handler see the read. Query the page
-        // first and skip the copy unless it is committed and readable with no PAGE_GUARD, reporting an unknown layout
-        // instead. stark_dispatch_test does not drive the hook install yet: pin the guard.
-        var stark = MinHookGlue("Stark.cpp");
-        var body = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
-        int query = body.IndexOf("VirtualQuery(base", StringComparison.Ordinal);
-        int gate = body.IndexOf("PageReadableNoGuard(hdrMbi)", StringComparison.Ordinal);
-        int copy = body.IndexOf("CopyBytesSEH(base, hdr, sizeof(hdr))", StringComparison.Ordinal);
-        Assert.True(query >= 0 && gate > query && copy > gate,
-            "the header page must be queried, then checked readable/non-guarded, before it is copied");
-        // The readability helper refuses a guarded or uncommitted page.
-        var guard = MinHookGlueBody(stark, "static bool PageReadableNoGuard(const MEMORY_BASIC_INFORMATION& mbi) {");
-        Assert.Contains("PAGE_GUARD", guard, StringComparison.Ordinal);
-        Assert.Contains("MEM_COMMIT", guard, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3391,7 +3287,8 @@ public class InvokeScriptTests
         // The holder: a MinHook hook created early on a target inside the main image and never enabled, so its block
         // stays next to the image for the process lifetime and the ProcessEvent hook can land in it later. Taken on the
         // auto-start thread of both DLL flavours (the proxy's runs at process start, while the window is still empty),
-        // never in DllMain, where MinHook would run under the loader lock.
+        // never in DllMain, where MinHook would run under the loader lock. The holder itself -- under MinHook's lock, each
+        // candidate read first, never enabled -- is stark_dispatch_test's HOOK HOLD; Heiter.cpp reaches no test target.
         var heiter = MinHookGlue("Heiter.cpp");
         Assert.Equal(2, MinHookCount(heiter, "Stark::HoldTrampolineBlock();"));
         int proxy = heiter.IndexOf("LOG_INFO(\"DllMain ProxyStart: proxy DLL mode", StringComparison.Ordinal);
@@ -3406,24 +3303,6 @@ public class InvokeScriptTests
             "the injected flavour must hold the block after the Cheat Engine guard and before the pipe probe");
         var dllMain = MinHookGlueBody(heiter, "BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {");
         Assert.DoesNotContain("HoldTrampolineBlock", dllMain, StringComparison.Ordinal);
-
-        var stark = MinHookGlue("Stark.cpp");
-        var hold = MinHookGlueBody(stark, "void HoldTrampolineBlock() {");
-        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", hold, StringComparison.Ordinal);
-        Assert.Contains("Lager::ChooseHolderTargets(img)", hold, StringComparison.Ordinal);
-        int safe = hold.IndexOf("if (!HolderCandidateSafe(target))", StringComparison.Ordinal);
-        int create = hold.IndexOf("MH_CreateHook(reinterpret_cast<LPVOID>(target), reinterpret_cast<LPVOID>(&HolderDetour),",
-            StringComparison.Ordinal);
-        Assert.True(safe >= 0 && create > safe, "every candidate must be checked readable before MinHook reads it");
-        Assert.DoesNotContain("MH_EnableHook", hold, StringComparison.Ordinal);
-        Assert.DoesNotContain("MH_QueueEnableHook", hold, StringComparison.Ordinal);
-        // An empty executable range (header-only copy, or a packer that cleared the EXECUTE flag) is reported UNKNOWN,
-        // not "does NOT cover" -- the block may serve ProcessEvent, it just cannot be verified from the headers.
-        Assert.Contains("const bool codeKnown = code.hi > code.lo;", hold, StringComparison.Ordinal);
-        Assert.Contains("executable range is unknown", hold, StringComparison.Ordinal);
-        // The only hook Stark enables is ProcessEvent's.
-        Assert.Equal(1, MinHookCount(stark, "MH_EnableHook("));
-        Assert.Contains("MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr))", stark, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3459,46 +3338,15 @@ public class InvokeScriptTests
     }
 
     [Fact]
-    public void HeldBlock_StepsAsideForARealHook_AndTheInstallSaysWhereItsTrampolineWent()
-    {
-        var stark = MinHookGlue("Stark.cpp");
-        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
-        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", install, StringComparison.Ordinal);
-        Assert.Contains("if (!EnsureMinHookLocked()) return false;", install, StringComparison.Ordinal);
-        // A real hook outranks the holder: MinHook keys hooks by target, so ProcessEvent at the holder's address would
-        // fail MH_ERROR_ALREADY_CREATED.
-        int aside = install.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
-        int remove = install.IndexOf("MH_RemoveHook(reinterpret_cast<LPVOID>(s_heldTarget))", Math.Max(aside, 0), StringComparison.Ordinal);
-        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
-        Assert.True(aside >= 0 && remove > aside && create > remove, "the holder must step aside before ProcessEvent's MH_CreateHook");
-        // Out of reach is said before the attempt; where the trampoline went, after it.
-        int reach = install.IndexOf("if (!Lager::BlockServes(s_heldBlock, Lager::SearchWindow(processEventAddr, appMin, appMax)))",
-            StringComparison.Ordinal);
-        Assert.True(reach >= 0 && reach < create, "the reach check must come before MH_CreateHook");
-        int where = install.IndexOf("const uintptr_t peBlock = static_cast<uintptr_t>(Lager::BlockOfSlot(", StringComparison.Ordinal);
-        Assert.True(where > create, "the trampoline's block must be reported after MH_CreateHook");
-        Assert.Contains("peBlock == s_heldBlock", install, StringComparison.Ordinal);
-
-        // Both slot->block computations (the held block and the installed hook's block) go through Lager::BlockOfSlot,
-        // which mirrors FreeBuffer, not a hand-rolled mask: a raw `trampoline & ~(BLOCK-1)` can report "NOT in the
-        // held block" on a run where the hold worked, with no other test noticing.
-        Assert.Equal(2, MinHookCount(stark, "Lager::BlockOfSlot("));
-        Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
-
-        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
-        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)", log,
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void EveryMinHookInitializeSite_AcceptsAlreadyInitialized()
     {
         // MinHook's HeapCreate lives once per process, shared by every module in this DLL that hooks (Stark's holder
         // and ProcessEvent hook, Grausam's foreground lock). Whoever calls MH_Initialize() first gets MH_OK; everyone
         // after gets MH_ERROR_ALREADY_INITIALIZED, which is SUCCESS. Since the holder initialises MinHook at proxy
         // process start (or ~1 s after injection), Grausam is practically always the second caller, so treating
-        // ALREADY_INITIALIZED as a failure would break Foreground Lock on every enable. No C++ test target compiles a
-        // file that calls MH_Initialize, so pin the acceptance in source: every call site must OR it in beside MH_OK.
+        // ALREADY_INITIALIZED as a failure would break Foreground Lock on every enable. Stark's acceptance is
+        // stark_dispatch_test's HOOK HOLD; this is the rule over every call site, Grausam.cpp's included, which no target
+        // compiles: each must OR it in beside MH_OK.
         var files = new List<string>();
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
@@ -3532,8 +3380,9 @@ public class InvokeScriptTests
         // CreateTrampolineFunction decodes PAST the prologue: the last instruction it disassembles can start ~19 bytes
         // in, and hde64 reads ~33 more of it, so a 32-byte probe understates the reach. Lager::kHolderReadSpan names
         // the span with its derivation; the check must query the page of target + span - 1 and probe span bytes, not
-        // 32. dll_helpers_test drives Falsch::ReadTarget on real pages (Test_Falsch_ReadTarget); no test target
-        // compiles Stark.cpp, so pin that the holder goes through it, and pin ReadTarget's span.
+        // 32. dll_helpers_test drives Falsch::ReadTarget on real pages (Test_Falsch_ReadTarget), and
+        // stark_dispatch_test's HOOK HOLD refuses a candidate whose span runs into an unreadable page; this pins
+        // ReadTarget's span, which both rest on.
         var lager = MinHookGlue("Lager.h");
         var m = System.Text.RegularExpressions.Regex.Match(lager, @"kHolderReadSpan\s*=\s*(\d+)");
         Assert.True(m.Success, "Lager::kHolderReadSpan not defined -- the holder read span must be a named constant");
@@ -3542,10 +3391,6 @@ public class InvokeScriptTests
 
         // [MH-TRAMPOLINE-PREFLIGHT] The read is Falsch::ReadTarget's, shared with every hook that gets enabled: one
         // implementation of "every byte MinHook reads is readable", so the holder's and ProcessEvent's cannot drift.
-        var stark = MinHookGlue("Stark.cpp");
-        var holder = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
-        Assert.Contains("uint8_t probe[Falsch::kSpan]", holder, StringComparison.Ordinal);
-        Assert.Contains("return Falsch::ReadTarget(target, probe, why);", holder, StringComparison.Ordinal);
         Assert.True(System.Text.RegularExpressions.Regex.IsMatch(MinHookGlue("Falsch.h"), @"constexpr\s+size_t\s+kSpan\s*=\s*64\s*;"),
             "Falsch::kSpan must stay 64, the span Lager derives");
         Assert.Contains("static_assert(kSpan == Lager::kHolderReadSpan", MinHookGlue("Falsch.cpp"), StringComparison.Ordinal);
@@ -3560,10 +3405,6 @@ public class InvokeScriptTests
             safe, StringComparison.Ordinal);
         Assert.Contains("CopySEH(reinterpret_cast<const void*>(target), out, sizeof(out))", safe, StringComparison.Ordinal);
         Assert.DoesNotContain("target + 31", safe, StringComparison.Ordinal);   // the understated 32-byte reach
-
-        // The 4 KB header copy is read under SEH too, so a guarded/no-access header page is refused, not faulted on.
-        var readLayout = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
-        Assert.Contains("CopyBytesSEH(base, hdr, sizeof(hdr))", readLayout, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3573,9 +3414,10 @@ public class InvokeScriptTests
         // decoder misreads an instruction it returns MH_OK with a trampoline that runs different code: the game crashes
         // or misbehaves in the hooked function with nothing logged (docs/vendor-pin-reviews.md § minhook). Falsch's
         // VetHookTarget replays the build against Zydis first, and a hook it calls Unsafe is not created. The holder
-        // is exempt because it is never enabled, so its trampoline never runs (HeldBlock_* pins that). No test target
-        // compiles Stark.cpp, so pin the source: every other MH_CreateHook* call, in any dll/src file, must be preceded
-        // in the same function by a vet of the same target, and the vet's verdict must stop the create.
+        // is exempt because it is never enabled, so its trampoline never runs (stark_dispatch_test's HOOK HOLD). A rule
+        // over every MinHook call site, Grausam.cpp's included, which no target compiles: every other MH_CreateHook*
+        // call, in any dll/src file, must be preceded in the same function by a vet of the same target, and the vet's
+        // verdict must stop the create.
         static string Lexed(string glue)
         {
             // MinHookGlue strips // comments; also drop /* */ comments and string / char literals, so neither a log line
@@ -3625,36 +3467,12 @@ public class InvokeScriptTests
         }
         Assert.Equal(1, holders);
         Assert.True(vetted >= 4, "expected ProcessEvent's and Grausam's three hooks to be vetted -- found " + vetted);
-
-        // Stark refuses before the holder steps aside, so a refused ProcessEvent does not cost the held block.
-        var stark = MinHookGlueBody(Lexed(MinHookGlue("Stark.cpp")), "bool InstallHook(uintptr_t processEventAddr) {");
-        int refuse = stark.IndexOf("if (vet.verdict == Falsch::Verdict::Unsafe) {", StringComparison.Ordinal);
-        int aside = stark.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
-        Assert.True(refuse >= 0 && aside > refuse, "the vet must run before the holder is removed for ProcessEvent");
         // Grausam's helper must say no exactly when Falsch does.
         var vetFor = MinHookGlueBody(Lexed(MinHookGlue("Grausam.cpp")), "bool VetForHook(FARPROC p, const char* name) {");
         Assert.Contains("= Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p));", vetFor, StringComparison.Ordinal);
         int pass = vetFor.IndexOf("if (r.verdict != Falsch::Verdict::Unsafe) return true;", StringComparison.Ordinal);
         Assert.True(pass >= 0 && vetFor.IndexOf("return false;", pass, StringComparison.Ordinal) > pass,
             "VetForHook must return true for every verdict but Unsafe, and false for Unsafe");
-    }
-
-    [Fact]
-    public void HeldBlockSuccess_SaysWhetherAFreshBlockWasAlsoAvailable()
-    {
-        // GetMemoryBlock reuses a serving block before it tries to allocate one, so "trampoline is in the held block"
-        // is logged whenever the held block serves ProcessEvent -- whether or not the window was starved. A live run
-        // then cannot tell "the hold fixed it" from "a block was free anyway". On a successful install whose trampoline
-        // landed in the held block, run buffer.c's two walks live and say whether a NEW block could have gone anywhere:
-        // none -> the held block was needed; some -> reuse happened but a fresh block was available too.
-        var stark = MinHookGlue("Stark.cpp");
-        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
-        int inHeld = install.IndexOf("peBlock == s_heldBlock", StringComparison.Ordinal);
-        int below = install.IndexOf("Lager::FindPrevFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
-        int above = install.IndexOf("Lager::FindNextFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
-        Assert.True(inHeld >= 0 && below > inHeld && above > below,
-            "a successful install in the held block must run the two live walks to show whether a fresh block was available");
-        Assert.Contains("the held block was NEEDED", install, StringComparison.Ordinal);
     }
 
     private static int MinHookCount(string s, string what)
