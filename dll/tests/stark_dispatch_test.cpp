@@ -83,14 +83,31 @@ ULONGLONG WINAPI StarkGetTickCount64();
 // The main image Stark reads (0 = this executable), how VirtualQuery answers inside Stark.cpp, and its clock: always
 // the test's, so a walk's time is what the test says. Each counts its calls.
 static uintptr_t g_fakeMainImage = 0;
-enum class VqMode { Real, Stripes, Lie };
+enum class VqMode { Real, Stripes, Lie, Map };
 static VqMode g_vqMode = VqMode::Real;
 static uintptr_t g_vqLo = 0, g_vqHi = 0;   // Stripes: [lo, hi); Lie: the page at lo
 static DWORD g_vqLieState = 0, g_vqLieProtect = 0;
+// Map: an address space of the test's writing over [lo, hi), one Lager::Region per allocation, answered as VirtualQuery
+// answers -- from the queried page to the end of its region. Two marker states: a kVqFail region answers 0, and a
+// kVqStripes region answers one page at a time, committed and reserved in turn, all one allocation.
+static constexpr uint32_t kVqFail = 0xFFFFFFFFu, kVqStripes = 0xFFFFFFFEu;
+static std::vector<Lager::Region> g_vqMap;
 static std::atomic<uint64_t> g_tick{ 1000000 };
 static uint64_t g_tickStep = 0;
 static std::atomic<int> g_tickReads{ 0 }, g_vqCalls{ 0 };
+// Whether another thread could take MinHook's lock: armed once, answered at the next GetModuleHandleW(nullptr) Stark
+// makes -- the main image's header read -- so a check sees what holds the lock in the middle of a call.
+static std::atomic<bool> g_probeMh{ false };
+static std::atomic<int> g_probeMhSeen{ -1 };   // -1 not probed, 1 held, 0 free
+static bool MhMutexTakenElsewhere() {
+    return std::async(std::launch::async, [] {
+        if (!Stark::s_mhMutex.try_lock()) return true;
+        Stark::s_mhMutex.unlock();
+        return false;
+    }).get();
+}
 HMODULE WINAPI StarkGetModuleHandleW(LPCWSTR name) {
+    if (!name && g_probeMh.exchange(false)) g_probeMhSeen.store(MhMutexTakenElsewhere() ? 1 : 0);
     if (!name && g_fakeMainImage) return reinterpret_cast<HMODULE>(g_fakeMainImage);
     return ::GetModuleHandleW(name);
 }
@@ -119,6 +136,21 @@ SIZE_T WINAPI StarkVirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZ
         mbi->Type = MEM_PRIVATE;
         return sizeof(MEMORY_BASIC_INFORMATION);
     }
+    if (g_vqMode == VqMode::Map && a >= g_vqLo && a < g_vqHi) {
+        const Lager::Region* r = Lager::QueryAt(g_vqMap, a);
+        if (!r || r->state == kVqFail) return 0;
+        const uintptr_t page = a & ~static_cast<uintptr_t>(0xFFF);
+        const bool striped = r->state == kVqStripes;
+        const DWORD state = striped ? ((((page - r->base) / 0x1000) % 2 == 0) ? MEM_COMMIT : MEM_RESERVE) : r->state;
+        *mbi = MEMORY_BASIC_INFORMATION{};
+        mbi->BaseAddress = reinterpret_cast<PVOID>(page);
+        mbi->AllocationBase = reinterpret_cast<PVOID>(state == MEM_FREE ? 0 : r->allocationBase);
+        mbi->RegionSize = striped ? 0x1000 : static_cast<SIZE_T>(r->base + r->size - page);
+        mbi->State = state;
+        mbi->Protect = state == MEM_COMMIT ? PAGE_READWRITE : state == MEM_FREE ? PAGE_NOACCESS : 0;
+        mbi->Type = state == MEM_FREE ? 0 : r->type;
+        return sizeof(MEMORY_BASIC_INFORMATION);
+    }
     return ::VirtualQuery(addr, mbi, len);
 }
 ULONGLONG WINAPI StarkGetTickCount64() {
@@ -144,7 +176,7 @@ static void check(const char* label, bool cond, const char* got = nullptr) {
 }
 static void blk(const char* name) { printf("- %s\n", name); }
 static std::string F(const char* fmt, ...) {
-    char b[1024];
+    char b[4096];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(b, sizeof b, fmt, ap);
@@ -1580,7 +1612,7 @@ static size_t LogSize() { std::lock_guard<std::mutex> lk(g_logMu); return g_log.
 // the spec says otherwise.
 struct Sec { uint32_t rva, vsize, chars; };
 struct ImgSpec {
-    uint32_t entryRva = 0x1000, sizeOfImage = 0x10000;
+    uint32_t entryRva = 0x1000, sizeOfImage = 0x10000, lfanew = 0x40;
     bool dynBase = true;
     std::vector<Sec> secs{ { 0x1000, 0x2000, kExecChars } };
     DWORD prot[16] = {};
@@ -1594,8 +1626,8 @@ static uintptr_t MakeImageAt(uintptr_t I, const ImgSpec& spec, const std::functi
         memset(b, 0, 0x1000);
         auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
         dos->e_magic = IMAGE_DOS_SIGNATURE;
-        dos->e_lfanew = 0x40;
-        auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + 0x40);
+        dos->e_lfanew = static_cast<LONG>(spec.lfanew);
+        auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + spec.lfanew);
         nt->Signature = IMAGE_NT_SIGNATURE;
         nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
         nt->FileHeader.NumberOfSections = static_cast<WORD>(spec.secs.size());
@@ -1656,9 +1688,9 @@ static uintptr_t ProbeSpan(size_t n) {
 static void DropFrom(size_t mark) {
     while (g_fixtures.size() > mark) { VirtualFree(g_fixtures.back(), 0, MEM_RELEASE); g_fixtures.pop_back(); }
 }
-// Every block start within +-1 GB of T taken: [T-1GB, T) and [T, T+1GB) reserved, T's first page the safe
-// target, and another reservation right above.
-static uintptr_t Starve(uintptr_t& P) {
+// Every block start within +-1 GB of T taken: [T-1GB, T) and [T, T+1GB) reserved, the safe target at T + off on
+// T's first page, and another reservation right above.
+static uintptr_t Starve(uintptr_t& P, uint32_t off = 0) {
     for (int attempt = 0; attempt < 8; ++attempt) {
         const size_t mark = g_fixtures.size();
         P = ProbeSpan(0x80020000);
@@ -1670,7 +1702,7 @@ static uintptr_t Starve(uintptr_t& P) {
         }
         auto* t = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(T), 0x1000, MEM_COMMIT, PAGE_READWRITE));
         memset(t, 0xCC, 0x1000);
-        memcpy(t, kSafePE, sizeof kSafePE);
+        memcpy(t + off, kSafePE, sizeof kSafePE);
         DWORD old = 0;
         VirtualProtect(t, 0x1000, PAGE_EXECUTE_READ, &old);
         FlushInstructionCache(GetCurrentProcess(), t, 0x1000);
@@ -1692,15 +1724,16 @@ static uintptr_t LivePick(uintptr_t& P) {
     return 0;
 }
 // An image at I whose window's one free granule is H = I - 0x10000, the holder's block; with `high`, everything
-// above the image is taken too, so once the holder has H no fresh block fits anywhere.
-static uintptr_t HeldWindow(bool high) {
+// above the image is taken too, so once the holder has H no fresh block fits anywhere; with `freeBelow`, the
+// granule under H is free as well.
+static uintptr_t HeldWindow(bool high, bool freeBelow = false) {
     (void)MH_Initialize();
     for (int attempt = 0; attempt < 8; ++attempt) {
         const size_t mark = g_fixtures.size();
         const uintptr_t P = ProbeSpan(0x80040000);
         if (!P) continue;
         const uintptr_t I = P + 0x40020000;
-        if (!ReserveAt(P, 0x40010000)
+        if (!ReserveAt(P, freeBelow ? 0x40000000 : 0x40010000)
             || !MakeImageAt(I, ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x2000, kSafePE, 8); })
             || (high && !ReserveAt(I + 0x10000, 0x40010000))) {
             DropFrom(mark);
@@ -1744,6 +1777,33 @@ static void ReadLayoutIntoGlobal() { g_layout = Stark::ReadMainImageLayout(); }
 static bool RanWithoutEscapingSEH(void (*fn)()) {
     __try { fn(); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return true;
+}
+
+// MinHook freezes the other threads -- through CreateToolhelp32Snapshot -- each time it enables or disables a hook, and
+// never to create or remove one that is disabled, so counting those snapshots counts enables and disables.
+using SnapshotFn = HANDLE(WINAPI*)(DWORD, DWORD);
+static SnapshotFn g_realSnapshot = nullptr;
+static std::atomic<int> g_freezes{ 0 };
+static HANDLE WINAPI CountingSnapshot(DWORD flags, DWORD pid) {
+    if (flags & TH32CS_SNAPTHREAD) g_freezes.fetch_add(1);
+    return g_realSnapshot(flags, pid);
+}
+static bool CountFreezes() {
+    LPVOID target = nullptr;
+    const bool ok = MH_CreateHookApiEx(L"kernel32", "CreateToolhelp32Snapshot", reinterpret_cast<LPVOID>(&CountingSnapshot),
+                                       reinterpret_cast<LPVOID*>(&g_realSnapshot), &target) == MH_OK
+        && MH_EnableHook(target) == MH_OK;
+    g_freezes.store(0);
+    return ok;
+}
+static Lager::Region Reg(uint64_t base, uint64_t size, uint32_t state, uint64_t alloc, uint32_t type) {
+    Lager::Region r;
+    r.base = base;
+    r.size = size;
+    r.state = state;
+    r.allocationBase = alloc;
+    r.type = type;
+    return r;
 }
 
 static void HookBlocks() {
@@ -1839,6 +1899,42 @@ static void HookBlocks() {
               && iReach >= 0 && iInst > iReach && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is "
               "NOT in the held block 0x%llX", (unsigned long long)reinterpret_cast<uintptr_t>(Stark::s_originalPE),
               (unsigned long long)farBlock)) && CountContaining("NEEDED") == 0 && CountContaining("was reused") == 0);
+
+        // MinHook reuses a held block from 1 GB below the target to just under 1 GB above it; a block either side of
+        // that is warned about, and one below the trampoline's block is still not the block it went to.
+        struct ReachProbe { int64_t off; bool warn; };
+        bool edges = true;
+        std::string edgeGot;
+        for (const ReachProbe pr : { ReachProbe{ 0x3FFF0000ll, false }, ReachProbe{ 0x40000000ll, true },
+                                     ReachProbe{ -0x40000000ll, false }, ReachProbe{ -0x40010000ll, true } }) {
+            HookReset();
+            const uintptr_t Tq = CodePage(kSafePE);
+            const uintptr_t hb = static_cast<uintptr_t>(static_cast<int64_t>(Tq) + pr.off);
+            Stark::s_heldBlock = hb;
+            const bool okq = Stark::InstallHook(Tq);
+            const bool warned = CountContaining("is out of reach of ProcessEvent") == 1;
+            const bool notIn = HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is NOT in the held "
+                "block 0x%llX", (unsigned long long)reinterpret_cast<uintptr_t>(Stark::s_originalPE), (unsigned long long)hb));
+            if (!okq || warned != pr.warn || !notIn) {
+                edges = false;
+                edgeGot += F("[%lld: ok=%d warned=%d notIn=%d] ", (long long)pr.off, (int)okq, (int)warned, (int)notIn);
+            }
+        }
+        check("HOOK reach edge: the warning starts where MinHook's reuse window ends, either side, and a held block below "
+              "the trampoline is still NOT the one it went to", edges, edgeGot.c_str());
+
+        HookReset();
+        const uintptr_t A = CodePage(kSafePE);
+        const MH_STATUS initA = MH_Initialize();
+        const MH_STATUS preA = MH_CreateHook(reinterpret_cast<LPVOID>(A), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
+                                             nullptr);
+        const bool okC = Stark::InstallHook(A);
+        check("HOOK create refused: a target MinHook already holds is refused -- nothing enabled, and no window walk for it",
+              initA == MH_OK && preA == MH_OK && !okC
+              && HasLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_ALREADY_CREATED")
+              && CountContaining("MinHook block window") == 0 && memcmp(reinterpret_cast<const void*>(A), kSafePE, 8) == 0
+              && MH_DisableHook(reinterpret_cast<LPVOID>(A)) == MH_ERROR_DISABLED && !Stark::IsHookActive()
+              && Stark::s_hookedAddr == 0, FirstLog('E', "").c_str());
     }
 
     {   blk("HOOK HOLD - a trampoline block held at start, on a hook created and never enabled");
@@ -1849,6 +1945,9 @@ static void HookBlocks() {
         HookReset();
         const uintptr_t I = MakeImage(ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x2000, kSafePE, 8); });
         const uintptr_t e = I + 0x1000, H = I - 0x10000;
+        const bool counting = CountFreezes();
+        g_probeMhSeen.store(-1);
+        g_probeMh.store(true);
         Stark::HoldTrampolineBlock();
         const size_t afterHold = LogSize();
         Stark::HoldTrampolineBlock();
@@ -1863,6 +1962,13 @@ static void HookBlocks() {
               MH_ERROR_DISABLED && MH_CreateHook(reinterpret_cast<LPVOID>(e), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
               nullptr) == MH_ERROR_ALREADY_CREATED && ve == 0x12345678 && Stark::GetHookFireCount() == 0);
         check("HOOK hold: once per process -- a second call does nothing", LogSize() == afterHold && Stark::s_heldBlock == H);
+        const int frozen = g_freezes.load();
+        const MH_STATUS applied = MH_ApplyQueued();
+        check("HOOK hold: under MinHook's lock while it reads the image; no hook enabled, disabled or queued to be",
+              counting && g_probeMhSeen.load() == 1 && frozen == 0 && applied == MH_OK && g_freezes.load() == 0
+              && memcmp(reinterpret_cast<const void*>(e), kSafePE, 8) == 0
+              && MH_DisableHook(reinterpret_cast<LPVOID>(e)) == MH_ERROR_DISABLED,
+              F("counting=%d lock=%d freezes=%d/%d", (int)counting, g_probeMhSeen.load(), frozen, g_freezes.load()).c_str());
 
         HookReset();
         const MH_STATUS pre = MH_Initialize();
@@ -1943,6 +2049,81 @@ static void HookBlocks() {
               "target; ", (unsigned long long)(I5 + 0x2FCD), (unsigned long long)(I5 + 0x1000)).c_str()))
               && MH_DisableHook(reinterpret_cast<LPVOID>(I5 + 0x2FCD)) == MH_ERROR_NOT_CREATED, FirstLog('W', "").c_str());
 
+        // The read reaches exactly Falsch::kSpan bytes: a span whose last byte is on a page that cannot be read refuses
+        // the candidate, and the same span one byte lower holds it.
+        HookReset();
+        ImgSpec s1;
+        s1.entryRva = 0x2FC1;
+        const uintptr_t Is1 = MakeImage(s1, [](uint8_t* b) { memcpy(b + 0x2FC1, kSafePE, 8); });
+        Stark::s_hookedAddr = Is1 + 0x1000;
+        Stark::HoldTrampolineBlock();
+        const bool refused64 = Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, F("0x%llX: not readable code; 0x%llX: a "
+            "real hook's target; ", (unsigned long long)(Is1 + 0x2FC1), (unsigned long long)(Is1 + 0x1000)).c_str()));
+        HookReset();
+        ImgSpec s0;
+        s0.entryRva = 0x2FC0;
+        const uintptr_t Is0 = MakeImage(s0, [](uint8_t* b) { memcpy(b + 0x2FC0, kSafePE, 8); });
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold span: 64 bytes are read -- a last byte on a page that cannot be read refuses, one byte lower holds",
+              refused64 && Stark::s_heldTarget == Is0 + 0x2FC0 && Stark::s_heldBlock == Is0 - 0x10000,
+              F("refused64=%d held=0x%llX", (int)refused64, (unsigned long long)Stark::s_heldTarget).c_str());
+
+        HookReset();
+        ImgSpec gd;
+        gd.entryRva = 0x2FD0;
+        gd.prot[3] = PAGE_EXECUTE_READ | PAGE_GUARD;
+        const uintptr_t Ig = MakeImage(gd, [](uint8_t* b) { memcpy(b + 0x2FD0, kSafePE, 8); });
+        Stark::s_hookedAddr = Ig + 0x1000;
+        g_watchLo.store(Ig + 0x3000);
+        g_watchHi.store(Ig + 0x4000);
+        g_watchFaults.store(0);
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold guard: a span reaching a guarded page is refused from the page query -- the guard still armed",
+              Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, F("0x%llX: not readable code; 0x%llX: a real hook's "
+              "target; ", (unsigned long long)(Ig + 0x2FD0), (unsigned long long)(Ig + 0x1000)).c_str()))
+              && (RealQuery(Ig + 0x3000).Protect & PAGE_GUARD) != 0 && g_watchFaults.load() == 0,
+              F("faults=%d", g_watchFaults.load()).c_str());
+        g_watchLo.store(0);
+        g_watchHi.store(0);
+
+        HookReset();
+        ImgSpec ro;
+        ro.entryRva = 0x2FD0;
+        ro.prot[3] = PAGE_READONLY;
+        const uintptr_t Ir = MakeImage(ro, [](uint8_t* b) { memcpy(b + 0x2FD0, kSafePE, 8); });
+        Stark::s_hookedAddr = Ir + 0x1000;
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold not code: a span reaching a page that can be read but not executed is refused",
+              Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, F("0x%llX: not readable code; 0x%llX: a real hook's "
+              "target; ", (unsigned long long)(Ir + 0x2FD0), (unsigned long long)(Ir + 0x1000)).c_str()))
+              && MH_DisableHook(reinterpret_cast<LPVOID>(Ir + 0x2FD0)) == MH_ERROR_NOT_CREATED, FirstLog('W', "").c_str());
+
+        HookReset();
+        ImgSpec bf;
+        bf.entryRva = 0x2000;
+        bf.prot[1] = PAGE_EXECUTE_READ | PAGE_GUARD;
+        const uintptr_t Ib = MakeImage(bf, [](uint8_t* b) { memcpy(b + 0x2000, kSafePE, 8); });
+        g_watchLo.store(Ib + 0x1000);
+        g_watchHi.store(Ib + 0x2000);
+        g_watchFaults.store(0);
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold before: a guarded executable page under a candidate refuses it -- MinHook may read 5 bytes there",
+              Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, F("0x%llX: not readable code; 0x%llX: not readable "
+              "code; ", (unsigned long long)(Ib + 0x2000), (unsigned long long)(Ib + 0x1000)).c_str()))
+              && (RealQuery(Ib + 0x1000).Protect & PAGE_GUARD) != 0 && g_watchFaults.load() == 0,
+              F("faults=%d", g_watchFaults.load()).c_str());
+        g_watchLo.store(0);
+        g_watchHi.store(0);
+
+        HookReset();
+        ImgSpec lf;
+        lf.lfanew = 0xE00;
+        const uintptr_t Ih = MakeImage(lf, safeAt(0x1000));
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold header: the whole header page is read -- a section table near its end still names the code",
+              Stark::s_heldBlock == Ih - 0x10000 && HasLog('I', HeldLine(Ih - 0x10000, Ih + 0x1000, "the image's entry "
+              "point", "which covers", Ih + 0x1000, Ih + 0x3000, Ih, 0x10000, true)), FirstLog('W', "").c_str());
+
         HookReset();
         ImgSpec ur;
         ur.dynBase = false;
@@ -1992,10 +2173,13 @@ static void HookBlocks() {
         Stark::HoldTrampolineBlock();
         const bool heldU = Stark::s_heldTarget == I9 + 0x1000 && Stark::s_heldBlock == I9 - 0x10000;
         const Falsch::Report ru = Falsch::VetHookTarget(I9 + 0x1000);
+        // A canary in a free slot of the held block: a block MinHook freed and allocated again comes back zeroed.
+        volatile uint64_t* const canary = reinterpret_cast<volatile uint64_t*>(I9 - 0x10000 + 0x48);
+        if (heldU) *canary = 0x5AFE5AFE5AFE5AFEull;
         const bool okV = Stark::InstallHook(I9 + 0x1000);
-        check("HOOK vet before step aside ⭐: a refused ProcessEvent does not cost the held block", heldU
+        check("HOOK vet before step aside ⭐: a refused ProcessEvent does not cost the held block, not even for a moment", heldU
               && ru.verdict == Falsch::Verdict::Unsafe && !okV && CountContaining("holder removed") == 0
-              && Stark::s_heldTarget == I9 + 0x1000 && Stark::s_heldBlock == I9 - 0x10000
+              && Stark::s_heldTarget == I9 + 0x1000 && Stark::s_heldBlock == I9 - 0x10000 && *canary == 0x5AFE5AFE5AFE5AFEull
               && MH_CreateHook(reinterpret_cast<LPVOID>(I9 + 0x1000), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
                                nullptr) == MH_ERROR_ALREADY_CREATED);
     }
@@ -2090,25 +2274,32 @@ static void HookBlocks() {
             (ent->OptionalHeader.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) ? "yes" : "no");
         const std::string nb = " -- NB a block start WAS free, so the window is not the cause: VirtualAlloc refused the "
                                "page (commit limit / ACG) or MinHook's hook table could not grow (LastError %u)";
-        auto starvedLine = [&](uintptr_t T, uintptr_t P, const std::string& held, const std::string& tail) {
+        // A starved window for a target at T + off, on the page Starve made at T.
+        auto starvedLine = [&](uintptr_t T, uintptr_t P, const std::string& held, const std::string& tail, uint32_t off) {
+            const uintptr_t t = T + off;
             return F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] -- 0 free "
                      "region(s), 0x0 bytes free, largest 0x0 at 0x0, 0 can start a block; reserved 0x7FFFF001, committed "
-                     "0x1000; taken by private 0x80000001, image 0x0, mapped 0x0, largest occupant 0x%llX x 0x40000000 "
+                     "0x1000; taken by private 0x80000001, image 0x0, mapped 0x0, largest occupant 0x%llX x 0x%llX "
                      "(private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> none; held block %s; %s%s (4 "
-                     "region(s) walked in 0 ms)", (unsigned long long)T, (unsigned long long)(T - 0x40000000),
-                     (unsigned long long)(T + 0x3FFFF001), (unsigned long long)P, held.c_str(), mainImage.c_str(),
-                     tail.c_str());
+                     "region(s) walked in 0 ms)", (unsigned long long)t, (unsigned long long)(t - 0x40000000),
+                     (unsigned long long)(t + 0x3FFFF001), (unsigned long long)P, (unsigned long long)(0x40000000 - off),
+                     held.c_str(), mainImage.c_str(), tail.c_str());
         };
 
         HookReset();
         uintptr_t P = 0;
-        const uintptr_t T = Starve(P);
-        const bool okA = T && Stark::InstallHook(T);
-        const std::string line = starvedLine(T, P, "none", "");
-        check("HOOK window ⭐: a full window -- the allocation failure, then the map of what took the window",
+        const uintptr_t T = Starve(P, 0x10);
+        g_probeMhSeen.store(-1);
+        g_probeMh.store(true);
+        const bool okA = T && Stark::InstallHook(T + 0x10);
+        const std::string line = starvedLine(T, P, "none", "", 0x10);
+        check("HOOK window ⭐: a full window -- the allocation failure, then the map of what took the window around the "
+              "target itself",
               T != 0 && !okA && !Stark::IsHookActive()
               && HasLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC") && HasLog('E', line),
               FirstLog('E', "GameThreadDispatch: MinHook block window").c_str());
+        check("HOOK window lock: the walk and its line are made under MinHook's lock", g_probeMhSeen.load() == 1,
+              F("lock=%d", g_probeMhSeen.load()).c_str());
 
         HookReset();
         uintptr_t P2 = 0;
@@ -2118,7 +2309,7 @@ static void HookBlocks() {
         const bool okL = T2 && Stark::InstallHook(T2);
         check("HOOK window last error ⭐: the LastError read straight after MinHook's call -- 0, not what the log left",
               T2 != 0 && !okL && CountContaining("out of reach") == 0 && HasLog('E', starvedLine(T2, P2,
-              F("0x%llX (serves this target)", (unsigned long long)(T2 - 0x10000)), F(nb.c_str(), 0u))),
+              F("0x%llX (serves this target)", (unsigned long long)(T2 - 0x10000)), F(nb.c_str(), 0u), 0)),
               FirstLog('E', "GameThreadDispatch: MinHook block window").c_str());
 
         HookReset();
@@ -2184,9 +2375,103 @@ static void HookBlocks() {
         g_tickStep = 1000;
         Lager::WalkStop st = Lager::WalkStop::Complete;
         const auto m = Stark::WalkRegions(T5 - 0x40000000, T5 + 0x40000001, st);
+        g_tickStep = 2001;
+        Lager::WalkStop st1 = Lager::WalkStop::Complete;
+        const auto m1 = Stark::WalkRegions(T5 - 0x40000000, T5 + 0x40000001, st1);
         g_tickStep = 0;
-        check("HOOK walk budget: the walk stops once its 2000 ms are spent -- not before", T5 != 0
-              && st == Lager::WalkStop::Budget && m.size() == 3 && m[2].base == T5, F("size=%zu", m.size()).c_str());
+        check("HOOK walk budget: the walk stops once its 2000 ms are spent -- not before, and not a millisecond after",
+              T5 != 0 && st == Lager::WalkStop::Budget && m.size() == 3 && m[2].base == T5
+              && st1 == Lager::WalkStop::Budget && m1.size() == 1, F("size=%zu/%zu", m.size(), m1.size()).c_str());
+
+        // Windows of the test's writing (the Map seam), for layouts the real address space cannot be made to hold on
+        // demand: the bottom of the address space, occupants of every type, a region cap, a failed query.
+        HookReset();
+        const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
+        g_vqMap = { Reg(0x10000, 0xFFF0000, MEM_RESERVE, 0x10000, MEM_PRIVATE),
+                    Reg(0x10000000, 0x1000, MEM_COMMIT, 0x10000000, MEM_IMAGE),
+                    Reg(0x10001000, 0xF000, MEM_FREE, 0, 0),
+                    Reg(0x10010000, 0xFFF0000, MEM_RESERVE, 0x10010000, MEM_MAPPED),
+                    Reg(0x20000000, 0x1000, MEM_COMMIT, 0x20000000, MEM_PRIVATE),
+                    Reg(0x20001000, 0xF000, MEM_RESERVE, 0x20000000, MEM_PRIVATE),
+                    Reg(0x20010000, 0x40000000, MEM_RESERVE, 0x20010000, MEM_PRIVATE) };
+        g_vqMode = VqMode::Map;
+        g_vqLo = 0x10000;
+        g_vqHi = 0x60010000;
+        Stark::LogTrampolineWindow(0x20000000, 0);
+        g_vqMode = VqMode::Real;
+        const std::string low = F("GameThreadDispatch: MinHook block window for 0x20000000: block starts [0x10000, "
+            "0x5FFFF001] -- 1 free region(s), 0xF000 bytes free, largest 0xF000 at 0x10001000, 0 can start a block; "
+            "reserved 0x5FFDF001, committed 0x2000; taken by private 0x4FFF0001, image 0x1000, mapped 0xFFF0000, largest "
+            "occupant 0x20010000 x 0x3FFF0001 (private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> none; held "
+            "block none; %s (7 region(s) walked in 0 ms)", mainImage.c_str());
+        check("HOOK window low ⭐: at the bottom of the address space -- the window clamped, each occupant by its type, a "
+              "free gap holding no 64 KB start counted as none", appMin == 0x10000 && HasLog('E', low),
+              FirstLog('E', "").c_str());
+
+        HookReset();
+        const uintptr_t Tc = 0x300000000000ull;
+        g_vqMap = { Reg(Tc - 0x40000000, 0x3FFF0000, kVqStripes, Tc - 0x40000000, MEM_PRIVATE),
+                    Reg(Tc - 0x10000, 0x10000, MEM_FREE, 0, 0),
+                    Reg(Tc, 0x10000, MEM_COMMIT, Tc, MEM_PRIVATE),
+                    Reg(Tc + 0x10000, 0x10000, MEM_FREE, 0, 0),
+                    Reg(Tc + 0x20000, 0x40000000, MEM_RESERVE, Tc + 0x20000, MEM_PRIVATE) };
+        g_vqMode = VqMode::Map;
+        g_vqLo = Tc - 0x40000000;
+        g_vqHi = Tc + 0x40020000;
+        Stark::LogTrampolineWindow(Tc, 4321);
+        g_vqMode = VqMode::Real;
+        const std::string cap = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] (map "
+            "INCOMPLETE: the region cap was hit before the window was fully mapped -- the byte totals cover only the part "
+            "walked) -- 0 free region(s), 0x0 bytes free, largest 0x0 at 0x0, 0 can start a block; reserved 0x186A0000, "
+            "committed 0x186A0000; taken by private 0x30D40000, image 0x0, mapped 0x0, largest occupant 0x%llX x 0x1000 "
+            "(private/heap); FindPrevFreeRegion -> 0x%llX, FindNextFreeRegion -> 0x%llX; held block none; %s%s (200000 "
+            "region(s) walked in 0 ms)", (unsigned long long)Tc, (unsigned long long)(Tc - 0x40000000),
+            (unsigned long long)(Tc + 0x3FFFF001), (unsigned long long)(Tc - 0x40000000), (unsigned long long)(Tc - 0x10000),
+            (unsigned long long)(Tc + 0x10000), mainImage.c_str(), F(nb.c_str(), 4321u).c_str());
+        check("HOOK window cap: a walk cut by its region cap says so, not 'time budget', and the picks are measured anyway",
+              HasLog('E', cap), FirstLog('E', "").c_str());
+
+        HookReset();
+        const uintptr_t Tf = 0x310000000000ull;
+        g_vqMap = { Reg(Tf - 0x40000000, 0x40000000, MEM_RESERVE, Tf - 0x40000000, MEM_PRIVATE),
+                    Reg(Tf, 0x10000, MEM_COMMIT, Tf, MEM_PRIVATE),
+                    Reg(Tf + 0x10000, 0x10000, kVqFail, 0, 0) };
+        g_vqMode = VqMode::Map;
+        g_vqLo = Tf - 0x40000000;
+        g_vqHi = Tf + 0x20000;
+        Stark::LogTrampolineWindow(Tf, 0);
+        g_vqMode = VqMode::Real;
+        const std::string qf = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] (map "
+            "INCOMPLETE: a VirtualQuery failed inside the window) -- 0 free region(s), 0x0 bytes free, largest 0x0 at 0x0, 0 "
+            "can start a block; reserved 0x40000000, committed 0x10000; taken by private 0x40010000, image 0x0, mapped 0x0, "
+            "largest occupant 0x%llX x 0x40000000 (private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> none; "
+            "held block none; %s (2 region(s) walked in 0 ms)", (unsigned long long)Tf, (unsigned long long)(Tf - 0x40000000),
+            (unsigned long long)(Tf + 0x3FFFF001), (unsigned long long)(Tf - 0x40000000), mainImage.c_str());
+        check("HOOK window query failed: a walk ended by a failed query says that, not 'time budget'", HasLog('E', qf),
+              FirstLog('E', "").c_str());
+
+        HookReset();
+        const uintptr_t T0 = 0x320000000000ull, Tu = T0 + 0x10;
+        g_vqMap = { Reg(T0 - 0x40010000, 0x3FFC0000, MEM_RESERVE, T0 - 0x40010000, MEM_PRIVATE),
+                    Reg(T0 - 0x50000, 0x10000, MEM_FREE, 0, 0),
+                    Reg(T0 - 0x40000, 0x80000, MEM_RESERVE, T0 - 0x40000, MEM_PRIVATE),
+                    Reg(T0 + 0x40000, 0x10000, MEM_FREE, 0, 0),
+                    Reg(T0 + 0x50000, 0x3FFD0000, MEM_RESERVE, T0 + 0x50000, MEM_PRIVATE) };
+        g_vqMode = VqMode::Map;
+        g_vqLo = T0 - 0x40010000;
+        g_vqHi = T0 + 0x40020000;
+        Stark::LogTrampolineWindow(Tu, 777);
+        g_vqMode = VqMode::Real;
+        const std::string farPicks = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] "
+            "-- 2 free region(s), 0x20000 bytes free, largest 0x10000 at 0x%llX, 2 can start a block; reserved 0x7FFE0001, "
+            "committed 0x0; taken by private 0x7FFE0001, image 0x0, mapped 0x0, largest occupant 0x%llX x 0x3FFB0011 "
+            "(private/heap); FindPrevFreeRegion -> 0x%llX, FindNextFreeRegion -> 0x%llX; held block none; %s%s (5 "
+            "region(s) walked in 0 ms)", (unsigned long long)Tu, (unsigned long long)(T0 - 0x3FFFFFF0),
+            (unsigned long long)(T0 + 0x3FFFF011), (unsigned long long)(T0 - 0x50000), (unsigned long long)(T0 + 0x50000),
+            (unsigned long long)(T0 - 0x50000), (unsigned long long)(T0 + 0x40000), mainImage.c_str(),
+            F(nb.c_str(), 777u).c_str());
+        check("HOOK window far picks: an unaligned target's picks are searched out to the window's edges, past its "
+              "neighbours", HasLog('E', farPicks), FirstLog('E', "").c_str());
     }
 
     {   blk("HOOK HELD BLOCK - ProcessEvent's trampoline lands in the held block; the log says whether it was needed");
@@ -2207,6 +2492,16 @@ static void HookBlocks() {
               && MH_DisableHook(reinterpret_cast<LPVOID>(I + 0x1000)) == MH_ERROR_DISABLED
               && v == 0x12345678 && Stark::GetHookFireCount() == 1, FirstLog('I', "GameThreadDispatch: ProcessEvent's").c_str());
 
+        const bool countingR = okN && CountFreezes();
+        Stark::RemoveHook();
+        const uint32_t vr = okN ? CallTarget(I + 0x2000) : 0;
+        check("HOOK held soft removal: the flag cleared and nothing else -- no hook enabled or disabled, the holder untouched",
+              countingR && g_freezes.load() == 0 && !Stark::IsHookActive()
+              && memcmp(reinterpret_cast<const void*>(I + 0x1000), kSafePE, 8) == 0
+              && MH_DisableHook(reinterpret_cast<LPVOID>(I + 0x1000)) == MH_ERROR_DISABLED
+              && *reinterpret_cast<const uint8_t*>(I + 0x2000) == 0xE9 && vr == 0x12345678,
+              F("counting=%d freezes=%d", (int)countingR, g_freezes.load()).c_str());
+
         HookReset();
         const uintptr_t J = HeldWindow(false);
         Stark::HoldTrampolineBlock();
@@ -2220,6 +2515,19 @@ static void HookBlocks() {
               "window was not starved", (unsigned long long)(J + 0x10000)))
               && CountContaining("NEEDED") == 0 && CountContaining("out of reach") == 0
               && MH_DisableHook(reinterpret_cast<LPVOID>(J + 0x1000)) == MH_ERROR_DISABLED,
+              FirstLog('I', "GameThreadDispatch: the held").c_str());
+
+        HookReset();
+        const uintptr_t K = HeldWindow(true, true);
+        Stark::HoldTrampolineBlock();
+        const bool heldK = K && Stark::s_heldBlock == K - 0x10000;
+        const bool okK = K && Stark::InstallHook(K + 0x2000);
+        check("HOOK held reused below: a fresh block free only below -- reused, and the log says the window was not starved",
+              heldK && okK && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in the held block "
+              "0x%llX", (unsigned long long)reinterpret_cast<uintptr_t>(Stark::s_originalPE), (unsigned long long)(K - 0x10000)))
+              && HasLog('I', F("GameThreadDispatch: the held block was reused, but a fresh block was also available this "
+              "time (FindPrevFreeRegion -> 0x%llX, FindNextFreeRegion -> 0x0) -- the window was not starved",
+              (unsigned long long)(K - 0x20000))) && CountContaining("NEEDED") == 0,
               FirstLog('I', "GameThreadDispatch: the held").c_str());
     }
 
@@ -2258,6 +2566,26 @@ static void HookBlocks() {
               && HasLog('I', "GameThreadDispatch: hook flag cleared (physical hook retained to avoid in-flight unhook "
               "race)") && again == MH_ERROR_ALREADY_INITIALIZED && *reinterpret_cast<const uint8_t*>(T) == 0xE9
               && v == 0x12345678 && Stark::GetHookFireCount() == 1);
+    }
+
+    // Last: a dynamic-code policy cannot be lifted for the rest of the process.
+    {   blk("HOOK ALLOCATION REFUSED - a block start is free but VirtualAlloc refuses it; the line says so, with MinHook's LastError");
+        HookReset();
+        const uintptr_t T = CodePage(kSafePE);
+        (void)MH_Initialize();
+        PROCESS_MITIGATION_DYNAMIC_CODE_POLICY acg{};
+        acg.ProhibitDynamicCode = 1;
+        const bool set = SetProcessMitigationPolicy(ProcessDynamicCodePolicy, &acg, sizeof acg) != FALSE;
+        SetLastError(kLogClobber);
+        const bool okD = Stark::InstallHook(T);
+        const std::string line = FirstLog('E', F("GameThreadDispatch: MinHook block window for 0x%llX:", (unsigned long long)T));
+        check("HOOK allocation refused ⭐: a dynamic-code policy refuses MinHook's block -- 'a block start WAS free', with "
+              "the LastError MinHook's call left", set && !okD
+              && HasLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC")
+              && line.find(F(" -- NB a block start WAS free, so the window is not the cause: VirtualAlloc refused the page "
+                             "(commit limit / ACG) or MinHook's hook table could not grow (LastError %u) (",
+                             (unsigned)ERROR_DYNAMIC_CODE_BLOCKED)) != std::string::npos,
+              F("set=%d %s", (int)set, line.c_str()).c_str());
     }
 
     HookReset();
