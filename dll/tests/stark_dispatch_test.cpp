@@ -2639,8 +2639,8 @@ static void HookBlocks() {
             "(private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> 0x%llX; held block 0x%llX (out of this "
             "target's reach); %s%s (4 region(s) walked in 0 ms)", (unsigned long long)T9, (unsigned long long)(T9 - 0x40000000),
             (unsigned long long)(T9 + 0x3FFFF001), (unsigned long long)(T9 + 0x10000), (unsigned long long)(T9 - 0x40000000),
-            (unsigned long long)(T9 + 0x10000), (unsigned long long)(Ih2 - 0x10000), mainImage.c_str(),
-            F(nb.c_str(), 0u).c_str());
+            (unsigned long long)(T9 + 0x10000), (unsigned long long)(Ih2 - 0x10000),
+            F("main image 0x%llX + 0x10000, DYNAMICBASE yes", (unsigned long long)Ih2).c_str(), F(nb.c_str(), 0u).c_str());
         check("HOOK window after a hold: the window is walked with a block held, and its LastError is MinHook's, not the "
               "reach warning's", heldH2 && T9 != 0 && !ok9 && CountContaining("is out of reach of ProcessEvent") == 1
               && HasLog('E', afterHold), FirstLog('E', "GameThreadDispatch: MinHook block window").c_str());
