@@ -1333,6 +1333,12 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # wirbel_teleport_test #includes Wirbel.cpp (Teleport) and drives it over a fake world, with a fake engine
+    # answering every game-thread invoke.
+    if (-not (Invoke-CppSelfTest -TargetName "wirbel_teleport_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the
