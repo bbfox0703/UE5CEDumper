@@ -1493,7 +1493,18 @@ static void DetectItemSize() {
             gHasNames = bestHasNames; gObjOff = s_itemObjOffset; gFlat = s_isFlat; gProbes = bestProbes;
         }
 
-        if (bestTotal >= threshold && qualityOk) {
+        // A pass that resolved no name is trusted outright only while no pass has resolved one. The verdict on
+        // objects counted without names stands in for names the pool cannot resolve; once a pass has resolved names it
+        // can, and a later pass that names nothing read objects with no name -- on a sparse head, whatever follows the
+        // chunk table, read as a flat item array. The fallback below keeps the pass that named.
+        // [RESCAN-SPARSE-TABLE-2026-11-24]
+        const bool namelessAfterNames = !bestHasNames && gNamed > 0;
+        if (namelessAfterNames && bestTotal >= threshold) {
+            LOG_INFO("ObjectArray: +0x%02X pass validated %d objects that name nothing%s, but a pass resolved %d names "
+                     "-- not trusted outright", s_itemObjOffset, bestCount, s_isFlat ? " (flat)" : "", gNamed);
+        }
+
+        if (bestTotal >= threshold && qualityOk && !namelessAfterNames) {
             // ⚠ THE SHAPE THAT GOT PAST qualityOk TWICE. A stride that DIVIDES the real
             // item size lands off-item on every non-multiple probe. If what it lands on
             // happens to be a lazily-null field (UE5.7+ Test builds put TStatId there,
