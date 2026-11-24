@@ -1874,6 +1874,17 @@ static void HookBlocks() {
               && Stark::s_mhInitialized.load());
 
         HookReset();
+        const uintptr_t I2f = MakeImage(ImgSpec{}, safeAt(0x1000));
+        const MH_STATUS down = MH_Uninitialize();   // the hold is MinHook's first caller, as at proxy start
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold first caller: the hold initialises MinHook itself, then holds", I2f != 0 && down == MH_OK
+              && Stark::s_heldTarget == I2f + 0x1000 && Stark::s_heldBlock != 0
+              && CountLog('I', "GameThreadDispatch: held a MinHook") == 1 && Stark::s_mhInitialized.load()
+              && MH_CreateHook(reinterpret_cast<LPVOID>(I2f + 0x1000), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
+                               nullptr) == MH_ERROR_ALREADY_CREATED,
+              FirstLog('W', "GameThreadDispatch: no MinHook").c_str());
+
+        HookReset();
         ImgSpec none;
         none.entryRva = 0;
         none.secs.clear();
@@ -2207,7 +2218,8 @@ static void HookBlocks() {
               (unsigned long long)(J - 0x10000))) && HasLog('I', F("GameThreadDispatch: the held block was reused, but a "
               "fresh block was also available this time (FindPrevFreeRegion -> 0x0, FindNextFreeRegion -> 0x%llX) -- the "
               "window was not starved", (unsigned long long)(J + 0x10000)))
-              && CountContaining("NEEDED") == 0 && MH_DisableHook(reinterpret_cast<LPVOID>(J + 0x1000)) == MH_ERROR_DISABLED,
+              && CountContaining("NEEDED") == 0 && CountContaining("out of reach") == 0
+              && MH_DisableHook(reinterpret_cast<LPVOID>(J + 0x1000)) == MH_ERROR_DISABLED,
               FirstLog('I', "GameThreadDispatch: the held").c_str());
     }
 
