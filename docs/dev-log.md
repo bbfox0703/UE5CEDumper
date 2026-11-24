@@ -29,6 +29,31 @@ builds ≤696 in
 
 -----
 
+## 2026-11-24 (no build change) — Stark's MinHook install has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `stark_dispatch_test` drives `Stark.cpp`'s MinHook install with real hooks: a
+  synthetic main image placed where the test chooses, address-space fixtures that take every block start within
+  MinHook's +-1 GB reach or leave exactly one free, an address space the test writes behind the VirtualQuery
+  seam, a probe of MinHook's lock, a count of MinHook's thread freezes, and NtQueryVirtualMemory hooked to lie
+  about one page.
+- **Covered, 62 checks:** the install and its refusals; the held block taken once per process,
+  under MinHook's lock to its last line, never enabled, each candidate's 64 bytes read with every page rule and a
+  read that faults refused; a real hook taking the holder's target only after the vet; the main image's header
+  read whole, every readable protection accepted, a guard or a fault contained; the window walked on an
+  allocation failure, clamped at both ends of the address space, each occupant by type, its stop reasons, budget,
+  throttle and live picks, and its LastError the one MinHook's call left, with a dynamic-code policy refusing
+  MinHook's block; whether the held block was needed; a soft removal that enables nothing; the shutdown.
+- **Negative controls:** 115 mutants of the MinHook glue, every one detected. After the first 64, four
+  rounds of critics looked for an edit that breaks what a deleted C# pin protected while every check stays green;
+  each edit they found became a check and a mutant. The 9 C# pins that read the glue as text are gone, or keep
+  only the halves that read Heiter.cpp, Falsch or every MinHook call site in `dll/src`.
+- **Found on the way:** MinHook's private heap, made by the first MH_Initialize, can take the free granule a
+  fixture opened for the first trampoline block, so the fixtures initialise MinHook first.
+- **Tests:** `stark_dispatch_test` 133 checks, 0 failures, twenty runs in a row, and under ASan;
+  C# 8520 (1 skipped).
+
+-----
+
 ## 2026-11-24 (no build change) — RESCAN's sparse structure reads the same on every run `[RESCAN-SPARSE-TABLE-2026-11-24]`
 
 - **What changes:** tests only; nothing in the DLL changed. `dll_core_test`'s RESCAN setup check "...and its
