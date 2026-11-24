@@ -1624,7 +1624,10 @@ static uintptr_t MakeImageAt(uintptr_t I, const ImgSpec& spec, const std::functi
         return I;
     }
 }
+// MinHook's heap first: an MH_Initialize after the hole is open can place its heap in it. Stark's own flag stays
+// unset, so its EnsureMinHookLocked still runs and meets MH_ERROR_ALREADY_INITIALIZED.
 static uintptr_t MakeImage(const ImgSpec& spec, const std::function<void(uint8_t*)>& code) {
+    (void)MH_Initialize();
     for (int attempt = 0; attempt < 8; ++attempt) {
         void* probe = VirtualAlloc(nullptr, 0x40000, MEM_RESERVE, PAGE_NOACCESS);
         if (!probe) continue;
@@ -1691,6 +1694,7 @@ static uintptr_t LivePick(uintptr_t& P) {
 // An image at I whose window's one free granule is H = I - 0x10000, the holder's block; with `high`, everything
 // above the image is taken too, so once the holder has H no fresh block fits anywhere.
 static uintptr_t HeldWindow(bool high) {
+    (void)MH_Initialize();
     for (int attempt = 0; attempt < 8; ++attempt) {
         const size_t mark = g_fixtures.size();
         const uintptr_t P = ProbeSpan(0x80040000);
