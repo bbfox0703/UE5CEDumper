@@ -15931,6 +15931,12 @@ int main() {
                 check("RESCAN setup: the sparse structure reads a larger count than the master", Aura::GetCount() == 0x30000,
                       std::to_string(Aura::GetCount()).c_str());
                 const Genau::GObjectsCandidateScore sparse = Genau::ScoreGObjectsCandidate(S, Genau::kRescanNameSampleSlots);
+                // The scorer leaves Aura on S, so this is the layout its names were read with.
+                char spLayout[96];
+                snprintf(spLayout, sizeof spLayout, "%s, item %d at +0x%02X%s", Aura::GetItemDetect(), Aura::GetItemSize(),
+                         Aura::GetItemObjOffset(), Aura::IsFlat() ? ", flat" : "");
+                check("RESCAN setup: ...read through its chunk table, not the table read as an item array", !Aura::IsFlat(),
+                      spLayout);
                 check("RESCAN setup: ...and its head names objects only here and there",
                       sparse.resolved >= Genau::kMinResolvedNames && sparse.scanned > 4 * sparse.resolved,
                       (std::to_string(sparse.resolved) + " of " + std::to_string(sparse.scanned)).c_str());
