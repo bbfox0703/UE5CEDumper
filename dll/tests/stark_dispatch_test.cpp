@@ -2430,19 +2430,25 @@ static void HookBlocks() {
         const int reads0 = g_tickReads.load(), vq0 = g_vqCalls.load();
         const bool c2 = Stark::InstallHook(T1);
         const int reads1 = g_tickReads.load(), vq1 = g_vqCalls.load();
+        const bool c2b = Stark::InstallHook(T1);
         g_tick.store(B + 5000);
         const bool c3 = Stark::InstallHook(T1);
-        g_tick.store(B + 5001);
+        g_tick.store(B + 5010);
+        const bool c3b = Stark::InstallHook(T1);
+        g_tick.store(B + 5011);
         Stark::LogTrampolineWindow(Tb, 0);
-        g_tick.store(B + 5002);
+        g_tick.store(B + 5012);
         const bool c5 = Stark::InstallHook(T1);
         const std::string w1 = F("GameThreadDispatch: MinHook block window for 0x%llX:", (unsigned long long)T1);
         const std::string w2 = F("GameThreadDispatch: MinHook block window for 0x%llX:", (unsigned long long)Tb);
-        check("HOOK window throttle ⭐: the same target is not walked again within 5 s -- not even its clock or a query",
-              T1 != 0 && !c1 && !c2 && !c3 && !c5 && CountLog('E', w1) == 3 && CountLog('E', w2) == 1
+        check("HOOK window throttle ⭐: the same target is not walked again within 5 s of its last walk -- every failure "
+              "in that time skipped, not even its clock or a query",
+              T1 != 0 && !c1 && !c2 && !c2b && !c3 && !c3b && !c5 && CountLog('E', w1) == 3 && CountLog('E', w2) == 1
+              && CountLog('W', F("GameThreadDispatch: MinHook block window for 0x%llX not re-walked -- its map was logged "
+                                 "4999 ms ago", (unsigned long long)T1)) == 2
               && HasLog('W', F("GameThreadDispatch: MinHook block window for 0x%llX not re-walked -- its map was logged "
-                               "4999 ms ago", (unsigned long long)T1))
-              && CountLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC") == 4
+                               "10 ms ago", (unsigned long long)T1))
+              && CountLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC") == 6
               && reads1 - reads0 == 1 && vq1 - vq0 == 0, F("walks=%d reads=%d vq=%d", CountLog('E', w1),
               reads1 - reads0, vq1 - vq0).c_str());
 
@@ -2519,6 +2525,7 @@ static void HookBlocks() {
         g_vqLo = Tc - 0x40000000;
         g_vqHi = Tc + 0x40020000;
         Stark::LogTrampolineWindow(Tc, 4321);
+        Stark::LogTrampolineWindow(Tc, 4321);
         g_vqMode = VqMode::Real;
         const std::string cap = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] (map "
             "INCOMPLETE: the region cap was hit before the window was fully mapped -- the byte totals cover only the part "
@@ -2528,8 +2535,10 @@ static void HookBlocks() {
             "region(s) walked in 0 ms)", (unsigned long long)Tc, (unsigned long long)(Tc - 0x40000000),
             (unsigned long long)(Tc + 0x3FFFF001), (unsigned long long)(Tc - 0x40000000), (unsigned long long)(Tc - 0x10000),
             (unsigned long long)(Tc + 0x10000), mainImage.c_str(), F(nb.c_str(), 4321u).c_str());
-        check("HOOK window cap: a walk cut by its region cap says so, not 'time budget', and the picks are measured anyway",
-              HasLog('E', cap), FirstLog('E', "").c_str());
+        check("HOOK window cap: a walk cut by its region cap says so, not 'time budget', the picks are measured anyway, "
+              "and it still throttles the next walk",
+              HasLog('E', cap) && CountLog('E', "") == 1 && HasLog('W', F("GameThreadDispatch: MinHook block window for "
+              "0x%llX not re-walked -- its map was logged 0 ms ago", (unsigned long long)Tc)), FirstLog('E', "").c_str());
 
         HookReset();
         const uintptr_t Tf = 0x310000000000ull;
@@ -2539,6 +2548,9 @@ static void HookBlocks() {
         g_vqMode = VqMode::Map;
         g_vqLo = Tf - 0x40000000;
         g_vqHi = Tf + 0x20000;
+        const int vqBefore = g_vqCalls.load();
+        Stark::LogTrampolineWindow(Tf, 0);
+        const int vqWalk = g_vqCalls.load() - vqBefore;
         Stark::LogTrampolineWindow(Tf, 0);
         g_vqMode = VqMode::Real;
         const std::string qf = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] (map "
@@ -2547,8 +2559,11 @@ static void HookBlocks() {
             "largest occupant 0x%llX x 0x40000000 (private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> none; "
             "held block none; %s (2 region(s) walked in 0 ms)", (unsigned long long)Tf, (unsigned long long)(Tf - 0x40000000),
             (unsigned long long)(Tf + 0x3FFFF001), (unsigned long long)(Tf - 0x40000000), mainImage.c_str());
-        check("HOOK window query failed: a walk ended by a failed query says that, not 'time budget'", HasLog('E', qf),
-              FirstLog('E', "").c_str());
+        check("HOOK window query failed: a walk ended by a failed query says that, not 'time budget', still throttles the "
+              "next walk, and its picks take a handful of queries -- one per allocation, not one per granule",
+              HasLog('E', qf) && CountLog('E', "") == 1 && HasLog('W', F("GameThreadDispatch: MinHook block window for "
+              "0x%llX not re-walked -- its map was logged 0 ms ago", (unsigned long long)Tf)) && vqWalk < 100,
+              F("queries=%d %s", vqWalk, FirstLog('E', "").c_str()).c_str());
 
         HookReset();
         const uintptr_t T0 = 0x320000000000ull, Tu = T0 + 0x10;
