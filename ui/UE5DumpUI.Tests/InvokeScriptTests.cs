@@ -3012,8 +3012,9 @@ public class InvokeScriptTests
         // the word. Part (1) is a rule over every file, so it holds for code not yet written. Hemmung.cpp and
         // Frieren.cpp, which (3) and (4) read, reach no C++ test target, and no C++ test drives the fallback scan, or a
         // Debug Camera subclass named without the word, through the modules in (2), so their source is pinned here.
-        // Wirbel's copies and its callers' hops are wirbel_teleport_test's RES block and MCUR.01, and dll_core_test's
-        // LOCALPC block pins Aura::ScanForLocalPlayerController itself.
+        // Wirbel's copies and its callers' hops are wirbel_teleport_test's RES block and MCUR.01, Edel's are
+        // edel_target_test's SCAN, HOP and EXCL blocks, and dll_core_test's LOCALPC block pins
+        // Aura::ScanForLocalPlayerController itself.
         static string Lf(string s) => s.Replace("\r\n", "\n");
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
@@ -3046,7 +3047,7 @@ public class InvokeScriptTests
 
         // (2) Each local-controller fallback shares Aura's derivation scan, and every Debug Camera hop tests
         // derivation.
-        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp" })
+        foreach (var file in new[] { "Dunste.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp" })
         {
             var src = CodeOnly(Lf(DllSource(file)));
             var resolve = Body(src, "uintptr_t ResolveLocalPC(uintptr_t world");
@@ -3058,7 +3059,7 @@ public class InvokeScriptTests
         // Every caller hops the controller ResolveLocalPC returns -- the scan can return an active
         // debug camera, which is pawnless. Wirbel's POV keeps it for the on-screen view and hops only its pawn delta:
         // wirbel_teleport_test's POV.01.
-        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp" })
+        foreach (var file in new[] { "Dunste.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp" })
         {
             var src = CodeOnly(Lf(DllSource(file)));
             int calls = 0;

@@ -171,20 +171,12 @@ public class LocateGWorldBannerTests
 
     /// <summary>[UI-TEXT-AUDIT-2026-11-18] The DLL's Current Target note for a player with no target-like
     /// reference, which the Related tab shows as its status, names the tab it sends the user to by its label,
-    /// str.Tab.InstanceFinder. Read from Edel.cpp, which no C++ test target compiles.</summary>
+    /// str.Tab.InstanceFinder. The note itself is edel_target_test's PICK.05, word for word; this pins the label it
+    /// names, which no C++ test can read, so a rename on either side fails one of the two.</summary>
     [Fact]
     public void CurrentTargetNoCandidateNote_NamesTheInstancesTabByItsLabel()
     {
-        var tab = UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder");
-        Assert.False(string.IsNullOrEmpty(tab), "str.Tab.InstanceFinder is not in en.axaml");
-
-        var edel = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Edel.cpp")).Replace("\r\n", "\n");
-        const string head = "res.note = \"Player resolved but no target-like reference found.";
-        int at = edel.IndexOf(head, StringComparison.Ordinal);
-        Assert.True(at >= 0, "Edel.cpp no longer sets the no-candidate note");
-        var note = edel[at..edel.IndexOf('\n', at)];
-        Assert.DoesNotContain("Instance Finder", note, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("the " + tab + " tab", note, StringComparison.Ordinal);
+        Assert.Equal("Instances", UE5DumpUI.Core.Res.Get("str.Tab.InstanceFinder"));
     }
 
     [Fact]
