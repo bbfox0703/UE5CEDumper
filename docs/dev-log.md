@@ -29,6 +29,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-25 (no build change) — Current Target has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `edel_target_test` #includes `Edel.cpp` (Current Target) and drives its
+  detection over a fake world, with decoys ahead of every lookup and a page that cancels a run part-way.
+- **Covered, 636 checks:** the candidate clamp; the GWorld chain, the scan fallback and the
+  debug-camera hop; the pawn and the exclusions; the classifiers, scores and keyword tables; dedup, order and the
+  edge cap; the component scan; the cancel; the sort and the auto-pick margin; every log line and note.
+- **Negative controls:** 190 mutants of Edel.cpp, every one detected. 174 came from the design, 4 from its critic and 12 from a round of critics hunting edits a game would see while every check stayed green; each of those became a check, among them a table that names a field after every keyword of both tables.
+- **C# tests:** of the two that read Edel.cpp as text, one drops it from its file lists and the other keeps only
+  the tab label the note names.
+- **Tests:** `edel_target_test` 636 checks, 0 failures, twenty runs in a row, and under ASan; C# 8515 (1 skipped).
+
+-----
+
 ## 2026-11-25 (no build change) — Teleport has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `wirbel_teleport_test` #includes `Wirbel.cpp` (Teleport) and drives it over a
