@@ -792,6 +792,21 @@ if(BUILD_DLL_TESTS)
     ue5_apply_asan(stark_dispatch_test)
     target_link_libraries(stark_dispatch_test PRIVATE ue5_testcore minhook Zydis)
 
+    # ---- schlacht_seethrough_test: See-through (Schlacht.cpp) over a fake world and a fake engine ------------------
+    # The test #includes Schlacht.cpp; both game-thread invoke entry points are faked in it, so neither Stark.cpp nor
+    # MinHook is linked. /EHa as the DLL compiles Schlacht.cpp: the worker's catch(...) must see a structured exception.
+    add_executable(schlacht_seethrough_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/schlacht_seethrough_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET schlacht_seethrough_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(schlacht_seethrough_test PRIVATE /utf-8 /W3 /EHa /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(schlacht_seethrough_test)
+    target_link_libraries(schlacht_seethrough_test PRIVATE ue5_testcore)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,
