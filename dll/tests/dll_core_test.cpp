@@ -3790,6 +3790,95 @@ int main() {
         check("STRIDEVERDICT control: the main pool is back, classic", !Aura::IsPacked() && Aura::GetCount() == kCount);
     }
 
+    // -- NAMELESSFLAT-2026-11-24 -- a chunk table read as items that name nothing is not a flat array ---------------
+    //
+    // ⛔ RE-INITIALISES AURA on throwaway arrays, like STRIDEVERDICT, and puts the main pool back at the end. The names
+    // are RELSTOPS' pool: index 2 resolves, index 0 does not. [RESCAN-SPARSE-TABLE-2026-11-24]
+    // When no chunked probe finds an object at one object offset, DetectItemSize probes the chunk table itself as a
+    // flat item array, and reads it far past its chunk pointers: on a real array, whatever heap block follows it. A
+    // verdict on objects counted without names is there for a pool whose names do not resolve. Here the pool is up
+    // and the +0x00 pass resolved names, so three nameless objects past the table must not become the item array.
+    {
+        blk("NAMELESSFLAT - a chunk table read as items that name nothing is not latched flat over a pass that names");
+        ResetCancel();
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+
+        // A class whose class-of-class is itself, so LooksLikeUObject accepts an object of it.
+        static uint8_t nfCls[0x40] = {};
+        putP(nfCls, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(nfCls));
+        const uintptr_t nfClsP = reinterpret_cast<uintptr_t>(nfCls);
+        static uint8_t nfNamed[3][0x40] = {}, nfNameless[3][0x40] = {};
+        static uint8_t nfClassless[0x40] = {};   // readable, ClassPrivate 0: a slot every pass reads as bad
+        for (int i = 0; i < 3; ++i) {
+            putP(nfNamed[i], Grimoire::OFF_UOBJECT_CLASS, nfClsP);
+            put32(nfNamed[i], Grimoire::OFF_UOBJECT_NAME, 2);
+            putP(nfNameless[i], Grimoire::OFF_UOBJECT_CLASS, nfClsP);
+            put32(nfNameless[i], Grimoire::OFF_UOBJECT_NAME, 0);
+        }
+        check("NAMELESSFLAT setup: index 2 names an object and index 0 names none",
+              Serie::IsInitialized() && Serie::GetString(2) == "ObjectProperty"
+              && (Serie::GetString(0).empty() || Serie::GetString(0) == "None"),
+              Serie::GetString(0).c_str());
+
+        // A one-chunk array header in the forced extended shape: Objects@+0x10, Max/Num@+0x20/+0x24, chunks.
+        auto header = [&](uint8_t* hdr, uintptr_t* table, uint8_t* chunk) {
+            table[0] = reinterpret_cast<uintptr_t>(chunk);
+            putP(hdr, 0x10, reinterpret_cast<uintptr_t>(table));
+            put32(hdr, 0x20, 64);  put32(hdr, 0x24, 64);
+            put32(hdr, 0x28, 1);   put32(hdr, 0x2C, 1);
+            return reinterpret_cast<uintptr_t>(hdr);
+        };
+        // Past the chunk pointer: three nameless objects at slots 7, 13 and 25, which the +0x08 flat read meets at
+        // stride 16 and at 24, and no other pointer. 0x7000 bytes, so the deep flat phase reads owned zeros.
+        auto fillTable = [&](uintptr_t* table) {
+            const int slots[3] = { 7, 13, 25 };
+            for (int i = 0; i < 3; ++i) table[slots[i]] = reinterpret_cast<uintptr_t>(nfNameless[i]);
+        };
+        auto layoutText = [] {
+            char b[96];
+            snprintf(b, sizeof b, "%s, item %d at +0x%02X%s", Aura::GetItemDetect(), Aura::GetItemSize(),
+                     Aura::GetItemObjOffset(), Aura::IsFlat() ? ", flat" : "");
+            return std::string(b);
+        };
+
+        // The sparse head: 24-byte items, object at +0x00. Items 0, 4 and 6 are named; every other item to 63 is
+        // classless, so the +0x00 pass reads more bad slots than named ones and is refused. A +0x08 read at a candidate
+        // stride that meets an item's object field meets an odd item or one with n % 5 == 2, which those three are not,
+        // so the +0x08 pass finds no object in the chunk. 0x7000 bytes, so the deep phase reads owned zeros.
+        static uint8_t nfChunk[0x7000] = {};
+        for (int n = 0; n < 64; ++n) {
+            const bool named = n == 0 || n == 4 || n == 6;
+            putP(nfChunk, n * 24, reinterpret_cast<uintptr_t>(named ? nfNamed[n == 0 ? 0 : n == 4 ? 1 : 2] : nfClassless));
+        }
+        static uintptr_t nfTable[0x7000 / 8] = {};
+        static uint8_t nfHdr[0x40] = {};
+        fillTable(nfTable);
+        Aura::InitWithExtendedLayout(header(nfHdr, nfTable, nfChunk), 0);
+        const std::string sparse = layoutText();
+        check("NAMELESSFLAT ⭐: a sparse head whose +0x00 pass names objects is not read as its chunk table, flat",
+              !Aura::IsFlat(), sparse.c_str());
+        check("NAMELESSFLAT ⭐: ...nor at +0x08, the object offset whose pass named nothing",
+              Aura::GetItemObjOffset() == 0, sparse.c_str());
+
+        // The verdict without names stays for a pool that names nothing: the same table behind a head of classless
+        // items only, so neither pass resolves a name, and the three nameless objects are the flat array.
+        static uint8_t nfBareChunk[0x7000] = {};
+        for (int n = 0; n < 64; ++n) putP(nfBareChunk, n * 24, reinterpret_cast<uintptr_t>(nfClassless));
+        static uintptr_t nfBareTable[0x7000 / 8] = {};
+        static uint8_t nfBareHdr[0x40] = {};
+        fillTable(nfBareTable);
+        Aura::InitWithExtendedLayout(header(nfBareHdr, nfBareTable, nfBareChunk), 0);
+        const std::string bare = layoutText();
+        check("NAMELESSFLAT control: with no pass naming an object, the nameless flat read is still the item array",
+              strcmp(Aura::GetItemDetect(), "detected") == 0 && Aura::IsFlat() && Aura::GetItemObjOffset() == 8
+              && Aura::GetItemSize() == 16 && Aura::GetItemDetectValidated() == 3,
+              bare.c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        check("NAMELESSFLAT control: the main pool is back, classic", !Aura::IsFlat() && Aura::GetCount() == kCount);
+    }
+
     // -- STRARRAYSTRIDE-2026-09-12 -- a string array PUBLISHES the 16-byte stride its reader uses --------------
     //
     // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. The reader reads at the header stride, and the walk must
