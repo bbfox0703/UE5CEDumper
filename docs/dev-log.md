@@ -29,6 +29,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-24 (no build change) — See-through has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `schlacht_seethrough_test` #includes `Schlacht.cpp` (See-through) and drives it over a
+  fake world, with a fake engine that records every game-thread invoke and answers what the test scripted; the
+  worker and the deferred restore run their real threads, and a seam makes the restore give up after 1 s.
+- **Covered, 340 checks:** a build that cannot hide anything refused at enable; the class asked by its path; the
+  trace's buffer at both widths; the chain from GWorld to the camera, through a debug camera; the hit read from
+  FHitResult; the hide / un-hide diff and the pierce loop; an invoke that did not run never costing the record;
+  enable, disable, the deferred restore and its give-up; the hand-off between copies; who holds it on; the worker
+  and the init gate; a shutdown; no invoke under s_mutex, and the lock order.
+- **Negative controls:** 139 mutants of Schlacht.cpp, every one detected. Of the 9 C# tests that read it as
+  text, 4 are gone and 5 keep only their Fern / Frieren / Land / Wirbel halves, but one narrow pin whose window no
+  call reaches.
+- **Found on the way:** two file headers said the ray runs from the camera to the pawn; it runs along the view.
+- **Tests:** `schlacht_seethrough_test` 340 checks, 0 failures, twenty runs in a row, and under ASan; C# 8516 (1 skipped).
+
+-----
+
 ## 2026-11-24 (build 3780) — Finding the object list no longer takes a reading that names nothing `[RESCAN-SPARSE-TABLE-2026-11-24]`
 
 - **What changes:** when the DLL works out how a game's object list (GObjects) is laid out, it no longer accepts a
