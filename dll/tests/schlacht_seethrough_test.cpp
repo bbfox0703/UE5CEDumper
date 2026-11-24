@@ -3204,8 +3204,10 @@ static void G3DispatchFail() {
         const bool restored = waitFor([&] {
             return !FxRestorePending() && FxLogCount(resumed, 'I', kSeeThruCat, logs) >= 1;
         }, kRestoreWithinMs);
-        check("DF.06 restored: within 1 s no restore waits, the record is empty and A shows in the game again",
-              restored && FxRecordNow().empty() && FxGameHidden(g_wallA) == 0, FxStatusStr(FxStatus()));
+        check("DF.06 restored: within 1 s no restore waits, the record and the queue are empty and A shows in the game "
+              "again",
+              restored && FxRecordNow().empty() && FxQueuedNow().empty() && FxGameHidden(g_wallA) == 0,
+              FxStatusStr(FxStatus()));
         check("DF.06 L11: the restore says it ran at its first 50 ms pass, 1 restored, 0 still hidden",
               FxLogCount(resumed, 'I', kSeeThruCat, logs) == 1, FxLogDump(logs));
         const auto unhidesA = G3HideCalls(g_wallA, 0, calls);
@@ -3330,6 +3332,7 @@ static void G3Enable() {
     FxReset();
     {
         FxRecord(FxSet({ g_wallA }));
+        FxSetQueued(FxSet({ g_wallA }));
         const size_t calls = FxCallMark(), logs = FxLogMark();
         const int32_t rc = FxEnableSync(kClientA);
         const auto un = G3HideCalls(g_wallA, 0, calls);
@@ -3493,10 +3496,12 @@ static void G3Disable() {
     FxReset();
     {
         FxRecord(FxSet({ g_wallA }));
+        FxSetQueued(FxSet({ g_wallA }));
         const size_t calls = FxCallMark(), logs = FxLogMark();
         const int32_t rc = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);
-        check("DS.06 off with a leftover: WallA is un-hidden, the record empties, and L18 says one was restored",
-              rc == 0 && FxHides(g_wallA, 0, calls) == 1 && FxRecordNow().empty() &&
+        check("DS.06 off with a queued leftover: WallA is un-hidden, the record and the queue empty, and L18 says one "
+              "was restored",
+              rc == 0 && FxHides(g_wallA, 0, calls) == 1 && FxRecordNow().empty() && FxQueuedNow().empty() &&
                   FxLogCount(G3DisabledLine(1), 'I', kSeeThruCat, logs) == 1,
               G3CallsStr(calls) + FxLogDump(logs));
     }
@@ -3675,6 +3680,10 @@ static void G3GiveUp() {
         check("GU.02 gave up again: abandoned once more", gaveUpAgain && FxStatus().restoreAbandoned,
               FxStatusStr(FxStatus()));
         g_responsive.store(true);
+        const int32_t offLive = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);
+        check("GU.02 off with the game answering: 0, both restored, and the give-up no longer holds",
+              offLive == 0 && !FxStatus().restoreAbandoned && FxRecordNow().empty() && !FxRestorePending(),
+              FxS(offLive) + " " + FxStatusStr(FxStatus()));
         const int32_t on = FxEnableSync(kClientA);
         check("GU.02 on with the game answering: 1, and the give-up no longer holds",
               on == 1 && !FxStatus().restoreAbandoned, FxS(on) + " " + FxStatusStr(FxStatus()));
@@ -4079,6 +4088,35 @@ static void Blocks_G4() {
               g4::HidesStr(calls1) + " " + FxSetStr(FxRecordNow()));
     }
     {
+        // Adopted while the write-back waits for s_mutex: the merge reads the record under that lock, so it sees what an
+        // adoption put there just before.
+        FxReset();
+        const int32_t on = FxEnableSync();
+        FxScene({ FxHitAt(kIdxWallA, g4::kNearT) });
+        auto locked = std::make_shared<std::atomic<bool>>(false);
+        std::thread holder;
+        // The diff's hide of WallA is the tick's last invoke; a helper takes s_mutex before the hook returns, so the
+        // write-back that follows has to wait for it.
+        FxOnHide([&holder, locked, A, D](uintptr_t actor, bool hidden) {
+            if (actor != A || !hidden) return;
+            holder = std::thread([locked, D] {
+                std::lock_guard<std::mutex> lk(s_mutex);
+                locked->store(true);
+                Sleep(kHoldMs);
+                s_state.hiddenActors.insert(D);
+                s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+            });
+            while (!locked->load()) Sleep(1);
+        });
+        FxTickNow();
+        FxOnHide(nullptr);
+        if (holder.joinable()) holder.join();
+        check("HO.08 adopt while the write-back waits: the merge reads the record under s_mutex -- the record "
+              "{WallA, WallD}",
+              on == 1 && locked->load() && FxRecordNow() == FxSet({A, D}) && FxStatus().hiddenCount == 2,
+              FxSetStr(FxRecordNow()));
+    }
+    {
         FxReset();
         // On the deferred restore's own thread, which holds neither lock during its un-hides, so the hook may adopt.
         auto fired = std::make_shared<std::atomic<bool>>(false);
@@ -4145,6 +4183,25 @@ static void Blocks_G4() {
                   FxS(innerFree ? 1 : 0));
         check("HO.11 lock order: released, it returns and Wall4 is in the record",
               returned.load() && FxRecordNow().count(W4) == 1, FxSetStr(FxRecordNow()));
+    }
+    {
+        // TakeLeftovers moves the record under s_mutex: held off while another thread holds it, then it takes WallA.
+        FxReset();
+        FxRecord(FxSet({A}));
+        std::atomic<bool> returned{false};
+        int32_t taken = -1;
+        uint64_t out[g4::kTakeCap] = {};
+        s_mutex.lock();
+        std::thread taker([&returned, &taken, &out] {
+            taken = Schlacht::TakeLeftovers(out, g4::kTakeCap);
+            returned.store(true);
+        });
+        const bool early = waitFor([&returned] { return returned.load(); }, kHoldMs);
+        s_mutex.unlock();
+        taker.join();
+        check("HO.12 take under s_mutex: held off while s_mutex is held, then it takes WallA and the record empties",
+              !early && taken == 1 && out[0] == A && FxRecordNow().empty(),
+              "returned early=" + FxS(early ? 1 : 0) + " taken=" + FxS(taken) + " " + FxSetStr(FxRecordNow()));
     }
 
     // ══ OWNERS ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -4719,6 +4776,38 @@ static void Blocks_G4() {
                   !s5.restoreAbandoned && !s5.active && s5.state == Schlacht::STR_ERR_REFLECTION && s5.claims == 0 &&
                   FxRecordNow() == FxSet({D}),
               "rc=" + FxS(rc) + " " + FxStatusStr(s5) + FxLogDump(log1));
+    }
+    {
+        // A restore stopped by its stopper while a shutdown is up: the stopper re-decides, so the restore adds no warning
+        // and no abandon of its own.
+        Tot::ResetShutdown();
+        FxReset();
+        const int32_t on = FxEnableSync();
+        FxRecord(FxSet({A}));
+        g_responsive.store(false);
+        // Held on its first line, which it writes with no lock held, until the stop below is requested.
+        auto gate = std::make_shared<std::atomic<int>>(0);   // 0 armed, 1 holding, 2 released
+        FxOnLog([gate](const FxLogLine& line) {
+            if (line.text != g4::kRestoreWaits) return;
+            int armed = 0;
+            if (!gate->compare_exchange_strong(armed, 1)) return;
+            while (gate->load() == 1) Sleep(1);
+        });
+        const size_t log0 = FxLogMark();
+        const int32_t off = Schlacht::SetEnabled(false, Schlacht::kOwnerNone);
+        const bool held = waitFor([gate] { return gate->load() == 1; }, kQuietMs);
+        Tot::RequestShutdown();
+        std::thread stopper([] { Schlacht::StopWorker(); });
+        const bool stopAsked = waitFor([] { return s_pendingStop.load(); }, kQuietMs);
+        gate->store(2);
+        stopper.join();
+        FxOnLog(nullptr);
+        const auto st = FxStatus();
+        check("SD.05 a restore stopped during a shutdown: its stopper re-decides -- no 'a shutdown ended' warning, nothing "
+              "abandoned, the record {WallA} kept",
+              on == 1 && off == 0 && held && stopAsked && FxLogPrefix(g4::kShutdownEndedPrefix, 0, cat, log0) == 0 &&
+                  !st.restoreAbandoned && !st.restorePending && FxRecordNow() == FxSet({A}),
+              FxStatusStr(st) + FxLogDump(log0));
     }
     Tot::ResetShutdown();
 }
