@@ -2559,34 +2559,18 @@ public class InvokeScriptTests
         Assert.Contains("data[\"parent_relative\"] = m.ParentRelative;", fern[save..end], StringComparison.Ordinal);
     }
 
-    // ---- [P1-SEETHRU-NOPRODUCER] / [P1-SEETHRU-GIVEUP]: Schlacht.cpp and Fern.cpp, which no test target compiles ----
-
-    [Fact]
-    public void SeeThrough_RefusesAtEnable_WhenTheBuildCannotHide()
-    {
-        // SetEnabled(true) probes both producers and returns STR_ERR_REFLECTION BEFORE it activates, so the refusal
-        // reaches the pipe's state, the mailbox result and the CE script alike through its return code.
-        var src = DllSource("Schlacht.cpp");
-        int fn = src.IndexOf("bool ProbeProducers(const char** missing)", StringComparison.Ordinal);
-        Assert.True(fn >= 0, "the producer probe must exist");
-        int fnEnd = src.IndexOf("\n}", fn, StringComparison.Ordinal);
-        var body = src[fn..fnEnd];
-        Assert.Contains("\"LineTraceSingle\"", body);
-        Assert.Contains("\"SetActorHiddenInGame\"", body);
-        int probe = src.IndexOf("if (!ProbeProducers(&missing))", StringComparison.Ordinal);
-        int refuse = src.IndexOf("return STR_ERR_REFLECTION;", Math.Max(probe, 0), StringComparison.Ordinal);
-        int activate = src.IndexOf("s_state.active = true;", StringComparison.Ordinal);
-        Assert.True(probe > 0 && refuse > probe && activate > refuse,
-            "SetEnabled must refuse with STR_ERR_REFLECTION before it activates the worker");
-    }
+    // ---- [P1-SEETHRU-NOPRODUCER] / [P1-SEETHRU-GIVEUP]: behaviour in schlacht_seethrough_test (REF, PATH, GU) ----
 
     [Fact]
     public void SeeThrough_ProbeAsksTheClassByPath_AndNoInternalLookupMatchesASubstring()
     {
         // [SEETHRU-PROBE-SUBSTRING] Ubel::GetClass(UE5_FindInstanceOfClass("Actor")) is a class-name SUBSTRING match
         // falling back to the first matching CDO, which on DumperTest Shipping 5.4 is Default__ActorChannel -- so a probe
-        // asking it would refuse See-through (-3) on a build that has SetActorHiddenInGame. Aura::FindClassByPath / FindLiveOrDefaultOf are
-        // pinned by dll_core_test's PROBECLASS block; this pins that the callers no test target compiles USE them.
+        // asking it would refuse See-through (-3) on a build that has SetActorHiddenInGame. See-through's own probe is
+        // schlacht_seethrough_test's PATH.01, which puts Default__ActorChannel first in the pool; Aura::FindClassByPath
+        // and FindLiveOrDefaultOf are dll_core_test's PROBECLASS block. Wirbel.cpp and Frieren.cpp reach no test
+        // target, so this pins that neither makes an internal call to the user-facing lookup and that Frieren's
+        // internal reads go through FindLiveOrDefaultOf.
         // Comments are stripped: the source's own comments name the call it must not make.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
@@ -2601,22 +2585,9 @@ public class InvokeScriptTests
             return n;
         }
 
-        var schlacht = CodeOnly(DllSource("Schlacht.cpp"));
-        int fn = schlacht.IndexOf("bool ProbeProducers(const char** missing)", StringComparison.Ordinal);
-        Assert.True(fn >= 0, "the producer probe must exist");
-        var body = schlacht[fn..schlacht.IndexOf("\n}", fn, StringComparison.Ordinal)];
-        Assert.Contains("Aura::FindClassByPath(Grimoire::SCHLACHT_KSL_CLASS_PATH)", body, StringComparison.Ordinal);
-        Assert.Contains("Aura::FindClassByPath(Grimoire::SCHLACHT_ACTOR_CLASS_PATH)", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("Ubel::GetClass(", body, StringComparison.Ordinal);   // a class, never guessed from an instance
-
-        var grimoire = DllSource("Grimoire.h");
-        Assert.Contains("SCHLACHT_ACTOR_CLASS_PATH = \"/Script/Engine.Actor\"", grimoire, StringComparison.Ordinal);
-        Assert.Contains("SCHLACHT_KSL_CLASS_PATH   = \"/Script/Engine.KismetSystemLibrary\"", grimoire, StringComparison.Ordinal);
-
         // No internal caller left on the user-facing lookup. Frieren keeps exactly ONE occurrence: the definition, which
         // ranks the Debug Camera's objects last where an internal state read must never take them
         // (UserFacingClassLookups_AllResolveThroughOneDerivationResolver pins what it resolves through).
-        Assert.Equal(0, Count(schlacht, "UE5_FindInstanceOfClass("));
         Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
         var frieren = CodeOnly(DllSource("Frieren.cpp"));
         Assert.Equal(1, Count(frieren, "UE5_FindInstanceOfClass("));
@@ -3198,13 +3169,10 @@ public class InvokeScriptTests
     [Fact]
     public void SeeThrough_PublishesARestoreThatGaveUp()
     {
-        var src = DllSource("Schlacht.cpp");
-        int giveUp = src.IndexOf("gave up waiting for the game thread", StringComparison.Ordinal);
-        int mark = src.IndexOf("s_state.restoreAbandoned = true;", Math.Max(giveUp, 0), StringComparison.Ordinal);
-        Assert.True(giveUp > 0 && mark > giveUp && mark - giveUp < 600, "the give-up branch must record the abandon");
-        Assert.Contains("s_state.restoreAbandoned = false; }   // either direction re-decides", src);
-        Assert.Contains("out.restorePending   = s_pendingRunning.load();", src);
-        Assert.Contains("out.restoreAbandoned = s_state.restoreAbandoned;", src);
+        // [P1-SEETHRU-GIVEUP] See-through's status reply carries both restore flags, so the card can tell a restore
+        // that still waits from one that gave up. Schlacht's half -- the give-up recorded, GetStatus publishing both
+        // flags -- is schlacht_seethrough_test's GU and DF blocks. Fern.cpp reaches no test target, so the reply's
+        // keys are read here.
         var fern = DllSource("Fern.cpp");
         Assert.Contains("data[\"restore_pending\"]", fern);
         Assert.Contains("data[\"restore_abandoned\"]", fern);

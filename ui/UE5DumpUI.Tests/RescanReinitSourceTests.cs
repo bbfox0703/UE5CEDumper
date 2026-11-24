@@ -6,9 +6,9 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [RESCAN-DECOY-REINIT] Extra Scan replaces a published GObjects that reads no objects. The choice and the re-init's
 /// order are unit-tested in dll_core_test / dll_helpers_test (Genau::PlanRescan, PlanRescanApply,
-/// ChooseGObjectsCandidate, ReplaceGObjectsAndReprobe); Fern.cpp, Frieren.cpp, Routine.h's loop, Dunste and Schlacht
-/// reach no C++ test target yet, so their wiring is pinned here from the source. Solitar's God Mode targets are
-/// dll_core_test's (GODMODE).
+/// ChooseGObjectsCandidate, ReplaceGObjectsAndReprobe); Fern.cpp and Frieren.cpp reach no C++ test target yet, so
+/// their wiring is pinned here from the source; so is a worker's init skip where its test target does not raise the
+/// init flag yet. Solitar's God Mode targets are dll_core_test's (GODMODE).
 /// </summary>
 public sealed class RescanReinitSourceTests
 {
@@ -153,11 +153,12 @@ public sealed class RescanReinitSourceTests
     [Fact]
     public void ReassertWorkers_SkipATickWhileAnInitRuns()
     {
+        // Routine.h's loop and Dunste's worker reach test targets that do not raise g_initInProgress yet; Schlacht's
+        // skip is schlacht_seethrough_test's IG.01.
         var skip = new Regex(@"if \((::)?g_initInProgress\.load\(std::memory_order_acquire\)\) continue;");
         static string Code(string s) => Regex.Replace(s, @"//[^\n]*", "");
         Assert.Matches(skip, Code(Between(DllSrc("Routine.h"), "inline void ReassertLoop(", "\n}\n")));
         Assert.Matches(skip, Code(Between(DllSrc("Dunste.cpp"), "void WorkerLoop() {", "\n}\n")));
-        Assert.Matches(skip, Code(Between(DllSrc("Schlacht.cpp"), "void WorkerLoop() {", "\n}\n")));
     }
 
     [Fact]
