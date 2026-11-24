@@ -49,11 +49,15 @@
 struct LogLine { char lvl; std::string text; };
 static std::mutex g_logMu;
 static std::vector<LogLine> g_log;
+static constexpr DWORD kLogClobber = 0xBADC0DE;   // what the real logger's file writes leave in LastError
 static void LogV(char lvl, const char* fmt, va_list ap) {
     char b[8192];
     vsnprintf(b, sizeof b, fmt, ap);
-    std::lock_guard<std::mutex> lk(g_logMu);
-    g_log.push_back({ lvl, b });
+    {
+        std::lock_guard<std::mutex> lk(g_logMu);
+        g_log.push_back({ lvl, b });
+    }
+    SetLastError(kLogClobber);
 }
 namespace Sein {
 void Info(const char*, const char* fmt, ...) { va_list ap; va_start(ap, fmt); LogV('I', fmt, ap); va_end(ap); }
@@ -1581,16 +1585,11 @@ struct ImgSpec {
     std::vector<Sec> secs{ { 0x1000, 0x2000, kExecChars } };
     DWORD prot[16] = {};
 };
-static uintptr_t MakeImage(const ImgSpec& spec, const std::function<void(uint8_t*)>& code) {
-    for (int attempt = 0; attempt < 8; ++attempt) {
-        void* probe = VirtualAlloc(nullptr, 0x40000, MEM_RESERVE, PAGE_NOACCESS);
-        if (!probe) continue;
-        VirtualFree(probe, 0, MEM_RELEASE);
-        const uintptr_t I = reinterpret_cast<uintptr_t>(probe) + 0x20000;
+static uintptr_t MakeImageAt(uintptr_t I, const ImgSpec& spec, const std::function<void(uint8_t*)>& code) {
+    {
         auto* b = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(I), 0x10000, MEM_RESERVE | MEM_COMMIT,
                                                      PAGE_READWRITE));
-        if (reinterpret_cast<uintptr_t>(b) != I) { if (b) VirtualFree(b, 0, MEM_RELEASE); continue; }
-        if (RealQuery(I - 0x10000).State != MEM_FREE) { VirtualFree(b, 0, MEM_RELEASE); continue; }
+        if (reinterpret_cast<uintptr_t>(b) != I) { if (b) VirtualFree(b, 0, MEM_RELEASE); return 0; }
         memset(b, 0xCC, 0x10000);
         memset(b, 0, 0x1000);
         auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
@@ -1622,6 +1621,87 @@ static uintptr_t MakeImage(const ImgSpec& spec, const std::function<void(uint8_t
         FlushInstructionCache(GetCurrentProcess(), b, 0x10000);
         g_fixtures.push_back(b);
         g_fakeMainImage = I;
+        return I;
+    }
+}
+static uintptr_t MakeImage(const ImgSpec& spec, const std::function<void(uint8_t*)>& code) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        void* probe = VirtualAlloc(nullptr, 0x40000, MEM_RESERVE, PAGE_NOACCESS);
+        if (!probe) continue;
+        VirtualFree(probe, 0, MEM_RELEASE);
+        const uintptr_t I = reinterpret_cast<uintptr_t>(probe) + 0x20000;
+        if (RealQuery(I - 0x10000).State != MEM_FREE) continue;
+        if (MakeImageAt(I, spec, code)) return I;
+    }
+    return 0;
+}
+
+// Address-space fixtures for MinHook's +-1 GB window. Each probes for a free span, then takes exact pieces of it; a
+// piece another allocation took meanwhile drops the attempt and tries again.
+static bool ReserveAt(uintptr_t a, size_t n) {
+    void* r = VirtualAlloc(reinterpret_cast<void*>(a), n, MEM_RESERVE, PAGE_NOACCESS);
+    if (reinterpret_cast<uintptr_t>(r) != a) { if (r) VirtualFree(r, 0, MEM_RELEASE); return false; }
+    g_fixtures.push_back(r);
+    return true;
+}
+static uintptr_t ProbeSpan(size_t n) {
+    void* r = VirtualAlloc(nullptr, n, MEM_RESERVE, PAGE_NOACCESS);
+    if (!r) return 0;
+    VirtualFree(r, 0, MEM_RELEASE);
+    return reinterpret_cast<uintptr_t>(r);
+}
+static void DropFrom(size_t mark) {
+    while (g_fixtures.size() > mark) { VirtualFree(g_fixtures.back(), 0, MEM_RELEASE); g_fixtures.pop_back(); }
+}
+// Every block start within +-1 GB of T taken: [T-1GB, T) and [T, T+1GB) reserved, T's first page the safe
+// target, and another reservation right above.
+static uintptr_t Starve(uintptr_t& P) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const size_t mark = g_fixtures.size();
+        P = ProbeSpan(0x80020000);
+        if (!P) continue;
+        const uintptr_t T = P + 0x40010000;
+        if (!ReserveAt(P, 0x40010000) || !ReserveAt(T, 0x40000000) || !ReserveAt(T + 0x40000000, 0x10000)) {
+            DropFrom(mark);
+            continue;
+        }
+        auto* t = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(T), 0x1000, MEM_COMMIT, PAGE_READWRITE));
+        memset(t, 0xCC, 0x1000);
+        memcpy(t, kSafePE, sizeof kSafePE);
+        DWORD old = 0;
+        VirtualProtect(t, 0x1000, PAGE_EXECUTE_READ, &old);
+        FlushInstructionCache(GetCurrentProcess(), t, 0x1000);
+        return T;
+    }
+    return 0;
+}
+// A window with one free granule each side of T: [T-1GB, T-0x20000) reserved, T's own 0x10000, the rest free.
+static uintptr_t LivePick(uintptr_t& P) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const size_t mark = g_fixtures.size();
+        P = ProbeSpan(0x80030000);
+        if (!P) continue;
+        const uintptr_t T = P + 0x40010000;
+        if (!ReserveAt(P, 0x3FFF0000) || !ReserveAt(T, 0x10000)) { DropFrom(mark); continue; }
+        VirtualAlloc(reinterpret_cast<void*>(T), 0x1000, MEM_COMMIT, PAGE_READWRITE);
+        return T;
+    }
+    return 0;
+}
+// An image at I whose window's one free granule is H = I - 0x10000, the holder's block; with `high`, everything
+// above the image is taken too, so once the holder has H no fresh block fits anywhere.
+static uintptr_t HeldWindow(bool high) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const size_t mark = g_fixtures.size();
+        const uintptr_t P = ProbeSpan(0x80040000);
+        if (!P) continue;
+        const uintptr_t I = P + 0x40020000;
+        if (!ReserveAt(P, 0x40010000)
+            || !MakeImageAt(I, ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x2000, kSafePE, 8); })
+            || (high && !ReserveAt(I + 0x10000, 0x40010000))) {
+            DropFrom(mark);
+            continue;
+        }
         return I;
     }
     return 0;
@@ -1982,6 +2062,149 @@ static void HookBlocks() {
         check("HOOK walk cap ⭐: the walk stops at 200000 regions, each recorded with its state, type and allocation",
               sc == Lager::WalkStop::RegionCap && c.size() == 200000 && c.back().base == S + 199999ull * 0x1000
               && c[0].state == MEM_COMMIT && c[1].state == MEM_RESERVE && fields, F("size=%zu", c.size()).c_str());
+    }
+
+    {   blk("HOOK WINDOW - a MinHook allocation failure walks the window it searched and says what took it");
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const auto* exe = reinterpret_cast<const uint8_t*>(::GetModuleHandleW(nullptr));
+        const auto* ent = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+            exe + reinterpret_cast<const IMAGE_DOS_HEADER*>(exe)->e_lfanew);
+        const std::string mainImage = F("main image 0x%llX + 0x%X, DYNAMICBASE %s", (unsigned long long)(uintptr_t)exe,
+            ent->OptionalHeader.SizeOfImage,
+            (ent->OptionalHeader.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) ? "yes" : "no");
+        const std::string nb = " -- NB a block start WAS free, so the window is not the cause: VirtualAlloc refused the "
+                               "page (commit limit / ACG) or MinHook's hook table could not grow (LastError %u)";
+        auto starvedLine = [&](uintptr_t T, uintptr_t P, const std::string& held, const std::string& tail) {
+            return F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] -- 0 free "
+                     "region(s), 0x0 bytes free, largest 0x0 at 0x0, 0 can start a block; reserved 0x7FFFF001, committed "
+                     "0x1000; taken by private 0x80000001, image 0x0, mapped 0x0, largest occupant 0x%llX x 0x40000000 "
+                     "(private/heap); FindPrevFreeRegion -> none, FindNextFreeRegion -> none; held block %s; %s%s (4 "
+                     "region(s) walked in 0 ms)", (unsigned long long)T, (unsigned long long)(T - 0x40000000),
+                     (unsigned long long)(T + 0x3FFFF001), (unsigned long long)P, held.c_str(), mainImage.c_str(),
+                     tail.c_str());
+        };
+
+        HookReset();
+        uintptr_t P = 0;
+        const uintptr_t T = Starve(P);
+        const bool okA = T && Stark::InstallHook(T);
+        const std::string line = starvedLine(T, P, "none", "");
+        check("HOOK window ⭐: a full window -- the allocation failure, then the map of what took the window",
+              T != 0 && !okA && !Stark::IsHookActive()
+              && HasLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC") && HasLog('E', line),
+              FirstLog('E', "GameThreadDispatch: MinHook block window").c_str());
+
+        HookReset();
+        uintptr_t P2 = 0;
+        const uintptr_t T2 = Starve(P2);
+        Stark::s_heldBlock = T2 - 0x10000;
+        SetLastError(kLogClobber);
+        const bool okL = T2 && Stark::InstallHook(T2);
+        check("HOOK window last error ⭐: the LastError read straight after MinHook's call -- 0, not what the log left",
+              T2 != 0 && !okL && CountContaining("out of reach") == 0 && HasLog('E', starvedLine(T2, P2,
+              F("0x%llX (serves this target)", (unsigned long long)(T2 - 0x10000)), F(nb.c_str(), 0u))),
+              FirstLog('E', "GameThreadDispatch: MinHook block window").c_str());
+
+        HookReset();
+        uintptr_t P6 = 0;
+        const uintptr_t T6 = Starve(P6);
+        const uintptr_t farBlock = (T6 + 0x100000000ull < reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress))
+            ? T6 + 0x100000000ull : T6 - 0x100000000ull;
+        Stark::s_heldBlock = farBlock;
+        const bool okF = T6 && Stark::InstallHook(T6);
+        const int iW = IndexOfLog('W', F("GameThreadDispatch: the held block 0x%llX is out of reach of ProcessEvent 0x%llX "
+            "(MinHook reuses a block only within +-1 GB) -- it must find a block of its own", (unsigned long long)farBlock,
+            (unsigned long long)T6));
+        const int iE = IndexOfLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC");
+        check("HOOK reach before the attempt: an unreachable held block is said so before MinHook tries, not after",
+              T6 != 0 && !okF && iW >= 0 && iE > iW);
+
+        HookReset();
+        uintptr_t P3 = 0;
+        const uintptr_t T1 = Starve(P3), Tb = T1 + 0x10000;
+        const uint64_t B = g_tick.load();
+        g_tick.store(B);
+        const bool c1 = Stark::InstallHook(T1);
+        g_tick.store(B + 4999);
+        const int reads0 = g_tickReads.load(), vq0 = g_vqCalls.load();
+        const bool c2 = Stark::InstallHook(T1);
+        const int reads1 = g_tickReads.load(), vq1 = g_vqCalls.load();
+        g_tick.store(B + 5000);
+        const bool c3 = Stark::InstallHook(T1);
+        g_tick.store(B + 5001);
+        Stark::LogTrampolineWindow(Tb, 0);
+        g_tick.store(B + 5002);
+        const bool c5 = Stark::InstallHook(T1);
+        const std::string w1 = F("GameThreadDispatch: MinHook block window for 0x%llX:", (unsigned long long)T1);
+        const std::string w2 = F("GameThreadDispatch: MinHook block window for 0x%llX:", (unsigned long long)Tb);
+        check("HOOK window throttle ⭐: the same target is not walked again within 5 s -- not even its clock or a query",
+              T1 != 0 && !c1 && !c2 && !c3 && !c5 && CountLog('E', w1) == 3 && CountLog('E', w2) == 1
+              && HasLog('W', F("GameThreadDispatch: MinHook block window for 0x%llX not re-walked -- its map was logged "
+                               "4999 ms ago", (unsigned long long)T1))
+              && CountLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC") == 4
+              && reads1 - reads0 == 1 && vq1 - vq0 == 0, F("walks=%d reads=%d vq=%d", CountLog('E', w1),
+              reads1 - reads0, vq1 - vq0).c_str());
+
+        HookReset();
+        uintptr_t P4 = 0;
+        const uintptr_t T4 = LivePick(P4);
+        g_tickStep = 3000;
+        Stark::LogTrampolineWindow(T4, 1234);
+        g_tickStep = 0;
+        const std::string live = F("GameThreadDispatch: MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX] "
+            "(map INCOMPLETE: the walk's time budget was spent before the window was fully mapped -- the byte totals "
+            "cover only the part walked) -- 0 free region(s), 0x0 bytes free, largest 0x0 at 0x0, 0 can start a block; "
+            "reserved 0x3FFE0000, committed 0x0; taken by private 0x3FFE0000, image 0x0, mapped 0x0, largest occupant "
+            "0x%llX x 0x3FFE0000 (private/heap); FindPrevFreeRegion -> 0x%llX, FindNextFreeRegion -> 0x%llX; held block "
+            "none; %s%s (1 region(s) walked in 9000 ms)", (unsigned long long)T4, (unsigned long long)(T4 - 0x40000000),
+            (unsigned long long)(T4 + 0x3FFFF001), (unsigned long long)P4, (unsigned long long)(T4 - 0x10000),
+            (unsigned long long)(T4 + 0x10000), mainImage.c_str(), F(nb.c_str(), 1234u).c_str());
+        check("HOOK window live picks ⭐: a walk cut by its time budget says so, and the picks are measured anyway",
+              T4 != 0 && CountLog('E', "") == 1 && HasLog('E', live), FirstLog('E', "").c_str());
+
+        HookReset();
+        uintptr_t P5 = 0;
+        const uintptr_t T5 = LivePick(P5);
+        g_tickStep = 1000;
+        Lager::WalkStop st = Lager::WalkStop::Complete;
+        const auto m = Stark::WalkRegions(T5 - 0x40000000, T5 + 0x40000001, st);
+        g_tickStep = 0;
+        check("HOOK walk budget: the walk stops once its 2000 ms are spent -- not before", T5 != 0
+              && st == Lager::WalkStop::Budget && m.size() == 3 && m[2].base == T5, F("size=%zu", m.size()).c_str());
+    }
+
+    {   blk("HOOK HELD BLOCK - ProcessEvent's trampoline lands in the held block; the log says whether it was needed");
+        HookReset();
+        const uintptr_t I = HeldWindow(true);
+        Stark::HoldTrampolineBlock();
+        const bool heldH = I && Stark::s_heldBlock == I - 0x10000;
+        const bool okN = I && Stark::InstallHook(I + 0x2000);
+        const uintptr_t tr = reinterpret_cast<uintptr_t>(Stark::s_originalPE);
+        const uint32_t v = okN ? CallTarget(I + 0x2000) : 0;
+        check("HOOK held needed ⭐: a starved window -- the trampoline in the held block, which the log calls NEEDED",
+              heldH && okN && CountContaining("out of reach") == 0 && (tr & ~static_cast<uintptr_t>(0xFFF)) == I - 0x10000
+              && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in the held block 0x%llX",
+                               (unsigned long long)tr, (unsigned long long)(I - 0x10000)))
+              && HasLog('I', "GameThreadDispatch: the held block was NEEDED -- MinHook could not have placed a fresh "
+                             "block (FindPrevFreeRegion -> none, FindNextFreeRegion -> none)")
+              && memcmp(reinterpret_cast<const void*>(I + 0x1000), kSafePE, 8) == 0
+              && MH_DisableHook(reinterpret_cast<LPVOID>(I + 0x1000)) == MH_ERROR_DISABLED
+              && v == 0x12345678 && Stark::GetHookFireCount() == 1, FirstLog('I', "GameThreadDispatch: ProcessEvent's").c_str());
+
+        HookReset();
+        const uintptr_t J = HeldWindow(false);
+        Stark::HoldTrampolineBlock();
+        const bool freeAbove = J && RealQuery(J + 0x10000).State == MEM_FREE;
+        const bool okR = J && Stark::InstallHook(J + 0x2000);
+        check("HOOK held reused: reused, but a fresh block was free too -- the log says the window was not starved",
+              freeAbove && okR && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in the held "
+              "block 0x%llX", (unsigned long long)reinterpret_cast<uintptr_t>(Stark::s_originalPE),
+              (unsigned long long)(J - 0x10000))) && HasLog('I', F("GameThreadDispatch: the held block was reused, but a "
+              "fresh block was also available this time (FindPrevFreeRegion -> 0x0, FindNextFreeRegion -> 0x%llX) -- the "
+              "window was not starved", (unsigned long long)(J + 0x10000)))
+              && CountContaining("NEEDED") == 0 && MH_DisableHook(reinterpret_cast<LPVOID>(J + 0x1000)) == MH_ERROR_DISABLED,
+              FirstLog('I', "GameThreadDispatch: the held").c_str());
     }
 
     {   blk("HOOK SHUTDOWN - queued requests answered -7, MinHook left as it is, the hook still forwarding");
