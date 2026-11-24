@@ -29,6 +29,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-25 (no build change) — Teleport has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `wirbel_teleport_test` #includes `Wirbel.cpp` (Teleport) and drives it over a
+  fake world with a UE4 (float) twin beside the UE5 one, and a fake engine that records every game-thread invoke,
+  whether the op lock was held, and answers what the test scripted.
+- **Covered, 1684 checks:** the GWorld chain, the instance-scan fallback and the debug-camera hop; the
+  pose read and the movement state; the trainer offsets; the camera POV and its raw cached read; the move at both
+  FVector widths, its fallbacks, the deep force and the CMC freeze; the marker, undo and BugIt slots and their
+  refusals; the cursor and relative teleports; the mouse cursor; the C ABI's null outputs; the op lock over every
+  export.
+- **Negative controls:** 434 mutants of Wirbel.cpp, 433 detected: 328 from the design,
+  then 30, 24, 14, 13, 17 and 8 from six rounds of critics hunting edits a game would see while every
+  check stayed green; each became a check. One survives: ClearMarker's op lock taken and released before its clear: no seam can stop a thread inside that write short of a hardware watchpoint, which means suspending a thread and rewriting its debug registers.
+- **C# tests:** of the six that read Wirbel.cpp as text, one is gone and 5 keep only their Fern / Frieren /
+  other-module halves, or the C# side of the code.
+- **Tests:** `wirbel_teleport_test` 1684 checks, 0 failures, twenty runs in a row, and under ASan; C# 8515 (1 skipped).
+
+-----
+
 ## 2026-11-24 (no build change) — See-through has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `schlacht_seethrough_test` #includes `Schlacht.cpp` (See-through) and drives it over a
