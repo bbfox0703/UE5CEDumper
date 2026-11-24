@@ -29,6 +29,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-24 (build 3780) — Finding the object list no longer takes a reading that names nothing `[RESCAN-SPARSE-TABLE-2026-11-24]`
+
+- **What changes:** when the DLL works out how a game's object list (GObjects) is laid out, it no longer accepts a
+  reading in which no object has a name once another reading has already named objects. Such a reading came from
+  memory next to the list rather than the list itself, and the dump then read that memory as objects; the reading
+  that named objects is kept instead. In the self-tests no existing check changed; the live checks on real games are
+  in the verification register.
+- **Also since build 3779 (tests only):** the ProcessEvent hook's install and its held trampoline block are tested
+  with real hooks (`stark_dispatch_test`, 133 checks, 115 mutants all caught), and a `dll_core_test` check that
+  failed now and then reads the same on every run.
+- **Tests:** C# 8520 (1 skipped), headless 74, the CE Lua host, and the nine C++ self-tests (`dll_core_test` 2030
+  checks), each run by `build.cmd publish`; no compiler, trimming or test warning in the build log.
+- AOT UI 62,980,608 bytes (sha256 1e2e0ecf3ec94ac2...); UE5Dumper.dll 3,882,496 bytes (sha256 2faa334faca07c47...).
+
+-----
+
 ## 2026-11-24 (no build change) — Stark's MinHook install has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `stark_dispatch_test` drives `Stark.cpp`'s MinHook install with real hooks: a
