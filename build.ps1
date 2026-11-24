@@ -1339,6 +1339,11 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # edel_target_test #includes Edel.cpp (Current Target) and drives its detection over a fake world.
+    if (-not (Invoke-CppSelfTest -TargetName "edel_target_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the
