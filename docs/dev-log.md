@@ -29,6 +29,21 @@ builds ≤696 in
 
 -----
 
+## 2026-11-24 (no build change) — RESCAN's sparse structure reads the same on every run `[RESCAN-SPARSE-TABLE-2026-11-24]`
+
+- **What changes:** tests only; nothing in the DLL changed. `dll_core_test`'s RESCAN setup check "...and its
+  head names objects only here and there" failed in 6 of 50 runs of the 2026-11-23 build, after
+  `[CEPTR-FAIL-ONCE-2026-11-23]` had made the structure's chunk whole. Its chunk table was a six-slot heap block,
+  and on that head Aura's item detection ends by probing the chunk table itself as a flat item array, up to
+  ~28 KB of it, so whatever the heap held past the block decided the layout: three pointers there with a class
+  chain were taken as a flat array that named nothing, and the scorer read the heap as items. The table is a
+  chunk's worth of slots now, zeros past the six chunk pointers, and a new setup check says the structure is read
+  through its chunk table, naming the layout Aura chose when it is not.
+- **Tests:** `dll_core_test` 2025 checks (one more), 0 failures in 50 runs (before: 6 of 50; with only the new
+  check, 4 of 30, each one flat at +0x08), and the ASan run with its negative control.
+
+-----
+
 ## 2026-11-23 (no build change) — The invoke queue and the game thread have a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** tests only. `stark_dispatch_test` #includes `Stark.cpp` (GameThreadDispatch) and drives the
