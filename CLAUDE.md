@@ -102,15 +102,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
 # Run tests only
-# ⚠ -Target Test does NOT compile the whole DLL. It builds 9 test executables, and
-#   **17 of the 33** dll/src .cpp files reach a test target so far: dll_core_test #includes
+# ⚠ -Target Test does NOT compile the whole DLL. It builds 10 test executables, and
+#   **18 of the 33** dll/src .cpp files reach a test target so far: dll_core_test #includes
 #   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme / Linie / Solitar into one TU,
 #   dll_helpers_test compiles Falsch, and grausam_window_test / sein_retention_test /
-#   methode_plugin_test / mimic_mailbox_test / stark_dispatch_test take one each, and
-#   dunste_fly_test compiles Dunste against ue5_testcore (those core files as a library). A
-#   green -Target Test says nothing about the other 16 (Fern.cpp and Frieren.cpp among them).
-#   That is a gap to close, not a kind of file that cannot be tested: see "Everything testable
-#   is tested" under ## Code Changes. Build the
+#   methode_plugin_test / mimic_mailbox_test / stark_dispatch_test / schlacht_seethrough_test
+#   take one each, and dunste_fly_test compiles Dunste against ue5_testcore (those core files
+#   as a library). A green -Target Test says nothing about the other 15 (Fern.cpp and
+#   Frieren.cpp among them). That is a gap to close, not a kind of file that cannot be
+#   tested: see "Everything testable is tested" under ## Code Changes. Build the
 #   DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before claiming a C++ change
 #   builds. Both counts are pinned by `check_derived_counts`; do not hand-edit them.
 # ⚠⚠ It is ALSO NOT READ-ONLY: the C++ narrowness above is about the C++ side ONLY —
