@@ -4776,6 +4776,586 @@ static void Blocks_G4() {
     G4::BlockLogRun();
 }
 
+// ══ H1: every keyword-table entry by its bare name, and counts inside the clamp range ═══════════════════════════
+// Its fixtures are built on first use, after FxBuildWorld, with the harness's builders, and never edited afterwards.
+
+namespace H1 {
+
+// ── the keyword tables, one row per entry ──
+// Each row spells one entry of Edel's tables as an engine would name such a field, and the field is exactly the entry.
+// Only such a field tells an entry apart from a longer word that contains it: make the entry longer and its own row
+// stops matching, where a field that merely contains the entry ("<Entry>Ref") would still hold the longer word too.
+// Written out here, never read from Edel's tables, so a changed entry shows as a changed score instead of moving its
+// field along with it. A row whose entry contains another entry of the same table scores the same without its own
+// entry: that row pins the score, and no field can test such an entry on its own.
+struct Row {
+    const char* field;   // the entry, capitalised
+    bool keyword;        // the field name holds a kPositive entry: +50, and the reason opens "field '<name>'"
+    bool infra;          // the field name holds a kNegative entry: -40, and "infra-field"
+};
+// kPositive, entry for entry and in its order.
+static const std::vector<Row> kPosRows = {
+    { "Target", true, false },         { "Focus", true, false },         { "LockOn", true, false },
+    { "LockedOn", true, false },       { "LockedTarget", true, false },  { "Enem", true, false },
+    { "AimTarget", true, false },      { "SelectedUnit", true, false },  { "SelectedActor", true, false },
+    { "SelectedTarget", true, false }, { "CombatTarget", true, false },  { "Hostile", true, false },
+    { "CurrentTarget", true, false },  { "Interactable", true, false },  { "LastHitActor", true, false },
+    { "LastDamage", true, false },     { "AttackTarget", true, false },  { "EngagedTarget", true, false },
+    { "MarkedTarget", true, false },
+};
+// kNegative, entry for entry and in its order. ViewTarget holds kPositive's "target" as well.
+static const std::vector<Row> kNegRows = {
+    { "Owner", false, true },          { "Instigator", false, true },    { "Controller", false, true },
+    { "PlayerState", false, true },    { "Camera", false, true },        { "CameraManager", false, true },
+    { "Spectator", false, true },      { "ViewTarget", true, true },     { "Input", false, true },
+    { "HUD", false, true },            { "LocalPlayer", false, true },   { "DefaultPawn", false, true },
+    { "CheatManager", false, true },   { "GameMode", false, true },      { "GameState", false, true },
+    { "GameInstance", false, true },   { "World", false, true },         { "Level", false, true },
+    { "Mesh", false, true },           { "Capsule", false, true },       { "Movement", false, true },
+    { "Anim", false, true },           { "Audio", false, true },         { "Widget", false, true },
+};
+// A row's target is named for its field, with a prefix of its own so no KWPOS / KWNEG target shares its name.
+constexpr const char* kTargetPrefix = "KB_";
+
+// A row's target is a tracked BP_Prop_C read from the controller root: the actor's term and the index's, then the table
+// terms its field name earns.
+static int32_t ScoreOf(const Row& row) {
+    return G4::kTermActor + G4::kTermTracked + (row.keyword ? G4::kTermKeyword : 0) + (row.infra ? G4::kTermInfra : 0);
+}
+constexpr int32_t kScoreKeywordOnly = G4::kTermKeyword + G4::kTermActor + G4::kTermTracked;   // every kPositive row
+// Edel's reason, in its order: the field, the kind, then infra-field.
+static std::string WhyOf(const Row& row) {
+    using namespace FxWhy;
+    if (row.keyword && row.infra) return Join({ Field(row.field), kIsActor, kInfra });
+    if (row.keyword) return Join({ Field(row.field), kIsActor });
+    return Join({ kIsActor, kInfra });
+}
+static const char* EffectOf(const Row& row) {
+    if (row.keyword && row.infra) return "earns the +50 and costs the -40";
+    return row.keyword ? "earns the +50" : "costs the -40";
+}
+
+// ── the bare-name scenarios' world ──
+// A PlayerController subclass whose own fields are one table's rows, in order from kSlot0, each holding a target of
+// its own, and a pawn with nothing of its own to point at.
+struct BareWorld {
+    uintptr_t pc = 0, pawn = 0;
+    std::vector<uintptr_t> targets;   // targets[i]: what rows[i]'s field holds
+};
+
+// FxReset puts a world object's header back from the record FxSnapshotHeaders filled at build. An object built later
+// starts with an empty record, and the first reset would zero its class, name and index, so it is filled here.
+static uintptr_t Keep(uintptr_t obj) {
+    const auto it = g_objRec.find(obj);
+    if (it == g_objRec.end()) FxFixtureFail("Keep: an object the fixture did not build");
+    memcpy(it->second.header.data(), FxBytes(obj), it->second.header.size());
+    return obj;
+}
+
+// Built once per table, on first use: Aura keeps a class's reference metadata from its first walk, so the class is
+// complete before any walk and never edited after one.
+static BareWorld BuildBare(const char* clsName, const char* pcName, const char* pawnName,
+                           const std::vector<Row>& rows) {
+    if (static_cast<size_t>(FxOff::Slot(static_cast<int>(rows.size()))) > kBigBytes)
+        FxFixtureFail("a keyword table has more rows than a big object has slots");
+    std::vector<std::string> names;
+    for (const Row& row : rows) {
+        if (!row.keyword && !row.infra) FxFixtureFail("a keyword row belongs to neither table");
+        names.push_back(row.field);
+    }
+    BareWorld w;
+    w.pc = Keep(FxObjBig(FxClassF(clsName, g_cPlayerController, FxObjFields(names)), pcName));
+    w.pawn = Keep(FxObj(g_cHeroBare, pawnName));
+    for (const Row& row : rows)
+        w.targets.push_back(Keep(FxObj(g_cProp, (std::string(kTargetPrefix) + row.field).c_str())));
+    return w;
+}
+static const BareWorld& PosWorld() {
+    static const BareWorld w = BuildBare("PcKwBarePos", "PC_KBP", "Hero_KBP", kPosRows);
+    return w;
+}
+static const BareWorld& NegWorld() {
+    static const BareWorld w = BuildBare("PcKwBareNeg", "PC_KBN", "Hero_KBN", kNegRows);
+    return w;
+}
+// The setup after FxReset, which clears every world object's body: the pair as FxDefPair plants one, then each row's
+// field pointed at its target.
+static void Plant(const BareWorld& w) {
+    FxSetPtr(w.pc, FxOff::kPawn, w.pawn);
+    FxSetPtr(w.pc, FxOff::kAckPawn, w.pawn);
+    FxSetPtr(w.pawn, FxOff::kPawnController, w.pc);
+    for (size_t i = 0; i < w.targets.size(); ++i) FxSetPtr(w.pc, FxOff::Slot(static_cast<int>(i)), w.targets[i]);
+}
+
+// One table's run, checked record by record: the chain, the whole list, each row, and that every entry has its row.
+// Returns the list as Edel should give it.
+static FxCands ExpectRows(const char* block, const char* table, size_t tableEntries, const BareWorld& w,
+                          const std::vector<Row>& rows, const Edel::CurrentTargetResult& r) {
+    FxCands byRow;
+    for (size_t i = 0; i < rows.size(); ++i)
+        byRow.push_back(FxCandOf(w.targets[i], ScoreOf(rows[i]), w.pc, rows[i].field,
+                                 FxOff::Slot(static_cast<int>(i)), WhyOf(rows[i])));
+    // Edel's order: the higher score first, then the smaller offset -- and the rows are in offset order already.
+    FxCands want = byRow;
+    std::stable_sort(want.begin(), want.end(),
+                     [](const Edel::TargetCandidate& a, const Edel::TargetCandidate& b) { return a.score > b.score; });
+    const std::string pcName = FxNameText(w.pc), pawnName = FxNameText(w.pawn);
+
+    check(FxFmt("%s bare names: the chain reaches %s and its pawn %s through World_0", block, pcName.c_str(),
+                pawnName.c_str()),
+          r.world == g_world0 && r.playerController == w.pc && r.playerPawn == w.pawn, FxResultStr(r));
+    check(FxFmt("%s bare names: exactly %zu candidates, one per %s entry, each from %s's field named the entry "
+                "itself; the higher score first, then the smaller offset", block, want.size(), table, pcName.c_str()),
+          FxCandsAre(r.candidates, want), G3::ListGot(r, want));
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const Edel::TargetCandidate& c = byRow[i];
+        check(FxFmt("%s bare names: field '%s', the entry itself, %s -- %s scores %d from 0x%X", block, rows[i].field,
+                    EffectOf(rows[i]), c.name.c_str(), c.score, static_cast<unsigned>(c.fieldOffset)),
+              G3::Has(r, c), G3::GotWant(r, c));
+    }
+    // Edel's table is read for its size alone: an entry added there with no row here would go untested.
+    check(FxFmt("%s bare names: a row for every %s entry -- %zu rows here, as many as the table holds", block, table,
+                rows.size()),
+          tableEntries == rows.size(), FxFmt("%s holds %zu", table, tableEntries));
+    return want;
+}
+
+// ══ KWPOS.02 / KWNEG.02 ═════════════════════════════════════════════════════════════════════════════════════════
+static void KwBarePos() {
+    const BareWorld& w = PosWorld();
+    G4::Begin(w.pc);
+    Plant(w);
+    const Edel::CurrentTargetResult& r = G4::Detect(G4::kSeeAll);
+    const FxCands want = ExpectRows("KWPOS.02", "kPositive", kPositive.size(), w, kPosRows, r);
+    check(FxFmt("KWPOS.02 bare names: %zu tops tied at %d resolve nothing -- N5", want.size(), kScoreKeywordOnly),
+          !r.resolved && r.note == FxNote::kN5, FxResultStr(r));
+    check(FxFmt("KWPOS.02 bare names: L1 names %s, then L5 reads resolved=0 pawn=%s candidates=%zu",
+                FxNameText(w.pc).c_str(), FxNameText(w.pawn).c_str(), want.size()),
+          G3::ChainLines(w.pc, w.pawn, false, want.size()), G3::EdelGot());
+}
+
+static void KwBareNeg() {
+    const BareWorld& w = NegWorld();
+    G4::Begin(w.pc);
+    Plant(w);
+    const Edel::CurrentTargetResult& r = G4::Detect(G4::kSeeAll);
+    const FxCands want = ExpectRows("KWNEG.02", "kNegative", kNegative.size(), w, kNegRows, r);
+    if (want.size() < 2) FxFixtureFail("KWNEG.02 needs a runner-up");
+    const Edel::TargetCandidate& top = want[0];
+    check(FxFmt("KWNEG.02 bare names: %s at %d clears the runner-up at %d -- resolved, its N4 naming %s (%s) via %s",
+                top.name.c_str(), top.score, want[1].score, top.name.c_str(), top.className.c_str(),
+                top.fieldName.c_str()),
+          r.resolved && r.note == G4::PickNote(top.addr, top.score, top.fieldName), FxResultStr(r));
+    check(FxFmt("KWNEG.02 bare names: L1 names %s, then L5 reads resolved=1 pawn=%s candidates=%zu",
+                FxNameText(w.pc).c_str(), FxNameText(w.pawn).c_str(), want.size()),
+          G3::ChainLines(w.pc, w.pawn, true, want.size()), G3::EdelGot());
+}
+
+// ══ CLAMP.07 ════════════════════════════════════════════════════════════════════════════════════════════════════
+// A count strictly inside 1..64 comes back as asked, cut from PC_Party's equal pawns. A ceiling test that fired below
+// 64 would raise every count above the point where it fires, so the largest count below the ceiling catches it
+// wherever it fires; the other two are counts callers pass.
+constexpr int32_t kInsideLow = kDefaultMaxCandidates + 1;   // the smallest count above the default
+constexpr int32_t kMcpMax = 32;                              // the most the MCP read_current_target tool forwards
+constexpr int32_t kBelowCeiling = G4::kSeeAll - 1;           // the largest count below Edel's ceiling
+static_assert(kBelowCeiling < kPartySize, "every count asked for is below the party's size, so each list is cut");
+
+static void ClampInside() {
+    for (const int32_t n : { kInsideLow, kMcpMax, kBelowCeiling }) {
+        G4::Begin(g_pcParty);
+        const Edel::CurrentTargetResult& r = G4::Detect(n);
+        const size_t want = static_cast<size_t>(n);
+        G1::ExpectParty("CLAMP.07 inside the range", FxS(n).c_str(), r, want);
+        check(FxFmt("CLAMP.07 inside the range: the %d call's lines are L1 naming PC_Party, then L5 ending "
+                    "'candidates=%d'", n, n),
+              FxEdelLinesAre({ { 'I', FxLine::L1(g_pcParty) },
+                               { 'I', FxLine::L5(false, g_pcParty, g_heroParty, want) } }),
+              FxLinesStr(FxEdelLines()));
+    }
+}
+
+}  // namespace H1
+
+static void Blocks_H1() {
+    blk("KW+ / CLAMP+ - every keyword by its bare name, and counts inside the clamp range");
+    H1::KwBarePos();
+    H1::KwBareNeg();
+    H1::ClampInside();
+}
+
+// ══ H2: COMP+ / SCORE+ / SORT+ ══════════════════════════════════════════════════════════════════════════════════
+// What the groups above do not reach in the scan, the scores and the order: the controller's component pass after a
+// debug-camera hop, and the ownership test that keeps a pawn's components out of the controller's pass and budget;
+// the infra-field penalty and the drop line on non-actors, near combat included; the element offset of a TSet or TMap
+// entry; and the sort's last tie-break. Every scenario starts from FxReset and writes only object fields, a static
+// buffer or an InternalIndex, all of which the next reset puts back. The one new world, CAND.08's, is built on first
+// use and recorded as a default, so every reset after it replays it.
+
+namespace H2 {
+
+// ── shared ──
+// Edel drops a candidate at this score or below: the design's number, written here rather than read from Edel.cpp.
+constexpr int32_t kDropLine = -60;
+// A tracked non-actor behind an infra field: near combat (the pawn root, a component) and on the controller root.
+constexpr int32_t kNearInfraNonActor = G4::kTermNotActor + G4::kTermInfra + G4::kTermNear + G4::kTermTracked;
+constexpr int32_t kRootInfraNonActor = G4::kTermNotActor + G4::kTermInfra + G4::kTermTracked;
+static_assert(kNearInfraNonActor == -85 && kRootInfraNonActor == -95, "the design's scores");
+static_assert(kNearInfraNonActor <= kDropLine && kRootInfraNonActor <= kDropLine,
+              "a tracked non-actor behind an infra field falls at or below the drop line on either root");
+constexpr int32_t kNextIndex = 1;   // one InternalIndex above another
+constexpr int kPcBFirstComp = 2;    // PC_B's Comp01: after OtherComp and Prop
+
+static uintptr_t OuterOf(uintptr_t obj) { return FxGetPtr(obj, DynOff::UOBJECT_OUTER); }
+
+// ══ COMP.08: the controller's component pass after a debug-camera hop ═══════════════════════════════════════════
+// With the Debug Camera active the chain hands over the DebugCameraController, and the hop names the controller it
+// replaced. That controller's owned components often hold the lock-on state, so its component pass must walk the
+// controller the hop landed on -- the debug camera owns none -- and the pawn's pass the pawn read from that controller.
+static void CompHop() {
+    // COMP.08a: DbgPC_0 hands over PC_K, COMP.01's controller.
+    {
+        G4::Begin(g_dbgPc0);
+        FxSetPtr(g_dbgPc0, FxOff::kOriginalController, g_pcK);
+        check("COMP.08a debug camera, then PC_K's components: (fixture) C1's outer is PC_K, and DbgPC_0 holds no pawn",
+              OuterOf(g_c1K) == g_pcK && FxGetPtr(g_dbgPc0, FxOff::kPawn) == 0 &&
+                  FxGetPtr(g_dbgPc0, FxOff::kAckPawn) == 0,
+              FxNameText(OuterOf(g_c1K)));
+        const auto& r = G4::Detect();
+        const auto t1 = G4::HeldTarget(g_t1K, g_c1K);
+        const auto oa = FxCandOf(g_oa, G4::kScoreRootActor, g_pcK, "OwnedActor", FxOff::Slot(1), FxWhy::kIsActor);
+        const FxCands want = { t1, oa };
+        check("COMP.08a debug camera, then PC_K's components: playerController PC_K, after the hop; playerPawn Hero_K",
+              G4::ChainIs(r, g_world0, g_pcK, g_heroK), FxResultStr(r));
+        G4::HasCand("COMP.08a debug camera, then PC_K's components: T_1 is read through C1, the component PC_K owns",
+                    r, t1);
+        G4::CandsAre("COMP.08a debug camera, then PC_K's components: the whole list is COMP.01's [T_1, OA]", r, want);
+        G4::NoteIs("COMP.08a debug camera, then PC_K's components: the pick note names T_1, score 80, via TargetActor",
+                   r, G4::PickNote(g_t1K, G4::kScoreHeldTarget, G4::kTargetField));
+        G4::LinesAre("COMP.08a debug camera, then PC_K's components: L1 names DbgPC_0, then L5 names PC_K and Hero_K",
+                     { { 'I', FxLine::L1(g_dbgPc0) }, { 'I', FxLine::L5(true, g_pcK, g_heroK, want.size()) } });
+    }
+
+    // COMP.08b: DbgPC_0 hands over PC_B, whose pawn Hero_B owns PC1: both passes must follow the hop.
+    {
+        G4::Begin(g_dbgPc0);
+        FxSetPtr(g_dbgPc0, FxOff::kOriginalController, g_pcB);
+        const auto& r = G4::Detect(G4::kSeeAll);
+        FxCands held;
+        for (int i = 0; i < kComponentBudget; ++i) held.push_back(G4::HeldTarget(g_t17[i], g_c17[i]));
+        const auto tp1 = G4::HeldTarget(g_tp1, g_pc1);
+        const auto ax = FxCandOf(g_aX, G4::kScoreRootActor, g_pcB, "Prop", FxOff::Slot(1), FxWhy::kIsActor);
+        const auto pc1 = G4::NearNonActor(g_pc1, g_heroB, "PawnComp", FxOff::kSlot0);
+        check("COMP.08b debug camera, then both passes: playerController PC_B, after the hop; playerPawn Hero_B",
+              G4::ChainIs(r, g_world0, g_pcB, g_heroB), FxResultStr(r));
+        const std::string missing = G4::Missing(r, held);
+        check("COMP.08b debug camera, then both passes: T01..T16 are each read through C01..C16, which PC_B owns",
+              missing.empty(), missing);
+        G4::HasCand("COMP.08b debug camera, then both passes: Tp1 is read through PC1, the component of Hero_B -- the "
+                    "pawn PC_B holds, where the debug camera holds none",
+                    r, tp1);
+        FxCands all = held;
+        all.push_back(tp1);
+        all.push_back(ax);
+        all.push_back(pc1);
+        G4::CandsAre("COMP.08b debug camera, then both passes: the whole list is COMP.02a's -- T01..T16, Tp1, A_x, PC1",
+                     r, all);
+        G4::LinesAre("COMP.08b debug camera, then both passes: L1 names DbgPC_0, then L5 names PC_B and Hero_B",
+                     { { 'I', FxLine::L1(g_dbgPc0) }, { 'I', FxLine::L5(false, g_pcB, g_heroB, all.size()) } });
+    }
+}
+
+// ══ COMP.09: the controller's pass takes the components the controller owns, and no others ══════════════════════
+// A component the pawn owns belongs to the pawn's pass and the pawn's budget. A controller that caches references to
+// its pawn's components must neither scan them itself nor spend its own 16 slots on them, or the controller's own
+// targeting component can go unscanned.
+static void CompOwner() {
+    // COMP.09a: PC_Q caches C_q, which Hero_Q owns, and Hero_Q no longer points at it.
+    {
+        G4::Begin(g_pcQ);
+        FxSetPtr(g_heroQ, FxOff::kSlot0, 0);   // Hero_Q.LockComp
+        check("COMP.09a pawn-owned, controller-cached: (fixture) C_q's outer is Hero_Q, which has no outer of its own",
+              OuterOf(g_cQ) == g_heroQ && OuterOf(g_heroQ) == 0, FxNameText(OuterOf(g_cQ)));
+        const auto& r = G4::Detect();
+        G4::Lacks("COMP.09a pawn-owned, controller-cached: T_q is absent -- the controller's pass turns C_q away, and "
+                  "the pawn's pass never meets it",
+                  r, g_tQ);
+        check("COMP.09a pawn-owned, controller-cached: no candidate at all (C_q drops at -60 as a controller field) -- "
+              "unresolved, N6",
+              r.candidates.empty() && !r.resolved && r.note == FxNote::kN6, FxResultStr(r));
+        G4::LinesAre("COMP.09a pawn-owned, controller-cached: L1 names PC_Q, then L5 ends candidates=0",
+                     { { 'I', FxLine::L1(g_pcQ) }, { 'I', FxLine::L5(false, g_pcQ, g_heroQ, 0) } });
+    }
+
+    // COMP.09b: PC_B's pawn becomes Hero_B2, and PC_B's Comp01..Comp16 point at Hero_B2's PB2_01..PB2_16. PC_B's own
+    // C17 comes after them, so it is the first component PC_B owns -- and needs the controller's budget untouched.
+    {
+        G4::Begin(g_pcB);
+        FxSetPtr(g_pcB, FxOff::kPawn, g_heroB2);
+        FxSetPtr(g_pcB, FxOff::kAckPawn, g_heroB2);
+        FxSetPtr(g_heroB2, FxOff::kPawnController, g_pcB);   // back at its controller, so no stray actor is scored
+        for (int i = 0; i < kComponentBudget; ++i) FxSetPtr(g_pcB, FxOff::Slot(kPcBFirstComp + i), g_pb2[i]);
+        const uintptr_t c17 = g_c17[kComp17 - 1], t17 = g_t17[kComp17 - 1];
+        const uintptr_t pb16 = g_pb2[kComponentBudget - 1];
+        check("COMP.09b controller budget: (fixture) PB2_01's outer is Hero_B2, which has no outer; C17's is PC_B; T17 "
+              "lies below Tp16b",
+              OuterOf(g_pb2[0]) == g_heroB2 && OuterOf(g_heroB2) == 0 && OuterOf(c17) == g_pcB && t17 < g_tp16b,
+              FxNameText(OuterOf(g_pb2[0])) + " / " + FxNameText(OuterOf(c17)));
+        const auto& r = G4::Detect(G4::kSeeAll);
+        const auto t17Rec = G4::HeldTarget(t17, c17);
+        const auto tp16b = G4::HeldTarget(g_tp16b, pb16);
+        G4::HasCand("COMP.09b controller budget: T17 is read through C17 -- PB2_01..PB2_16, owned by the pawn, spend "
+                    "none of the controller's 16 slots",
+                    r, t17Rec);
+        G4::HasCand("COMP.09b controller budget: Tp16b is read through PB2_16 in the pawn's own pass", r, tp16b);
+        FxCands all = { t17Rec, tp16b,
+                        FxCandOf(g_aX, G4::kScoreRootActor, g_pcB, "Prop", FxOff::Slot(1), FxWhy::kIsActor) };
+        for (int i = 0; i < kComponentBudget; ++i)
+            all.push_back(G4::NearNonActor(g_pb2[i], g_heroB2, FxFmt("PawnComp%02d", i + 1), FxOff::Slot(i)));
+        G4::CandsAre("COMP.09b controller budget: the whole list is [T17, Tp16b (tied at 80, by address), A_x, then "
+                     "PB2_01..PB2_16 by offset]",
+                     r, all);
+        G4::LinesAre("COMP.09b controller budget: L1 names PC_B, then L5 names Hero_B2",
+                     { { 'I', FxLine::L1(g_pcB) }, { 'I', FxLine::L5(false, g_pcB, g_heroB2, all.size()) } });
+    }
+}
+
+// ══ SCORE.10 / SCORE.11: the infra penalty on non-actors, and the drop line near combat ═════════════════════════
+// Every Character exposes CharacterMovement and Mesh, and every PlayerController its PlayerCameraManager: non-actors
+// behind infra field names. The -40 must still apply to them, and -60 or less must drop them on the pawn root as on
+// the controller's, or every detection lists the player's own components -- and a world with no target reads N5,
+// "best guesses", instead of N6.
+static void ScoreInfra() {
+    FxReset();
+    check("SCORE.10 infra field on a non-actor: (fixture) Cmc_0 and Sense_0 are tracked components owned by Enemy_0, "
+          "and Data_0 is a tracked non-actor",
+          G2::Kind(g_cmc0) == "ActorComponent" && G2::Kind(g_sense0) == "ActorComponent" && G2::Kind(g_data0).empty() &&
+              OuterOf(g_cmc0) == g_enemy0 && OuterOf(g_sense0) == g_enemy0 && FxIndexOf(g_cmc0) >= 0 &&
+              FxIndexOf(g_sense0) >= 0 && FxIndexOf(g_data0) >= 0,
+          G2::KindStr(g_cmc0) + " " + G2::KindStr(g_sense0) + " " + G2::KindStr(g_data0));
+
+    // SCORE.10a / SCORE.11a: the default world, with the engine's infra fields planted.
+    {
+        FxReset();
+        FxSetPtr(g_hero0, FxOff::kCharacterMovement, g_cmc0);
+        FxSetPtr(g_hero0, FxOff::kMesh, g_sense0);
+        FxSetPtr(g_pc0, FxOff::kCameraManager, g_data0);
+        const auto& r = G4::Detect();
+        check("SCORE.10a infra field on a non-actor: with Hero_0's CharacterMovement and Mesh and PC_0's "
+              "PlayerCameraManager planted, the default world resolves exactly as DEF.01-DEF.03",
+              FxResultEq(r, G4::DefaultResult()), FxResultStr(r));
+        G4::LinesAre("SCORE.10a infra field on a non-actor: DEF.04's lines -- L5 still ends candidates=2",
+                     G4::DefaultLines());
+        G4::Lacks(FxFmt("SCORE.10a infra field on a non-actor: Data_0 behind PC_0's PlayerCameraManager is absent -- "
+                        "%d, dropped",
+                        kRootInfraNonActor),
+                  r, g_data0);
+        check(FxFmt("SCORE.11a drop line near combat: Cmc_0 and Sense_0 behind Hero_0's CharacterMovement and Mesh are "
+                    "absent -- %d is dropped on the pawn root too",
+                    kNearInfraNonActor),
+              G3::Absent(r, g_cmc0) && G3::Absent(r, g_sense0), FxCandsStr(r.candidates));
+    }
+
+    // SCORE.10b / SCORE.11b: PICK.05's world, nothing target-like, with the same infra fields planted.
+    {
+        G4::Begin(g_pcE);
+        FxSetPtr(g_heroE, FxOff::kCharacterMovement, g_cmc0);
+        FxSetPtr(g_heroE, FxOff::kMesh, g_sense0);
+        FxSetPtr(g_pcE, FxOff::kCameraManager, g_data0);
+        const auto& r = G4::Detect();
+        G4::Lacks("SCORE.10b infra field on a non-actor: Data_0 behind PC_E's PlayerCameraManager is absent", r,
+                  g_data0);
+        check("SCORE.11b drop line near combat: Cmc_0 and Sense_0 behind Hero_E's CharacterMovement and Mesh are "
+              "absent",
+              G3::Absent(r, g_cmc0) && G3::Absent(r, g_sense0), FxCandsStr(r.candidates));
+        check("SCORE.11b drop line near combat: the player's own components leave the list empty -- unresolved, N6, "
+              "not N5's best guesses",
+              r.candidates.empty() && !r.resolved && r.note == FxNote::kN6, FxResultStr(r));
+        G4::LinesAre("SCORE.11b drop line near combat: L1 names PC_E, then L5 ends candidates=0",
+                     { { 'I', FxLine::L1(g_pcE) }, { 'I', FxLine::L5(false, g_pcE, g_heroE, 0) } });
+    }
+}
+
+// ══ CAND.08 / SORT.05: a TSet element and a TMap value carry fieldOffset -1 ═════════════════════════════════════
+// Every container element lives in a heap buffer, so its record carries -1 -- the documented "container element"
+// offset -- whatever the container: a TSet's or a TMap's header offset is no address of the actor, and a consumer that
+// added it to the source would dereference the sparse array's Data pointer. The same -1 keys the element after every
+// direct field on a score tie.
+constexpr const char* kSetProperty = "SetProperty";
+constexpr const char* kMapProperty = "MapProperty";
+// UE's sparse TSet / TMap: a TSparseArray -- its element TArray, then the allocation TBitArray -- and the hash. Of the
+// header Aura reads the TArray, the first inline allocation word and NumBits; nothing else is planted.
+constexpr int32_t kSparseSetBytes = 0x50;      // the sparse layout: a 16-byte set is the compact one, never decoded
+static_assert(kSparseSetBytes == DynOff::SPARSE_SET_ELEMENT_SIZE, "the size the walker reads as a sparse set");
+constexpr int kSparseAllocWordAt = 0x10;       // TBitArray's first inline word: bit i set means slot i is allocated
+constexpr int kSparseNumBitsAt = 0x28;         // TBitArray::NumBits: a slot at or past it reads as free
+constexpr int32_t kOneSlot = 1;                // one allocated slot, index 0
+constexpr int32_t kSlot0Allocated = 1;         // the allocation word with bit 0 set
+constexpr int32_t kSetStride = 0x10;           // TSetElement<AActor*>: the pointer, then HashNextId and HashIndex
+constexpr int32_t kMapStride = 0x18;           // TSetElement<TPair<int32, AActor*>>: key, pad, value, hash ids
+constexpr int32_t kMapValueAt = 0x08;          // the value in a pair: an int32 key padded to the pointer's alignment
+constexpr uintptr_t kMapKey = 7;               // the pair's key: any value, since only the value is an object
+constexpr size_t kSetWords = static_cast<size_t>(kSetStride) / sizeof(uintptr_t);
+constexpr size_t kMapWords = static_cast<size_t>(kMapStride) / sizeof(uintptr_t);
+static_assert(kMapValueAt == kPtrBytes, "the value is the map buffer's second word");
+// PcSetMap's fields: TargetSet, TargetMap, then TargetAfter -- a direct field at a higher offset than both.
+constexpr int32_t kSetAt = FxOff::kSlot0;
+constexpr int32_t kMapAt = kSetAt + kSparseSetBytes;
+constexpr int32_t kAfterAt = kMapAt + kSparseSetBytes;
+static_assert(static_cast<size_t>(kAfterAt + kPtrBytes) <= kBigBytes, "PcSetMap's last field lies inside a big object");
+constexpr int32_t kSetElement = 0, kMapElement = 0;   // the sparse index of the one entry each container holds
+
+static uintptr_t g_setBuf[kSetWords];   // PC_SM.TargetSet's Data: InSet_0
+static uintptr_t g_mapBuf[kMapWords];   // PC_SM.TargetMap's Data: { kMapKey, InMap_0 }
+static uintptr_t g_pcSm = 0, g_heroSm = 0, g_inSet = 0, g_inMap = 0, g_after = 0;
+
+// A sparse container at `at` in obj holding one allocated slot, in `buf`, recorded as a default.
+static void DefSparseOne(uintptr_t obj, int32_t at, uintptr_t* buf) {
+    FxDefTArray(obj, at, FxAddr(buf), kOneSlot, kOneSlot);
+    FxDefI32(obj, at + kSparseAllocWordAt, kSlot0Allocated);
+    FxDefI32(obj, at + kSparseNumBitsAt, kOneSlot);
+}
+
+// PC_SM and its pawn, built once. The reset first puts every existing header and class head back as built, so the
+// snapshots taken at the end record the defaults, and the new objects', for every reset after this one.
+static void BuildSetMapWorld() {
+    if (g_pcSm) return;
+    FxReset();
+    // UE names a TSet's element property and a TMap's value property after the container, its key "<name>_Key".
+    const uintptr_t setField = FxField(kSetProperty, "TargetSet", kSetAt, kSparseSetBytes);
+    FxPut64(setField, DynOff::FARRAYPROP_INNER, FxObjF("TargetSet", 0));
+    const uintptr_t mapField = FxField(kMapProperty, "TargetMap", kMapAt, kSparseSetBytes);
+    FxPut64(mapField, DynOff::FSTRUCTPROP_STRUCT, FxIntF("TargetMap_Key", 0));
+    FxPut64(mapField, DynOff::FSTRUCTPROP_STRUCT + kPtrBytes, FxObjF("TargetMap", 0));
+    const uintptr_t cls = FxClassF("PcSetMap", g_cPlayerController,
+                                   FxChainFields({ setField, mapField, FxObjF("TargetAfter", kAfterAt) }));
+    g_pcSm = FxObjBig(cls, "PC_SM");
+    g_heroSm = FxObj(g_cHeroBare, "Hero_SM");
+    g_inSet = FxObj(g_cProp, "InSet_0");   // below InMap_0 by address
+    g_inMap = FxObj(g_cProp, "InMap_0");
+    g_after = FxObj(g_cProp, "After_0");
+    FxDefPair(g_pcSm, g_heroSm);
+    FxDefBuf(g_setBuf, kSetWords, { g_inSet });
+    FxDefBuf(g_mapBuf, kMapWords, { kMapKey, g_inMap });
+    DefSparseOne(g_pcSm, kSetAt, g_setBuf);
+    DefSparseOne(g_pcSm, kMapAt, g_mapBuf);
+    FxDefPtr(g_pcSm, kAfterAt, g_after);
+    FxSnapshotHeaders();
+    FxSnapshotClasses();
+}
+
+static std::string EdgeOr(const Aura::OutgoingPtr* e) {
+    return e ? G1::EdgeStr(*e) + " type='" + e->fieldType + "'" : std::string("absent");
+}
+
+static void SetMapElements() {
+    BuildSetMapWorld();
+    G4::Begin(g_pcSm);
+    {
+        std::vector<Aura::OutgoingPtr> edges;
+        Aura::CollectOutgoingObjectPtrs(g_pcSm, edges);
+        const Aura::OutgoingPtr* es = G1::FindEdge(edges, g_inSet);
+        const Aura::OutgoingPtr* em = G1::FindEdge(edges, g_inMap);
+        check("CAND.08 set and map elements: (fixture) Aura emits InSet_0 as element 0 of the SetProperty 'TargetSet', "
+              "at its header 0x200",
+              es && G1::EdgeIs(*es, g_inSet, kSetAt, "TargetSet", kSetElement) && es->fieldType == kSetProperty,
+              EdgeOr(es));
+        check("CAND.08 set and map elements: (fixture) Aura emits InMap_0 as the value of element 0 of the MapProperty "
+              "'TargetMap', at its header 0x250",
+              em && G1::EdgeIs(*em, g_inMap, kMapAt, "TargetMap.Value", kMapElement) && em->fieldType == kMapProperty &&
+                  em->elemStride == kMapStride && em->elemValueOffset == kMapValueAt,
+              EdgeOr(em));
+        check("CAND.08 set and map elements: (fixture) InSet_0 lies below InMap_0 by address", g_inSet < g_inMap,
+              FxHex(g_inSet) + " " + FxHex(g_inMap));
+    }
+    const auto& r = G4::Detect(G4::kSeeAll);
+    const auto after = FxCandOf(g_after, G4::kScoreRootKwActor, g_pcSm, "TargetAfter", kAfterAt,
+                                G4::Why("TargetAfter", FxWhy::kIsActor));
+    const auto inSet = FxCandOf(g_inSet, G4::kScoreRootKwActor, g_pcSm, "TargetSet", G4::kElement,
+                                G4::Why("TargetSet", FxWhy::kIsActor));
+    const auto inMap = FxCandOf(g_inMap, G4::kScoreRootKwActor, g_pcSm, "TargetMap.Value", G4::kElement,
+                                G4::Why("TargetMap.Value", FxWhy::kIsActor));
+    const FxCands want = { after, inSet, inMap };
+    const Edel::TargetCandidate* cs = FxFindCand(r, g_inSet);
+    const Edel::TargetCandidate* cm = FxFindCand(r, g_inMap);
+    check("CAND.08 set and map elements: InSet_0 (a TSet element) and InMap_0 (a TMap value) both carry fieldOffset "
+          "-1, never their headers' 0x200 / 0x250",
+          cs && cs->fieldOffset == G4::kElement && cm && cm->fieldOffset == G4::kElement,
+          G3::Got(cs) + "\n      " + G3::Got(cm));
+    G4::CandsAre("CAND.08 set and map elements: the whole list is [After_0 0x2A0, InSet_0 'TargetSet' -1, InMap_0 "
+                 "'TargetMap.Value' -1], each 70",
+                 r, want);
+    const int pAfter = G4::Position(r, g_after), pSet = G4::Position(r, g_inSet), pMap = G4::Position(r, g_inMap);
+    check("SORT.05 field before element: tied at 70, the direct field at 0x2A0 sorts ahead of the set element and the "
+          "map value, which key as -1 and then by address",
+          pAfter >= 0 && pSet >= 0 && pMap >= 0 && pAfter < pSet && pSet < pMap, FxAddrsStr(FxCandAddrs(r)));
+    G4::NoteIs("CAND.08 set and map elements: three tops tied at 70 resolve nothing -- N5", r, FxNote::kN5);
+    G4::LinesAre("CAND.08 set and map elements: L1 names PC_SM, then L5 names Hero_SM, candidates=3",
+                 { { 'I', FxLine::L1(g_pcSm) }, { 'I', FxLine::L5(false, g_pcSm, g_heroSm, want.size()) } });
+}
+
+// ══ SORT.06: the address breaks the last tie, never the InternalIndex or the name ═══════════════════════════════
+// In a live game an object's address, its GUObjectArray index and its name are unrelated, and the cut to maxCandidates
+// keeps the first entries of the sorted list: the documented order is the address. Every tie elsewhere in this file
+// has address, index and name all in one order, so these pairs set the index -- and, in SORT.06b, the name too -- in
+// the order opposite to the addresses.
+static void SortTieBreak() {
+    // SORT.06a: SORT.03's world, with A3 (below A4 by address) re-indexed above A4.
+    {
+        G4::Begin(g_pcO);
+        FxSetIndex(g_a3, FxIndexOf(g_a4) + kNextIndex);
+        check("SORT.06a address, not index: (fixture) A3 lies below A4 by address and now above it by InternalIndex",
+              g_a3 < g_a4 && FxIndexOf(g_a3) > FxIndexOf(g_a4),
+              FxFmt("A3 index %d, A4 index %d", FxIndexOf(g_a3), FxIndexOf(g_a4)));
+        const auto& r = G4::Detect(G4::kSeeAll);
+        const FxCands want = {
+            FxCandOf(g_a1, G4::kScoreRootKwActor, g_pcO, "TargetA1", FxOff::Slot(0),
+                     G4::Why("TargetA1", FxWhy::kIsActor)),
+            FxCandOf(g_a2, G4::kScoreRootKwActor, g_pcO, "TargetA2", FxOff::Slot(1),
+                     G4::Why("TargetA2", FxWhy::kIsActor)),
+            FxCandOf(g_a3, G4::kScoreRootKwActor, g_pcO, "Targets", G4::kElement, G4::Why("Targets", FxWhy::kIsActor)),
+            FxCandOf(g_a4, G4::kScoreRootKwActor, g_pcO, "Targets", G4::kElement, G4::Why("Targets", FxWhy::kIsActor)),
+        };
+        G4::CandsAre("SORT.06a address, not index: SORT.02's list [A1, A2, A3, A4], A3 still before A4 and carrying "
+                     "its new index",
+                     r, want);
+    }
+
+    // SORT.06b: A1 and A2 only as Targets elements, emitted A1 first. A2 lies below A1 by address, while its name and
+    // -- re-indexed -- its InternalIndex both sort after A1's.
+    {
+        G4::Begin(g_pcO);
+        FxSetPtr(g_pcO, FxOff::Slot(0), 0);   // TargetA1
+        FxSetPtr(g_pcO, FxOff::Slot(1), 0);   // TargetA2
+        g_sortBuf[0] = g_a1;
+        g_sortBuf[1] = g_a2;
+        FxSetIndex(g_a2, FxIndexOf(g_a1) + kNextIndex);
+        check("SORT.06b address, not name or index: (fixture) A2 lies below A1 by address, and its name and its "
+              "InternalIndex both sort after A1's",
+              g_a2 < g_a1 && FxNameText(g_a1) < FxNameText(g_a2) && FxIndexOf(g_a2) > FxIndexOf(g_a1),
+              FxFmt("A1 index %d, A2 index %d", FxIndexOf(g_a1), FxIndexOf(g_a2)));
+        const auto& r = G4::Detect(G4::kSeeAll);
+        const FxCands want = {
+            FxCandOf(g_a2, G4::kScoreRootKwActor, g_pcO, "Targets", G4::kElement, G4::Why("Targets", FxWhy::kIsActor)),
+            FxCandOf(g_a1, G4::kScoreRootKwActor, g_pcO, "Targets", G4::kElement, G4::Why("Targets", FxWhy::kIsActor)),
+        };
+        G4::CandsAre("SORT.06b address, not name or index: exactly [A2, A1], both 'Targets' elements at 70", r, want);
+        G4::NoteIs("SORT.06b address, not name or index: two tops tied at 70 resolve nothing -- N5", r, FxNote::kN5);
+        G4::LinesAre("SORT.06b address, not name or index: L1 names PC_O, then L5 ends candidates=2",
+                     { { 'I', FxLine::L1(g_pcO) }, { 'I', FxLine::L5(false, g_pcO, g_heroO, want.size()) } });
+    }
+}
+
+}  // namespace H2
+
+static void Blocks_H2() {
+    blk("COMP+ / SCORE+ / SORT+ - what the survivor hunt found in the scan, the scores and the order");
+    H2::CompHop();
+    H2::CompOwner();
+    H2::ScoreInfra();
+    H2::SetMapElements();
+    H2::SortTieBreak();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("edel_target_test -- Current Target (Edel.cpp) over a fake world, in this process\n");
@@ -4785,6 +5365,8 @@ int main() {
     Blocks_G2();
     Blocks_G3();
     Blocks_G4();
+    Blocks_H1();
+    Blocks_H2();
     FxCleanup();
     return FxExitCode();
 }
