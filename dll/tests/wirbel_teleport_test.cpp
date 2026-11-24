@@ -10321,6 +10321,958 @@ static void Blocks_H3() {
     H3::TrainerAckPawn();
 }
 
+
+// ══ H4: the pose at UE4 width and without a flag pointer, FindFunc on a far deeper chain, and what the POV-failed
+// WARN reports ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// Each scenario feeds one input the earlier blocks hold fixed -- an attached float pawn, a float vector that ends where
+// readable memory does, a caller that hands no flag pointer, a class chain far deeper than the fixture's, a camera
+// manager without its location getter or one whose reflected cache field cannot be walked into -- so the value a check
+// compares can only come from the reading it names.
+
+namespace H4 {
+
+// ── numbers ──
+// How far the deeper pawn class sits below Actor, and the deeper CMC class below MovementComponent. Shipped games stack
+// Blueprint and native layers well past a handful of supers; Ubel's own field walk must still reach RootComponent and
+// CharacterMovement from there, so the chain stays within it.
+constexpr int kDeeperSupers = 20;
+constexpr int kLayersOverDeep = kDeeperSupers - H3::kDeepSupers;   // the layers stacked on H3's deep classes
+static_assert(kLayersOverDeep > 0, "the deeper classes stack on top of H3's deep ones");
+// RootEdgeF's whole body: its float RelativeLocation is the last thing in it, and so the last bytes of its page.
+constexpr size_t kRootEdgeFBytes = static_cast<size_t>(FxOff::kRelativeLocation + kVecF);
+constexpr const char* kBpCamClass = "BP_CameraManager_C";   // CamEdgeLoc's class, as the POV-failed WARN names it
+
+// ── fixture variants: built on first use from a block function, never at static init ──
+// A pawn class and a CMC class kDeeperSupers below Actor and MovementComponent. Fresh classes with no own fields or
+// functions, so every lookup on them walks to the engine classes above.
+struct DeeperClasses { uintptr_t hero = 0, cmc = 0; };
+static DeeperClasses s_deeper;
+static const DeeperClasses& Deeper() {
+    if (!s_deeper.hero) {
+        const H3::DeepClasses& deep = H3::Deep();
+        uintptr_t hero = deep.hero, cmc = deep.cmc;
+        for (int layer = 1; layer <= kLayersOverDeep; ++layer) {
+            hero = FxClass(FxFmt("BP_HeroDeeper%02d_C", layer).c_str(), hero, FxOff::kMesh + kPtrBytes);
+            cmc = FxClass(FxFmt("CmcDeeper%02d_C", layer).c_str(), cmc, kCmcBytes);
+        }
+        s_deeper.hero = hero;
+        s_deeper.cmc = cmc;
+    }
+    return s_deeper;
+}
+
+// A UE4 root whose 12-byte RelativeLocation ends exactly where its committed page does; the page after it is reserved
+// and never committed, so a read one byte longer than a float vector faults. A real component is 8-aligned, this one
+// cannot be: the vector, not the object, has to meet the page end.
+static void* s_rootEdgeFBase = nullptr;
+static uintptr_t s_rootEdgeF = 0;
+static uintptr_t RootEdgeF() {
+    if (!s_rootEdgeF) {
+        void* base = VirtualAlloc(nullptr, 2 * kPage, MEM_RESERVE, PAGE_NOACCESS);
+        if (!base || !VirtualAlloc(base, kPage, MEM_COMMIT, PAGE_READWRITE))
+            FxFixtureFail("RootEdgeF's page could not be made");
+        s_rootEdgeFBase = base;
+        s_rootEdgeF = FxAddr(base) + kPage - kRootEdgeFBytes;
+        FxObjAt(s_rootEdgeF, g_cCapsuleF, "RootEdgeF", g_heroF0);
+        g_bodyBytes[s_rootEdgeF] = kRootEdgeFBytes;
+    }
+    return s_rootEdgeF;
+}
+// The reset puts BP_HeroF_C_0's own root back first, so no world object points into the page when it goes.
+static void ReleaseRootEdgeF() {
+    if (!s_rootEdgeFBase) return;
+    FxReset();
+    g_bodyBytes.erase(s_rootEdgeF);
+    VirtualFree(s_rootEdgeFBase, 0, MEM_RELEASE);
+    s_rootEdgeFBase = nullptr;
+    s_rootEdgeF = 0;
+}
+
+// ══ FIX.06: FindFunc keeps walking up a chain far deeper than a handful of supers ═════════════════════════════════
+static void DeeperChain() {
+    using K = FxKind;
+    const DeeperClasses& d = Deeper();
+
+    FxReset();
+    check("FIX.06 deeper chain: the fixture -- Actor is the deeper pawn class's 20th super and MovementComponent the "
+          "deeper CMC class's",
+          H3::SuperN(d.hero, kDeeperSupers) == g_cActor && H3::SuperN(d.cmc, kDeeperSupers) == g_cMoveComp,
+          FxNameOf(H3::SuperN(d.hero, kDeeperSupers)) + " / " + FxNameOf(H3::SuperN(d.cmc, kDeeperSupers)));
+    const G1::FnFound sal = G1::FnOf(d.hero, "K2_SetActorLocation");
+    const G1::FnFound tp = G1::FnOf(d.hero, "K2_TeleportTo");
+    const G1::FnFound get = G1::FnOf(d.hero, "K2_GetActorLocation");
+    const G1::FnFound now = G1::FnOf(d.cmc, "StopMovementImmediately");
+    check("FIX.06 deeper chain: FindFunc reaches Actor's K2_SetActorLocation, K2_TeleportTo and K2_GetActorLocation "
+          "blobs 20 supers above the deeper pawn class",
+          sal.found && sal.blob == g_fnSetActorLoc && tp.found && tp.blob == g_fnTeleportTo && get.found &&
+              get.blob == g_fnGetLoc,
+          G1::FnStr(sal) + " / " + G1::FnStr(tp) + " / " + G1::FnStr(get));
+    check("FIX.06 deeper chain: FindFunc reaches MovementComponent's StopMovementImmediately 20 supers above the "
+          "deeper CMC class",
+          now.found && now.blob == g_fnStopMoveNow, G1::FnStr(now));
+
+    // The recall a real pawn makes: the actor setter and getter, and the velocity reset, all declared that far up.
+    FxReset();
+    FxSetClass(g_hero0, d.hero);
+    FxSetClass(g_cmc0, d.cmc);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("FIX.06 deeper chain: a recall on the deeper pawn calls K2_SetActorLocation and K2_GetActorLocation on "
+              "Hero_0, StopMovement on PC_0 and StopMovementImmediately on CMC_0 -- the default order, no component "
+              "setter",
+              G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                           { K::StopMoveNow, g_cmc0 } }),
+              FxCallsStr(FxCalls()));
+        check("FIX.06 deeper chain: ... through Actor's and MovementComponent's own blobs; 0 at tier 1, Root_0 on "
+              "kDest, no \"no K2_TeleportTo / K2_SetActorLocation\" WARN and no WARN at all",
+              FxNth(K::SetActorLoc).ufunc == g_fnSetActorLoc && FxNth(K::GetLoc).ufunc == g_fnGetLoc &&
+                  FxNth(K::StopMoveNow).ufunc == g_fnStopMoveNow && o.rc == Wirbel::TP_OK &&
+                  o.tier == G4::kTierInvoke && FxEq3(FxPos(), kDestXyz) && FxLogCount(FxText::kNoSetters) == 0 &&
+                  FxTeleportLines('W') == 0,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+
+    // An attached pawn's world read goes through the same walk.
+    FxReset();
+    FxSetClass(g_hero0, d.hero);
+    FxAttach(true);
+    FxClearRecorders();
+    {
+        const G1::PoseRead r = G1::ReadPose();
+        check("FIX.06 deeper chain: an attached deeper pawn's pose is K2_GetActorLocation's kAttachedWorld with kRot, "
+              "*src 1, *pr false",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kAttachedWorld, kRot) && r.src == G4::kSourceInvoke && !r.pr,
+              G1::OutStr(r));
+        check("FIX.06 deeper chain: ... one K2_GetActorLocation on Hero_0 and no parent-relative WARN",
+              FxCountOn(FxKind::GetLoc, g_hero0) == 1 && FxLogCount(FxText::kAttachedFail) == 0,
+              FxCallsStr(FxCalls()) + FxLogDump());
+    }
+}
+
+// ══ POSE.12: an attached UE4 pawn's world read takes the 12-byte return at its own width ══════════════════════════
+// The fit check and the decode both key on the return's reflected size: a float return measured or decoded as three
+// doubles is either refused or read partly from past the buffer.
+static void PoseAttachedFloat() {
+    FxReset();
+    FxUE4World();
+    FxAttach(true, g_rootF0);
+    FxClearRecorders();
+    {
+        const G1::PoseRead r = G1::ReadPose();
+        const FxCall get = FxNth(FxKind::GetLoc);
+        check("POSE.12 UE4 attached: GetPose answers 0 with the float K2_GetActorLocation's kAttachedWorld and kRot",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kAttachedWorld, kRot), G1::OutStr(r));
+        check("POSE.12 UE4 attached: *src 1 (invoke) and *pr false", r.src == G4::kSourceInvoke && !r.pr,
+              G1::OutStr(r));
+        check("POSE.12 UE4 attached: exactly one call, K2_GetActorLocation on BP_HeroF_C_0 through ActorF's blob, with "
+              "a 12-byte buffer",
+              FxCountAll() == 1 && get.instance == g_heroF0 && get.ufunc == g_fnGetLocF &&
+                  get.size == static_cast<uint32_t>(kVecF),
+              FxCallsStr(FxCalls()));
+        check("POSE.12 UE4 attached: no WARN -- the getter answered, so nothing is parent-relative",
+              FxTeleportLines('W') == 0, FxLogDump());
+    }
+
+    // What the read feeds: a marker saved there must hold the world position, unflagged.
+    FxReset();
+    FxUE4World();
+    FxAttach(true, g_rootF0);
+    FxClearRecorders();
+    {
+        const int32_t rc = Wirbel::SaveMarker(G4::kSlotFirst);
+        const Wirbel::Marker m = FxMarkerNow(G4::kSlotFirst);
+        const Wirbel::Marker want = FxMarker(FxPose(kAttachedWorld, kRot), G4::kMapA);
+        check("POSE.12 UE4 attached: SaveMarker(0) stores kAttachedWorld / kRot on Map_A, valid and not "
+              "parent-relative",
+              rc == Wirbel::TP_OK && FxMarkerEq(m, want), FxS(rc) + " " + FxMarkerStr(m));
+        check("POSE.12 UE4 attached: ... one INFO \"marker 0 saved (5000.5, 6000.5, 700.5) map='Map_A'\" and no WARN",
+              FxLogCount(FxLine::MarkerSaved(G4::kSlotFirst, kAttachedWorld, G4::kMapA), 'I') == 1 &&
+                  FxTeleportLines('W') == 0,
+              FxLogDump());
+    }
+}
+
+// ══ POSE.13: a float vector's raw read takes 12 bytes, so one that ends at a page end still reads ═════════════════
+static void PoseEdgeFloat() {
+    const uintptr_t edge = RootEdgeF();
+    FxReset();
+    FxUE4World();
+    FxPlantRoot(edge, g_cCapsuleF, kStart, kVecF);
+    FxSetPtr(g_heroF0, FxOff::kRootComponent, edge);
+    FxClearRecorders();
+    {
+        uint8_t probe = 0;
+        const bool lastReadable = Macht::ReadBytesSafe(edge + kRootEdgeFBytes - 1, &probe, 1);
+        const bool pastUnreadable = !Macht::ReadBytesSafe(edge + kRootEdgeFBytes, &probe, 1);
+        check("POSE.13 float vector at a page end: the fixture -- RootEdgeF's RelativeLocation is the last 12 readable "
+              "bytes, the byte after it faults",
+              lastReadable && pastUnreadable && FxEq3(FxVecAt(edge + FxOff::kRelativeLocation, kVecF), kStart),
+              FxFmt("last readable %d, past unreadable %d, ", lastReadable ? 1 : 0, pastUnreadable ? 1 : 0) +
+                  FxArrStr(FxVecAt(edge + FxOff::kRelativeLocation, kVecF)));
+        const G1::PoseRead r = G1::ReadPose();
+        check("POSE.13 float vector at a page end: GetPose answers 0 with RootEdgeF's kStart and kRot",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kStart, kRot), G1::OutStr(r));
+        check("POSE.13 float vector at a page end: ... *src 0, *pr false, \"Map_A\", no engine call and no WARN",
+              r.src == G4::kSourceRaw && !r.pr && G1::MapIs(r.map, sizeof r.map, G1::kMapA) && FxCountAll() == 0 &&
+                  FxTeleportLines('W') == 0,
+              G1::OutStr(r) + " " + FxCallsStr(FxCalls()) + FxLogDump());
+    }
+}
+
+// ══ POV.19: the POV-failed WARN reports a getter reflection does not have as missing ══════════════════════════════
+// The line tells "getters cooked out of reflection" from "getters present but the invoke returns nothing".
+static void PovLocGetterMissing() {
+    const uintptr_t rotAndFov = FxCamFnList({ .loc = FxCamLocShape::Missing });
+    const uintptr_t fovOnly = FxCamFnList({ .loc = FxCamLocShape::Missing, .rot = false });
+
+    FxReset();
+    FxSetFns(g_cCamNoCache, rotAndFov);
+    FxSetClass(g_cam0, g_cCamNoCache);
+    FxRcAlways(FxKind::CamRot, FxG2::kInvokeFail);
+    FxClearRecorders();
+    {
+        const FxG2::PovRun r = FxG2::RunPov();
+        check("POV.19 location getter missing: -5 with out == Pov{}",
+              r.rc == Wirbel::TP_ERR_INVOKE && FxG2::PovIsDefault(r.p),
+              FxG2::RcStr(r.rc) + " " + FxG2::PovStr(r.p));
+        check("POV.19 location getter missing: one GetCameraRotation call and nothing else",
+              FxKindsAre({ FxKind::CamRot }), FxKindsStr(FxKinds()));
+        check("POV.19 location getter missing: one 'W' naming CamNoCache, getters loc=0 rot=1, CameraCache off=-1",
+              FxLogCount(FxG2::PovFailed("CamNoCache", g_cam0, 0, 1, FxG2::kUnresolved), 'W') == 1, FxLogDump());
+    }
+
+    FxReset();
+    FxSetFns(g_cCamNoCache, fovOnly);
+    FxSetClass(g_cam0, g_cCamNoCache);
+    FxClearRecorders();
+    {
+        const FxG2::PovRun r = FxG2::RunPov();
+        check("POV.19 both vector getters missing: -5 with out == Pov{} and no engine call",
+              r.rc == Wirbel::TP_ERR_INVOKE && FxG2::PovIsDefault(r.p) && FxCountAll() == 0,
+              FxG2::RcStr(r.rc) + " " + FxG2::PovStr(r.p) + " " + FxKindsStr(FxKinds()));
+        check("POV.19 both vector getters missing: one 'W' naming CamNoCache, getters loc=0 rot=0, CameraCache off=-1",
+              FxLogCount(FxG2::PovFailed("CamNoCache", g_cam0, 0, 0, FxG2::kUnresolved), 'W') == 1, FxLogDump());
+    }
+}
+
+// ══ POV.20: the POV-failed WARN reports the cache field's offset when the field is reflected ═══════════════════════
+// The raw read can fail inside a field that is there; the line must then point at the walk, not at a missing field.
+static void PovCacheReflected() {
+    struct Row {
+        const char* what;
+        const char* camClassName;   // as the WARN prints it
+        uintptr_t cam;              // the camera manager PC_0 is given
+        uintptr_t cls;              // the class it is switched to; 0 = left as built
+    };
+    const Row rows[] = {
+        { "Rotation not reflected", "CamNoRot", g_cam0, g_cCamNoRot },
+        { "cache field not a struct", "CamCacheNotStruct", g_cam0, g_cCamCacheNotStruct },
+        { "location unreadable", kBpCamClass, g_camEdgeLoc, 0 },
+    };
+    for (const Row& row : rows) {
+        FxReset();
+        FxSetPtr(g_pc0, FxOff::kCameraManager, row.cam);
+        if (row.cls) FxSetClass(row.cam, row.cls);
+        FxResponsive(false);
+        FxClearRecorders();
+        const FxG2::PovRun r = FxG2::RunPov();
+        check(FxFmt("POV.20 cache reflected, %s: -5 with out == Pov{}, no engine call", row.what).c_str(),
+              r.rc == Wirbel::TP_ERR_INVOKE && FxG2::PovIsDefault(r.p) && FxCountAll() == 0,
+              FxG2::RcStr(r.rc) + " " + FxG2::PovStr(r.p) + " " + FxKindsStr(FxKinds()));
+        check(FxFmt("POV.20 cache reflected, %s: one 'W' naming %s, getters loc=1 rot=1, CameraCache off=256", row.what,
+                    row.camClassName)
+                  .c_str(),
+              FxLogCount(FxG2::PovFailed(row.camClassName, row.cam, 1, 1, FxOff::kCameraCache), 'W') == 1,
+              FxLogDump());
+    }
+}
+
+// ══ POSE.11: a pose read handed no flag pointer degrades without writing through one ══════════════════════════════
+// The flag parameter defaults to null, so an attached pawn whose world read fails must still answer the raw pose.
+static void PoseNoFlagPointer() {
+    FxReset();
+    FxAttach(true);
+    FxRcs(FxKind::GetLoc, { Wirbel::TP_ERR_INVOKE });
+    FxClearRecorders();
+    {
+        Wirbel::Pose p = FxSentinelPose();
+        char map[G1::kMapBuf];
+        FxFillMap(map, sizeof map);
+        const int32_t rc = Wirbel::GetPose(p, map, kMapCap, nullptr);
+        check("POSE.11 no flag pointer, GetPose: attached with the getter failing, a call with no source and no flag "
+              "pointer answers 0 with the raw kStart / kRot and \"Map_A\"",
+              rc == Wirbel::TP_OK && FxPoseEq(p, kStartPose) && G1::MapIs(map, sizeof map, G1::kMapA),
+              FxS(rc) + " " + FxPoseStr(p) + " map=" + G1::MapStr(map, sizeof map));
+        check("POSE.11 no flag pointer, GetPose: ... one K2_GetActorLocation call and one parent-relative WARN",
+              FxCount(FxKind::GetLoc) == 1 && FxCountAll() == 1 && FxLogCount(FxText::kAttachedFail, 'W') == 1,
+              FxCallsStr(FxCalls()) + FxLogDump());
+    }
+
+    FxReset();
+    FxAttach(true);
+    FxRcs(FxKind::GetLoc, { Wirbel::TP_ERR_INVOKE });
+    FxClearRecorders();
+    {
+        Wirbel::Pose p = FxSentinelPose();
+        Wirbel::MovementState m = G1::JunkMove();
+        const int32_t rc = Wirbel::GetPoseAndMovement(p, nullptr, 0, nullptr, m);
+        check("POSE.11 no flag pointer, GetPoseAndMovement: attached with the getter failing, a call with no map, no "
+              "source and no flag pointer answers 0 with the raw kStart / kRot and the hero's movement state",
+              rc == Wirbel::TP_OK && FxPoseEq(p, kStartPose) && m.PawnAddr == g_hero0 && m.HasMovement,
+              FxS(rc) + " " + FxPoseStr(p) + " " + G1::MoveStr(m));
+        check("POSE.11 no flag pointer, GetPoseAndMovement: ... one K2_GetActorLocation call and one parent-relative "
+              "WARN",
+              FxCount(FxKind::GetLoc) == 1 && FxCountAll() == 1 && FxLogCount(FxText::kAttachedFail, 'W') == 1,
+              FxCallsStr(FxCalls()) + FxLogDump());
+    }
+}
+
+}  // namespace H4
+
+static void Blocks_H4() {
+    blk("RESOLVE++ - the pose, the function walk and the POV: what the second survivor hunt found");
+    H4::DeeperChain();
+    H4::PoseAttachedFloat();
+    H4::PoseEdgeFloat();
+    H4::PovLocGetterMissing();
+    H4::PovCacheReflected();
+    // Last of the reads: a degraded read that wrote through the missing flag pointer would end the run here.
+    H4::PoseNoFlagPointer();
+    H4::ReleaseRootEdgeF();
+}
+
+// ══ H5: MOVE++ — MOVE / COMP / DEEP / FRZ, each a G3 scenario with the one input that splits a decision ═══════════
+// G3's fixture lets a decision and a near reading of it agree in four more places: the only tier-1 pawn line a check
+// reads names K2_SetActorLocation, every K2_GetActorLocation a move asks has a return the reflection finds, every
+// location setter names its parameter NewLocation, and every old position deep force measures lies east of the origin.
+// Each scenario changes that one input, so only the reading Wirbel.cpp makes passes. A check carries the name of the
+// block it extends and continues that block's numbering.
+
+namespace H5 {
+
+// ── the Teleport line prefixes these checks count: Wirbel.cpp's own format strings, verbatim ──
+constexpr const char* kSalOkPrefix = "Teleport: K2_SetActorLocation invoked OK";
+constexpr const char* kWorldOkPrefix = "Teleport: K2_SetWorldLocation invoked OK";
+constexpr const char* kRelOkPrefix = "Teleport: K2_SetRelativeLocation invoked OK";
+constexpr const char* kFreezeStillPrefix = "Teleport: CMC-freeze force STILL";
+
+// ── numbers ──
+// A location parameter under a name Wirbel does not pack: it packs NewLocation only.
+constexpr const char* kLocationParam = "Location";
+// A pawn west of the origin: -X outweighs |Y| + |Z|, so the old position clears the degenerate-origin guard (an L1
+// size of at least 1.0) only when X is taken by its absolute value. Exact in a float as well as a double.
+constexpr double kWest[3] = { -3000.5, 100.5, 200.5 };
+static_assert(kWest[0] < 0.0 && kWest[1] > 0.0 && kWest[2] > 0.0 && kWest[0] + kWest[1] + kWest[2] < 1.0 &&
+                  -kWest[0] + kWest[1] + kWest[2] >= 1.0,
+              "kWest's signed sum is under the guard's 1.0, while its absolute sum is far over it");
+
+// ── helpers ──
+// USceneComponent's two location setters, reflected and sized, with the location parameter named "Location". The fake
+// engine reads a setter's location at offset 0 whatever its name, so a call made without packing it moves the root to
+// the origin -- what a real engine does with an all-zero block.
+static uintptr_t SceneLocationParamList() {
+    return FxList("h5/scene/location-param", [] {
+        return std::vector<uintptr_t>{
+            FxFnSetLoc(FxKind::SetWorldLoc, "K2_SetWorldLocation", g_cSceneComponent, kSal5, false, kLocationParam),
+            FxFnSetLoc(FxKind::SetRelLoc, "K2_SetRelativeLocation", g_cSceneComponent, kSal5, false, kLocationParam),
+        };
+    });
+}
+
+// ══ MOVE ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void Move() {
+    using K = FxKind;
+    const uintptr_t tpOnly = FxActorFnList({ .setActorLoc = FxSalShape::Missing });
+    const uintptr_t lowerSal = FxActorFnList({ .setActorLoc = FxSalShape::Lowercase });
+    const uintptr_t noReturnGetter = FxActorFnList({ .getLoc = FxGetLocShape::NoReturn });
+
+    // MOVE.16: the tier-1 line names the setter that moved the pawn, as reflection spells it. K2_TeleportTo runs
+    // FindTeleportSpot and may shift the landing where K2_SetActorLocation lands exactly, so a log that credits the
+    // wrong one points a "landed off target" report at the wrong engine function.
+    FxReset();
+    FxClearRecorders();
+    {
+        const G3Out o = G3Cursor();
+        check("MOVE.16 the setter it names: a cursor jump that lands through K2_TeleportTo logs one INFO "
+              "'K2_TeleportTo invoked OK on pawn' naming Hero_0 and (3000.5, 3100.5, 141.0), and no line crediting "
+              "K2_SetActorLocation",
+              o.rc == Wirbel::TP_OK && FxCount(K::TeleportTo) == 1 && FxCount(K::SetActorLoc) == 0 &&
+                  FxLogCount(FxLine::PawnSetterOk("K2_TeleportTo", g_hero0, g3::kCursorDest), 'I') == 1 &&
+                  FxLogPrefix(kSalOkPrefix) == 0,
+              G3Got(o));
+    }
+    FxReset();
+    FxActorFns(tpOnly);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("MOVE.16 the setter it names: a recall on a pawn with only K2_TeleportTo logs one INFO 'K2_TeleportTo "
+              "invoked OK on pawn' naming Hero_0 and kDest, and no line crediting K2_SetActorLocation",
+              o.rc == Wirbel::TP_OK && FxCountOn(K::TeleportTo, g_hero0) == 1 &&
+                  FxLogCount(FxLine::PawnSetterOk("K2_TeleportTo", g_hero0, kDestXyz), 'I') == 1 &&
+                  FxLogPrefix(kSalOkPrefix) == 0,
+              G3Got(o));
+    }
+    FxReset();
+    FxActorFns(lowerSal);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("MOVE.16 the setter it names: a K2_SetActorLocation reflected as 'k2_setactorlocation' is logged under "
+              "that spelling -- one INFO 'k2_setactorlocation invoked OK on pawn' naming Hero_0 and kDest",
+              o.rc == Wirbel::TP_OK && FxCount(K::SetActorLoc) == 1 &&
+                  FxLogCount(FxLine::PawnSetterOk("k2_setactorlocation", g_hero0, kDestXyz), 'I') == 1 &&
+                  FxLogPrefix(kSalOkPrefix) == 0,
+              G3Got(o));
+    }
+
+    // MOVE.17: a K2_GetActorLocation whose return the reflection cannot find. The verification read must give up on
+    // the getter before invoking it -- there is no return to read the answer from -- and verify from RelativeLocation.
+    FxReset();
+    FxActorFns(noReturnGetter);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("MOVE.17 getter with no return: it is never invoked -- the calls are K2_SetActorLocation on Hero_0 and "
+              "the settle on PC_0 and CMC_0, no K2_GetActorLocation",
+              FxCount(K::GetLoc) == 0 &&
+                  G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }),
+              FxCallsStr(FxCalls()));
+        check("MOVE.17 getter with no return: unattached the move verifies from RelativeLocation -- 0 at tier 1, "
+              "Root_0 at kDest, one INFO 'post-move cur=kDest target=kDest attached=0', no freeze",
+              o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke && FxEq3(FxPos(), kDestXyz) &&
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1 &&
+                  FxLogPrefix(g3::kFreezePrefix) == 0 && FxCount(K::SetMoveMode) == 0,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+    FxReset();
+    FxActorFns(noReturnGetter);
+    FxAttach(true);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("MOVE.17 getter with no return, attached: never invoked through the move and the freeze it opens -- "
+              "[SetActorLoc, SetMoveMode, SetActorLoc, SetWorldLoc, SetMoveMode, SetActorLoc, SetWorldLoc, StopMove, "
+              "StopMoveNow], no K2_GetActorLocation",
+              FxCount(K::GetLoc) == 0 &&
+                  G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 }, { K::SetActorLoc, g_hero0 },
+                               { K::SetWorldLoc, g_root0 }, { K::SetMoveMode, g_cmc0 }, { K::SetActorLoc, g_hero0 },
+                               { K::SetWorldLoc, g_root0 }, { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }),
+              FxCallsStr(FxCalls()));
+        check("MOVE.17 getter with no return, attached: cur falls back to the parent-relative RelativeLocation -- the "
+              "freeze WARN, its STILL WARN and the post-move line all say kStart, attached=1, and the op answers 0",
+              o.rc == Wirbel::TP_OK && FxLogCount(g3::FreezeEnter(kStart, true), 'W') == 1 &&
+                  FxLogCount(g3::FreezeStill(kStart), 'W') == 1 &&
+                  FxLogCount(FxLine::PostMove(kStart, kDestXyz, true), 'I') == 1 &&
+                  FxEq3(FxAttachedWorldNow(), kDestXyz),
+              G3Got(o) + " world " + FxArrStr(FxAttachedWorldNow()));
+    }
+}
+
+// ══ COMP ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void Comp() {
+    using K = FxKind;
+    const uintptr_t sceneLocParam = SceneLocationParamList();
+
+    // COMP.02: a root whose K2_SetWorldLocation and K2_SetRelativeLocation are reflected with a ParmsSize but whose
+    // location parameter does not resolve by name. Neither may be invoked: an unpacked block is an all-zero location,
+    // a teleport to the world origin. Once as the move itself (the actor setter did not run), once inside the freeze.
+    FxReset();
+    FxSceneFns(sceneLocParam);
+    FxRcs(K::SetActorLoc, { g3::kDidNotRun });
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("COMP.02 unpackable component setter: neither component setter is invoked or logged as OK -- the calls "
+              "are K2_SetActorLocation (not run), the verification read and the settle",
+              G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                           { K::StopMoveNow, g_cmc0 } }) &&
+                  FxLogPrefix(kWorldOkPrefix) == 0 && FxLogPrefix(kRelOkPrefix) == 0,
+              FxCallsStr(FxCalls()) + FxLogDump());
+        check("COMP.02 unpackable component setter: the move falls to tier 2 -- 0, RelativeLocation kDest, one WARN "
+              "'tier-2 raw RelativeLocation write', one INFO 'deep-force rewrote 1' on Root_0 with +0x100 now kDest, "
+              "post-move cur kDest, no freeze",
+              o.rc == Wirbel::TP_OK && o.tier == H1::kTierRaw && FxEq3(FxPos(), kDestXyz) &&
+                  FxLogCount(FxText::kTier2, 'W') == 1 && FxLogCount(FxLine::DeepRewrote(1, g_root0), 'I') == 1 &&
+                  FxEq3(FxVecAt(g_root0 + FxOff::kC2W, kVecD), kDestXyz) &&
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1 &&
+                  FxLogPrefix(g3::kFreezePrefix) == 0,
+              G3Got(o) + " pos " + FxArrStr(FxPos()) + " C2W " + G3VecStr(g_root0 + FxOff::kC2W, kVecD));
+    }
+    FxReset();
+    FxSceneFns(sceneLocParam);
+    FxMoveMode(K::SetActorLoc, FxMove::Lies);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("COMP.02 unpackable component setter, in the freeze: a K2_SetActorLocation that reports success and "
+              "moves nothing opens the freeze, which skips both component setters too -- [SetActorLoc, GetLoc, "
+              "SetMoveMode, SetActorLoc, SetMoveMode, SetActorLoc, GetLoc, StopMove, StopMoveNow]",
+              G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 },
+                           { K::SetActorLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 }, { K::SetActorLoc, g_hero0 },
+                           { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }) &&
+                  FxLogPrefix(kWorldOkPrefix) == 0,
+              FxCallsStr(FxCalls()));
+        check("COMP.02 unpackable component setter, in the freeze: the raw write holds -- one INFO 'CMC-freeze force "
+              "succeeded -> cur=(1500.5,-2500.5,350.5)', no STILL WARN, RelativeLocation kDest, post-move cur kDest, 0 "
+              "at tier 1",
+              o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke && FxLogCount(g3::FreezeOk(kDestXyz), 'I') == 1 &&
+                  FxLogPrefix(kFreezeStillPrefix) == 0 && FxEq3(FxPos(), kDestXyz) &&
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+}
+
+// ══ DEEP ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void Deep() {
+    using K = FxKind;
+    const uintptr_t noActorSetters = FxActorFnList({ .setActorLoc = FxSalShape::Missing, .teleportTo = false });
+    const uintptr_t noSceneSetters = FxSceneFnList({ .world = FxCompShape::Missing, .relative = false });
+
+    // DEEP.07: the degenerate-origin guard takes X by its absolute value as well. A pawn west of the origin is no
+    // origin, so its stale copy must still be found -- called directly, from tier 2, and from the freeze.
+    FxReset();
+    {
+        const uintptr_t blob = G3Scratch();
+        FxSetVecAt(blob + g3::kCopyAt, kVecD, kWest);
+        FxClearRecorders();
+        const int n = DeepForceWorldPos(G3DeepChain(blob, kVecD), kWest, kDestXyz);
+        check("DEEP.07 west of the origin: an old position (-3000.5, 100.5, 200.5) is no degenerate origin -- its "
+              "planted copy is rewritten to kDest and one INFO 'rewrote 1' names the blob",
+              n == 1 && FxEq3(FxVecAt(blob + g3::kCopyAt, kVecD), kDestXyz) &&
+                  FxLogCount(FxLine::DeepRewrote(1, blob), 'I') == 1,
+              FxS(n) + " copy " + G3VecStr(blob + g3::kCopyAt, kVecD) + FxLogDump());
+    }
+    FxReset();
+    FxActorFns(noActorSetters);
+    FxSceneFns(noSceneSetters);
+    FxSetPos(kWest);
+    FxSetVecAt(g_root0 + FxOff::kC2W, kVecD, kWest);   // the cached transform agrees with where the pawn stands
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("DEEP.07 west of the origin: a tier-2 recall from (-3000.5, 100.5, 200.5) deep-forces the stale copy -- "
+              "one INFO 'rewrote 1' on Root_0, +0x100 now kDest, no 'found no ComponentToWorld' WARN",
+              o.rc == Wirbel::TP_OK && o.tier == H1::kTierRaw &&
+                  FxLogCount(FxLine::DeepRewrote(1, g_root0), 'I') == 1 &&
+                  FxEq3(FxVecAt(g_root0 + FxOff::kC2W, kVecD), kDestXyz) && FxLogCount(FxText::kDeepNone) == 0,
+              G3Got(o) + " C2W " + G3VecStr(g_root0 + FxOff::kC2W, kVecD));
+    }
+    FxReset();
+    FxSetPos(kWest);
+    FxSetVecAt(g_root0 + FxOff::kC2W, kVecD, kWest);
+    FxMoveMode(K::SetActorLoc, FxMove::Lies);
+    FxMoveMode(K::SetWorldLoc, FxMove::Lies);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("DEEP.07 west of the origin: the freeze's deep force from the same start rewrites the stale copy -- the "
+              "freeze WARN naming (-3000.5,100.5,200.5), one INFO 'rewrote 1' on Root_0, +0x100 now kDest, no 'found "
+              "no ComponentToWorld' WARN",
+              o.rc == Wirbel::TP_OK && FxCount(K::SetMoveMode) == H1::kFreezeModeCalls &&
+                  FxLogCount(g3::FreezeEnter(kWest, true), 'W') == 1 &&
+                  FxLogCount(FxLine::DeepRewrote(1, g_root0), 'I') == 1 &&
+                  FxEq3(FxVecAt(g_root0 + FxOff::kC2W, kVecD), kDestXyz) && FxLogCount(FxText::kDeepNone) == 0,
+              G3Got(o) + " C2W " + G3VecStr(g_root0 + FxOff::kC2W, kVecD));
+    }
+}
+
+// ══ FRZ ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void Frz() {
+    using K = FxKind;
+    const uintptr_t salLocParam = FxActorFnList({ .setActorLoc = FxSalShape::LocationParam });
+
+    // FRZ.09: the freeze's own K2_SetActorLocation re-asserts pack their location or are not made. The actor setter
+    // here names its location parameter "Location", and K2_SetWorldLocation reports success while a CharacterMovement
+    // reverts it -- the case the freeze exists for. A re-assert made without its location would throw the pawn to the
+    // world origin twice, the second time after the raw write.
+    FxReset();
+    FxActorFns(salLocParam);
+    FxMoveMode(K::SetWorldLoc, FxMove::Lies);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        check("FRZ.09 unpackable actor setter: K2_SetActorLocation is never invoked -- not by the move (one WARN "
+              "'param-pack failed') and not by either of the freeze's re-asserts",
+              FxCount(K::SetActorLoc) == 0 && FxLogCount(g3::PackFailed("K2_SetActorLocation"), 'W') == 1, G3Got(o));
+        check("FRZ.09 unpackable actor setter: the freeze runs on the component setter alone -- [SetWorldLoc, GetLoc, "
+              "SetMoveMode, SetWorldLoc, SetMoveMode, SetWorldLoc, GetLoc, StopMove, StopMoveNow], its WARN naming "
+              "kStart",
+              G3CallsAre({ { K::SetWorldLoc, g_root0 }, { K::GetLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 },
+                           { K::SetWorldLoc, g_root0 }, { K::SetMoveMode, g_cmc0 }, { K::SetWorldLoc, g_root0 },
+                           { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }) &&
+                  FxLogCount(g3::FreezeEnter(kStart, true), 'W') == 1,
+              FxCallsStr(FxCalls()) + FxLogDump());
+        check("FRZ.09 unpackable actor setter: the freeze's raw write holds -- one INFO 'CMC-freeze force succeeded -> "
+              "cur=(1500.5,-2500.5,350.5)', no STILL WARN, RelativeLocation kDest, post-move cur kDest, 0 at tier 1",
+              o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke && FxLogCount(g3::FreezeOk(kDestXyz), 'I') == 1 &&
+                  FxLogPrefix(kFreezeStillPrefix) == 0 && FxEq3(FxPos(), kDestXyz) &&
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+}
+
+}  // namespace H5
+
+static void Blocks_H5() {
+    blk("MOVE++ - the move and its verification: what the second survivor hunt found");
+    H5::Move();
+    H5::Comp();
+    H5::Deep();
+    H5::Frz();
+}
+
+// ══ H6: SLOTS++ -- the refused slot's number, the cursor jump's null outputs and point-less hits, the trace and
+// deprojection lines, and the slot reads and writes a second caller can race ═══════════════════════════════════════
+// Each scenario feeds one input the earlier blocks hold fixed: a refusal on a slot other than 0, the null outputs the C
+// ABI export passes, a hit whose FHitResult has no point member on path 2 and on the trace, a trace the game thread
+// never ran, an oblique ray in the log, and a second caller that reaches a slot while another op is half done. A check
+// carries the name of the block it extends and continues that block's numbering.
+
+namespace H6 {
+
+// ── numbers ──
+constexpr int32_t kNotReturned = 1;            // no Wirbel export answers a positive code: a call that never got one
+constexpr int kSlotMiddle = G4::kSlotMiddle;   // slot 1
+constexpr int kSlotLast = G4::kSlotLast;       // slot 2
+static_assert(kSlotMiddle != 0 && kSlotLast != 0,
+              "a refusal WARN that printed slot 0 must differ from the one for the slot that was recalled");
+
+// ── helpers ──
+// What SaveMarker stores for the attached hero: K2_GetActorLocation's world answer, PC_0's ControlRotation, Map_A.
+static Wirbel::Marker AttachedMarker() { return FxMarker(FxPose(kAttachedWorld, kRot), G4::kMapA); }
+
+// TeleportToCursor exactly as UE5_TeleportToCursor calls it -- outHit, tierOut and outUsedCenter all null -- under SEH,
+// so a write through one of them fails the check that reads `code` instead of ending the run. /EHa runs the op lock's
+// guard on the way out, so the next scenario can still take the lock. Plain C inside: a __try may not share a function
+// with a C++ object that needs unwinding.
+static int32_t CursorNullOutputs(int32_t channel, DWORD* code) {
+    __try {
+        return Wirbel::TeleportToCursor(kZOffset, channel, true, nullptr, nullptr, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *code = GetExceptionCode();
+        return kNotReturned;
+    }
+}
+
+// The calls of one kind one thread made, in call order.
+static std::vector<FxCall> CallsOn(FxKind kind, std::thread::id tid) {
+    std::vector<FxCall> out;
+    for (auto& c : FxCallsOf(kind))
+        if (c.tid == tid) out.push_back(std::move(c));
+    return out;
+}
+
+// Two callers of the op lock: A held inside the first call of `holdKind` it makes, B started while A is held.
+struct Contention {
+    bool held = false;     // A reached its hook
+    bool bEarly = true;    // B returned within kHoldMs while A still held the lock
+    int32_t rcA = kNotReturned, rcB = kNotReturned;
+    std::thread::id tidB{};   // B's calls are told from A's by the thread that made them
+};
+// Starts A and waits until it is inside its first `holdKind` call, starts B, gives B kHoldMs, then lets A go and joins
+// both. The hook spins on A's own thread, so A keeps s_opMutex exactly as long as B is watched; a later call of that
+// kind is not nth 0 and passes straight through. The plants and scripts are the caller's; the recorders are cleared
+// here, after the hook is armed, so every call and line recorded is A's or B's.
+static Contention Contend(FxKind holdKind, const std::function<int32_t()>& opA, const std::function<int32_t()>& opB,
+                          const char* id) {
+    std::atomic<bool> inHook{ false }, release{ false };
+    FxOnCall([holdKind, &inHook, &release](FxKind k, uintptr_t, int nth) {
+        if (k != holdKind || nth != 0) return;
+        inHook.store(true);
+        while (!release.load()) Sleep(kPollMs);
+    });
+    FxClearRecorders();
+    std::atomic<bool> doneA{ false }, doneB{ false };
+    std::atomic<int32_t> rcA{ kNotReturned }, rcB{ kNotReturned };
+    Contention out;
+    std::thread a([&] {
+        rcA.store(opA());
+        doneA.store(true);
+    });
+    out.held = waitFor([&] { return inHook.load(); }, kJoinWaitMs);
+    std::thread b([&] {
+        rcB.store(opB());
+        doneB.store(true);
+    });
+    out.tidB = b.get_id();
+    out.bEarly = waitFor([&] { return doneB.load(); }, kHoldMs);
+    release.store(true);
+    if (!waitFor([&] { return doneA.load() && doneB.load(); }, kJoinWaitMs))
+        FxFixtureFail(FxFmt("%s: a thread never returned after the hook let A go", id).c_str());
+    a.join();
+    b.join();
+    FxOnCall(nullptr);
+    out.rcA = rcA.load();
+    out.rcB = rcB.load();
+    return out;
+}
+
+// ══ MRK ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void BlockMrk() {
+    // ── MRK.10: the map refusal names the slot it refused. On slot 0 the number it prints cannot tell the slot from a
+    //    constant, so the recall here is of slot 2. ──
+    {
+        FxReset();
+        FxPlantMarker(kSlotLast, FxMarker(kDest, G4::kMapA));
+        FxPlantLast(G4::PlantedLast());
+        FxWorld(g_worldB);
+        FxClearRecorders();
+        uint8_t tier = kTierSentinel;
+        const size_t logs = FxLogMark(), calls = FxCallMark();
+        const int32_t rc = Wirbel::RecallMarker(kSlotLast, false, &tier);
+        G4::Refused("MRK.10 map refusal on slot 2", rc, Wirbel::TP_ERR_MAP_MISMATCH,
+                    FxFmt(G4::kFmtRecallMap, kSlotLast, G4::kMapB, G4::kMapA), logs, calls, G4::PlantedLast(), tier);
+    }
+
+    // ── MRK.11: the parent-relative refusal names the slot it refused too, Force or not ──
+    for (const bool force : { false, true }) {
+        FxReset();
+        FxPlantMarker(kSlotMiddle, FxMarker(kDest, G4::kMapA, true));
+        FxPlantLast(G4::PlantedLast());
+        FxClearRecorders();
+        uint8_t tier = kTierSentinel;
+        const size_t logs = FxLogMark(), calls = FxCallMark();
+        const int32_t rc = Wirbel::RecallMarker(kSlotMiddle, force, &tier);
+        const char* id =
+            force ? "MRK.11 parent-relative refusal on slot 1, Force" : "MRK.11 parent-relative refusal on slot 1";
+        G4::Refused(id, rc, Wirbel::TP_ERR_PARENT_RELATIVE,
+                    FxFmt(G4::kFmtRecallPr, kSlotMiddle, kDest.X, kDest.Y, kDest.Z, force ? G4::kForceToo : ""), logs,
+                    calls, G4::PlantedLast(), tier);
+    }
+}
+
+// ══ CUR ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void BlockCur() {
+    // ── CUR.18: the C ABI export hands TeleportToCursor null for all three outputs. A write through any of them is an
+    //    access violation on the caller's thread inside the game, so a jump that reaches every output must write none
+    //    of them. ──
+    {
+        FxReset();
+        FxPlantLast(G4::PlantedLast());
+        FxHit(FxKind::HitCursor, G5::kChanZero);
+        FxClearRecorders();
+        DWORD code = 0;
+        const int32_t rc = CursorNullOutputs(G5::kChanZero, &code);
+        check("CUR.18 null outputs: TeleportToCursor with outHit, tierOut and outUsedCenter all null -- as "
+              "UE5_TeleportToCursor calls it -- answers 0 and raises no exception",
+              code == 0 && rc == Wirbel::TP_OK, FxFmt("rc=%d exception=0x%08lX", rc, static_cast<unsigned long>(code)));
+        const FxCall tp = FxNth(FxKind::TeleportTo);
+        const auto dest = FxVec(tp, static_cast<size_t>(kTp5.loc), kTp5.vec);
+        check("CUR.18 null outputs: one K2_TeleportTo on BP_Hero_C_0 with DestLocation (3000.5, 3100.5, 141.0), and "
+              "the hero stands there",
+              FxCount(FxKind::TeleportTo) == 1 && tp.instance == g_hero0 && FxEq3(dest, G5::kCursorDest) &&
+                  FxEq3(FxPos(), G5::kCursorDest),
+              FxCallsStr(FxCalls()) + " dest=" + FxArrStr(dest) + " pos=" + FxArrStr(FxPos()));
+        const Wirbel::Marker last = FxLastNow();
+        const std::string jumpLine =
+            FxFmt(G5::kJumpFmt, G5::kCursorDest[0], G5::kCursorDest[1], G5::kCursorDest[2], 0);
+        check("CUR.18 null outputs: 'I' \"cursor -> (3000.5, 3100.5, 141.0) center=0\" once, and the last slot holds "
+              "the pose before the jump -- kStart, kRot, Map_A",
+              FxLogCount(jumpLine, 'I') == 1 && FxMarkerEq(last, G4::StartMarker()),
+              FxLogDump() + " last: " + FxMarkerStr(last));
+    }
+
+    // ── CUR.19: a path-2 call answering true is a hit only when its HitResult gives a point. Without one the point
+    //    stays at its zeroed start, and a jump taken from it lands at the world origin. ──
+    {
+        FxReset();
+        FxRetByte(FxKind::MousePos, 0);   // no cursor: path 1 is skipped and path 2 traces from the screen centre
+        FxPcFns(FxPcFnList({ .screen = FxHitShape::NoPoint }));
+        FxHit(FxKind::HitScreen, G5::kChanZero);
+        FxHit(FxKind::Trace, G5::kChanZero);
+        FxClearRecorders();
+        const G5::CursorRun r = G5::Cursor(G5::kChanZero, true, false);
+        check("CUR.19 path 2 without a point member: a HitResult with neither ImpactPoint nor Location makes "
+              "channel 0's true no hit -- all 10 channels asked, and 'I' \"...GetHitResultAtScreenPosition\" at the "
+              "centre with hit=0 hitChannel=-1",
+              FxCount(FxKind::HitScreen) == G5::kScanCalls &&
+                  FxLogCount(FxFmt(G5::kPath2Fmt, kCenter[0], kCenter[1], 0, -1), 'I') == 1,
+              G5::RunStr(r) + FxLogDump());
+        check("CUR.19 path 2 without a point member: the last-resort trace runs -- one "
+              "DeprojectScreenPositionToWorld and one LineTraceSingle",
+              FxCount(FxKind::Deproject) == 1 && FxCount(FxKind::Trace) == 1, FxKindsStr(FxKinds()));
+        const auto dest = FxVec(FxNth(FxKind::TeleportTo), static_cast<size_t>(kTp5.loc), kTp5.vec);
+        check("CUR.19 path 2 without a point member: the jump takes the trace's hit -- 0, outHit (3000.5, 3100.5, "
+              "50.5), K2_TeleportTo DestLocation (3000.5, 3100.5, 141.0), not the origin raised to (0, 0, 90.5)",
+              r.rc == Wirbel::TP_OK && r.usedCenter && G5::HitIs(r, kHit) && FxEq3(dest, G5::kCursorDest),
+              G5::RunStr(r) + " dest=" + FxArrStr(dest));
+    }
+
+    // ── CUR.20: the same rule on the last-resort trace: LineTraceSingle answering true with no point member in OutHit
+    //    is no blocking hit ──
+    {
+        FxReset();
+        FxKsl(g_ltsNoPoint);
+        FxHit(FxKind::Trace, G5::kChan);
+        FxPlantLast(G4::PlantedLast());
+        FxClearRecorders();
+        const G5::CursorRun r = G5::Cursor(G5::kChan);
+        const FxCall tr = FxNth(FxKind::Trace);
+        check("CUR.20 trace without a point member: one LineTraceSingle (the no-point blob) answering true -- 'I' "
+              "\"...LineTraceSingle r=0 returnedHit=1 haveHit=0\", then -8 with 'W' \"...no blocking hit "
+              "(channel=3)...\"",
+              r.rc == Wirbel::TP_ERR_NO_HIT && FxCount(FxKind::Trace) == 1 && tr.ufunc == g_ltsNoPoint &&
+                  FxLogCount(FxFmt(G5::kTraceFmt, 0, 1, 0), 'I') == 1 &&
+                  FxLogCount(FxFmt(G5::kNoHitFmt, G5::kChan), 'W') == 1,
+              G5::RunStr(r) + FxLogDump());
+        const Wirbel::Marker last = FxLastNow();
+        check("CUR.20 trace without a point member: no move call, outHit and the tier untouched, the last slot as "
+              "planted",
+              G5::Moves() == 0 && FxIsSentinel(r.hit) && r.tier == kTierSentinel && FxMarkerEq(last, G4::PlantedLast()),
+              G5::RunStr(r) + " last: " + FxMarkerStr(last));
+    }
+
+    // ── CUR.21: the trace line carries the code the invoke answered. -5 says the game thread never ran the trace; r=0
+    //    in its place reads as a trace that ran and missed, and sends the user to another channel. ──
+    {
+        FxReset();
+        FxRcAlways(FxKind::Trace, G5::kRcQueued);
+        FxHit(FxKind::Trace, G5::kChan);   // a trace that ran would hit: only the code keeps this one from landing
+        FxClearRecorders();
+        const G5::CursorRun r = G5::Cursor(G5::kChan);
+        check("CUR.21 trace not run: LineTraceSingle answering -5 is 'I' \"...LineTraceSingle r=-5 returnedHit=0 "
+              "haveHit=0\" once, with no r=0 line, and the jump answers -8",
+              r.rc == Wirbel::TP_ERR_NO_HIT && FxCount(FxKind::Trace) == 1 &&
+                  FxLogCount(FxFmt(G5::kTraceFmt, G5::kRcQueued, 0, 0), 'I') == 1 &&
+                  FxLogCount(FxFmt(G5::kTraceFmt, 0, 0, 0)) == 0,
+              G5::RunStr(r) + FxLogDump());
+    }
+
+    // ── CUR.22: the deprojection line prints an oblique direction with each component in its own place. The default
+    //    ray (0, 0, -1) prints X and Y alike, so only a ray whose X and Y differ shows them. ──
+    {
+        FxReset();
+        FxDeprojectDir(kDeprojDirOblique);
+        FxHit(FxKind::Trace, G5::kChan);
+        FxClearRecorders();
+        const G5::CursorRun r = G5::Cursor(G5::kChan);
+        const std::string deprojLine = FxFmt(G5::kDeprojFmt, kDeprojLoc[0], kDeprojLoc[1], kDeprojLoc[2],
+                                             kDeprojDirOblique[0], kDeprojDirOblique[1], kDeprojDirOblique[2]);
+        check("CUR.22 oblique ray, the line: 'I' \"...deproject loc=(10.5, 20.5, 30.5) dir=(0.480, 0.600, "
+              "-0.640)\" once",
+              r.rc == Wirbel::TP_OK && FxLogCount(deprojLine, 'I') == 1, G5::RunStr(r) + FxLogDump());
+    }
+}
+
+// ══ LOCK ═════════════════════════════════════════════════════════════════════════════════════════════════════════
+// Each export below reads or writes a slot that another op writes. A caller that waited out that op on the lock must
+// see the op's write, not the slot as it stood when the caller arrived: one that copied or wrote the slot before taking
+// the lock still waits 200 ms, so only what it returns or leaves behind tells the two apart.
+static void BlockLock() {
+    // ── LOCK.05: RecallLast reads the undo slot under the op lock. One that waited out A's relative jump returns to
+    //    where that jump started; a copy taken on arrival returns to the jump before it, which may be another map. ──
+    {
+        FxReset();
+        FxPlantLast(G4::PlantedLast());
+        Wirbel::Pose poseA = FxSentinelPose();
+        uint8_t tierA = kTierSentinel, tierB = kTierSentinel;
+        bool knownA = false;
+        const Contention c = Contend(
+            FxKind::Forward, [&] { return Wirbel::TeleportRelative(G4::kStep, true, poseA, &tierA, &knownA); },
+            [&] { return Wirbel::RecallLast(&tierB); }, "LOCK.05");
+        check("LOCK.05 setup: A (TeleportRelative) is held inside its GetActorForwardVector call -- before it saves "
+              "its undo point -- and answers 0 once let go",
+              c.held && c.rcA == Wirbel::TP_OK, FxS(c.rcA));
+        check("LOCK.05 serialised: RecallLast on another thread does not return within 200 ms while A holds the op "
+              "lock",
+              c.held && !c.bEarly);
+        const auto salB = CallsOn(FxKind::SetActorLoc, c.tidB);
+        const auto toB =
+            salB.empty() ? std::array<double, 3>{} : FxVec(salB[0], static_cast<size_t>(kSal5.loc), kSal5.vec);
+        check("LOCK.05 undo point: released, RecallLast answers 0 and its one K2_SetActorLocation carries (1000.5, "
+              "-2000.5, 300.5) -- where A's jump started -- not the planted (-1234.5, 2345.5, -345.5)",
+              c.rcB == Wirbel::TP_OK && salB.size() == 1 && FxEq3(toB, kStart),
+              FxS(c.rcB) + " " + FxCallsStr(salB) + " to " + FxArrStr(toB));
+        check("LOCK.05 undo point: 'I' \"recall-last (1000.5, -2000.5, 300.5) -> rc=0\" once, none for the planted "
+              "pose, and the hero ends where A started",
+              FxLogCount(FxFmt(G4::kFmtRecallLast, kStart[0], kStart[1], kStart[2], Wirbel::TP_OK), 'I') == 1 &&
+                  FxLogCount(FxFmt(G4::kFmtRecallLast, kPlanted.X, kPlanted.Y, kPlanted.Z, Wirbel::TP_OK)) == 0 &&
+                  FxEq3(FxPos(), kStart),
+              FxLogDump() + " pos=" + FxArrStr(FxPos()));
+    }
+
+    // ── LOCK.06: ClearMarker clears under the op lock. One that waited out a save of the same slot clears what the
+    //    save wrote; a clear made on arrival is overwritten by the save, and the cleared marker comes back. ──
+    {
+        FxReset();
+        FxAttach(true);   // the save asks K2_GetActorLocation, so A can be held inside its own pose read
+        const Contention c = Contend(
+            FxKind::GetLoc, [] { return Wirbel::SaveMarker(kSlotLast); }, [] { return Wirbel::ClearMarker(kSlotLast); },
+            "LOCK.06");
+        check("LOCK.06 setup: A (SaveMarker(2)) is held inside its K2_GetActorLocation call, answers 0 once let go, "
+              "and logs its save of (5000.5, 6000.5, 700.5)",
+              c.held && c.rcA == Wirbel::TP_OK &&
+                  FxLogCount(FxLine::MarkerSaved(kSlotLast, kAttachedWorld, G4::kMapA), 'I') == 1,
+              FxS(c.rcA) + FxLogDump());
+        check("LOCK.06 serialised: ClearMarker(2) on another thread does not return within 200 ms while A holds the "
+              "op lock",
+              c.held && !c.bEarly);
+        const Wirbel::Marker slot = FxMarkerNow(kSlotLast);
+        check("LOCK.06 clear after the save: released, ClearMarker(2) answers 0 and slot 2 ends empty -- the clear "
+              "ran after A's save, so A's marker does not come back",
+              c.rcB == Wirbel::TP_OK && FxMarkerEq(slot, Wirbel::Marker{}),
+              FxS(c.rcB) + " slot 2: " + FxMarkerStr(slot));
+    }
+
+    // ── LOCK.07: GetLast reads the undo slot under the op lock. One that waited out a jump shows that jump's undo
+    //    point, not the one before it. ──
+    {
+        FxReset();
+        FxPlantLast(G4::PlantedLast());
+        Wirbel::Pose poseA = FxSentinelPose();
+        uint8_t tierA = kTierSentinel;
+        bool knownA = false;
+        Wirbel::Marker got = G4::SentinelMarker();
+        const Contention c = Contend(
+            FxKind::Forward, [&] { return Wirbel::TeleportRelative(G4::kStep, true, poseA, &tierA, &knownA); },
+            [&] { return Wirbel::GetLast(got); }, "LOCK.07");
+        check("LOCK.07 setup: A (TeleportRelative) is held inside its GetActorForwardVector call -- before it saves "
+              "its undo point -- and answers 0 once let go",
+              c.held && c.rcA == Wirbel::TP_OK, FxS(c.rcA));
+        check("LOCK.07 serialised: GetLast on another thread does not return within 200 ms while A holds the op lock",
+              c.held && !c.bEarly);
+        check("LOCK.07 after the jump: released, GetLast answers 0 with the undo point A saved -- kStart + kRot on "
+              "Map_A, world -- not the planted Map_B pose",
+              c.rcB == Wirbel::TP_OK && FxMarkerEq(got, G4::StartMarker()), FxS(c.rcB) + " " + FxMarkerStr(got));
+    }
+
+    // ── LOCK.08: GetMarker reads the slot under the op lock. One that waited out a save of the same slot shows what
+    //    was saved, not the marker the save replaced. ──
+    {
+        FxReset();
+        const Wirbel::Marker planted = FxMarker(FxPose(kOther), G4::kMapA);
+        FxPlantMarker(kSlotMiddle, planted);
+        FxAttach(true);   // the save asks K2_GetActorLocation, so A can be held inside its own pose read
+        Wirbel::Marker got = G4::SentinelMarker();
+        const Contention c = Contend(
+            FxKind::GetLoc, [] { return Wirbel::SaveMarker(kSlotMiddle); },
+            [&] { return Wirbel::GetMarker(kSlotMiddle, got); }, "LOCK.08");
+        check("LOCK.08 setup: A (SaveMarker(1)) is held inside its K2_GetActorLocation call, answers 0 once let go, "
+              "and logs its save of (5000.5, 6000.5, 700.5)",
+              c.held && c.rcA == Wirbel::TP_OK &&
+                  FxLogCount(FxLine::MarkerSaved(kSlotMiddle, kAttachedWorld, G4::kMapA), 'I') == 1,
+              FxS(c.rcA) + FxLogDump());
+        check("LOCK.08 serialised: GetMarker(1) on another thread does not return within 200 ms while A holds the "
+              "op lock",
+              c.held && !c.bEarly);
+        check("LOCK.08 after the save: released, GetMarker(1) answers 0 with the marker A saved -- (5000.5, 6000.5, "
+              "700.5) facing (-10.5, 90.5, 0) on Map_A -- not the planted (2222.5, 3333.5, 444.5)",
+              c.rcB == Wirbel::TP_OK && FxMarkerEq(got, AttachedMarker()) && !FxMarkerEq(got, planted),
+              FxS(c.rcB) + " " + FxMarkerStr(got));
+    }
+}
+
+}  // namespace H6
+
+static void Blocks_H6() {
+    blk("SLOTS++ - the slots, the cursor jump and the op lock: what the second survivor hunt found");
+    H6::BlockMrk();
+    H6::BlockCur();
+    H6::BlockLock();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("wirbel_teleport_test -- Teleport (Wirbel.cpp) over a fake world and a fake engine, in this process\n");
@@ -10334,6 +11286,9 @@ int main() {
     Blocks_H3();
     Blocks_H1();
     Blocks_H2();
+    Blocks_H4();
+    Blocks_H5();
+    Blocks_H6();
     Blocks_G5();
     FxCleanup();
     return FxExitCode();
