@@ -1039,18 +1039,11 @@ public sealed class PipePerProcessSourceTests
 
     /// <summary>The "last" slot is one for the whole process: an explicit-pose recall sent with keep_undo must reach
     /// Wirbel, and Wirbel must then skip the save, or an AI's jump overwrites where the user's Recall last returns.
-    /// Wirbel.cpp and Fern.cpp reach no test target.</summary>
+    /// Wirbel's skip is wirbel_teleport_test's EXP.01. Fern.cpp reaches no test target, so its passing keep_undo on
+    /// is pinned here.</summary>
     [Fact]
     public void AnExplicitTeleport_WithKeepUndo_LeavesTheLastSlot()
     {
-        string wirbel = CodeOnly(DllSrc("Wirbel.cpp"));
-        int start = wirbel.IndexOf("int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo)",
-            StringComparison.Ordinal);
-        Assert.True(start > 0, "RecallExplicit takes keepUndo");
-        string body = wirbel[start..wirbel.IndexOf("\n}", start, StringComparison.Ordinal)];
-        Assert.Contains("if (!keepUndo) SaveLastImpl();", body);
-        Assert.Single(Regex.Matches(body, @"SaveLastImpl\(\)"));
-
         string fern = NoComments(DllSrc("Fern.cpp"));   // the key is a string literal, which CodeOnly blanks
         Assert.Contains("Wirbel::RecallExplicit(p, hasRot, &tier, request.value(\"keep_undo\", false))", fern);
     }

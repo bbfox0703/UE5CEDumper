@@ -245,7 +245,9 @@ namespace Dunste {
 int32_t GetStatus(FlyStatus& out) { out = g_flyStatus; return FR_OK; }
 }
 // Wirbel: every call is logged with the arguments Mimic passed, and answers what the test chose. An unknown landing
-// leaves outNewPose as the caller set it, as Wirbel.h says the real one does.
+// leaves outNewPose as the caller set it. The real one does that only when its re-read fails: a landing read from the
+// parent-relative fallback is written there too (wirbel_teleport_test's REL.06). Mimic publishes NaN for both, so the
+// fake need not tell them apart.
 static int32_t g_tpRc = 0;
 static uint8_t g_tpTier = 0, g_tpSource = 0;
 static Wirbel::Pose g_tpPose{};
