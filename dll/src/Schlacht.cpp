@@ -2,8 +2,8 @@
 // Schlacht — シュラハト / Schlacht (「全知者」 — "The Omniscient")
 // See-through occluders. Contract: Schlacht.h.
 //
-// Worker tick (SCHLACHT_TICK_MS): resolve local pawn + camera, trace
-// camera→pawn (LineTraceSingle, game thread via Stark), take the NEAREST hit;
+// Worker tick (SCHLACHT_TICK_MS): resolve local pawn + camera, trace from the
+// camera along the view (LineTraceSingle, game thread via Stark), take the NEAREST hit;
 // if it is NOT a Pawn/Character, hide it (SetActorHiddenInGame). The prior
 // occluder is restored as the view changes; all hides are undone on disable.
 // The nearest occluder by default, more under a pierce depth (SetPierceCount).
