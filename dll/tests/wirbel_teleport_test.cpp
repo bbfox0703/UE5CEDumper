@@ -14522,6 +14522,1352 @@ static void Blocks_H15() {
     H15::BlockLock();
 }
 
+// ══ H16: RESOLVE+6 -- every UFunction tail read short (PACK / POV / POSE / MCUR), a negative parameter offset ════
+// PACK.03 sizes each call in the default world, where every ParmsSize already reaches the end of its function's own
+// parameter chain: a call site that sizes its block from ParmsSize alone hands over the same bytes there. MOVE.21,
+// MOVE.22 and COMP.04 shorten the tails of the move setters and of the verification read only. PACK.06 shortens them
+// all, once per [UE-OVERRIDE-411] misread: in each world every function Wirbel invokes keeps its chain and reads a
+// ParmsSize short of its end. One table row per op, each run in the default world and in both misread worlds: every
+// call must be handed ParamBufferSize of its function, and the op must answer exactly as it does in the default world.
+// POV.24, POSE.16 and MCUR.12 are the camera read's, the attached pose read's and the input mode's rows; PACK.06 names
+// every other row.
+// PACK.07: a parameter whose reflected Offset_Internal reads negative cannot be packed or read. A read at it takes
+// bytes from before the block, and a write there lands on the heap's own bookkeeping.
+
+namespace H16 {
+
+// ── the two tail misreads, one world each ──
+// [UE-OVERRIDE-411] A UFunction tail read one field late takes ReturnValueOffset for ParmsSize; one read a field early
+// takes NumParms. Neither touches the parameter chain, so ParamBufferSize still reaches every parameter's end.
+enum class Tail { NumParms, RetOff };
+constexpr int32_t kFovFloatBytes = 4, kFovDoubleBytes = 8;
+// GetFOVAngle returns a float in one world and a double in the other, so both of its widths meet a short tail.
+struct World {
+    Tail tail;
+    const char* what;
+    const char* key;   // this world's part of every FxList key
+    FxFovShape fov;
+    int32_t fovBytes;
+};
+constexpr World kWorlds[] = {
+    { Tail::NumParms, "ParmsSize = NumParms", "numparms", FxFovShape::Float, kFovFloatBytes },
+    { Tail::RetOff, "ParmsSize = ReturnValueOffset", "retoff", FxFovShape::Double, kFovDoubleBytes },
+};
+constexpr int32_t kVoid = kNoReturn;   // the ReturnValueOffset of a function that returns nothing
+
+// The ParmsSize a misread tail gives a function of `numParms` parameters whose return value sits at `retOff`. One that
+// returns nothing reads its NumParms in both worlds: read a field late, its tail gives 0xFFFF, a block too long to be
+// written past, which would test nothing.
+constexpr int32_t TailParms(Tail t, int32_t numParms, int32_t retOff) {
+    return (t == Tail::RetOff && retOff != kVoid) ? retOff : numParms;
+}
+// Both misreads end the block before the chain does.
+constexpr bool ReadsShort(int32_t numParms, int32_t retOff, uint32_t chainEnd) {
+    return TailParms(Tail::NumParms, numParms, retOff) < static_cast<int32_t>(chainEnd) &&
+           TailParms(Tail::RetOff, numParms, retOff) < static_cast<int32_t>(chainEnd);
+}
+
+// ── each function's NumParms, its return value included ──
+constexpr int32_t kOneParm = 1;          // a getter's ReturnValue; SetControlRotation's NewRotation
+constexpr int32_t kSalParms = 5;         // NewLocation, bSweep, SweepHitResult, bTeleport, ReturnValue
+constexpr int32_t kMouseParms = 3;       // LocationX, LocationY, ReturnValue
+constexpr int32_t kViewportParms = 2;    // SizeX, SizeY
+constexpr int32_t kHitCursorParms = 4;   // TraceChannel, bTraceComplex, HitResult, ReturnValue
+constexpr int32_t kHitScreenParms = 5;   // ScreenPosition, then the cursor trace's four
+constexpr int32_t kDeprojectParms = 5;   // ScreenX, ScreenY, WorldLocation, WorldDirection, ReturnValue
+constexpr int32_t kGameOnlyParms = 2;    // PlayerController, bFlushInput
+constexpr int32_t kGameAndUiParms = 5;   // PlayerController, InWidgetToFocus, InMouseLockMode, bHide..., bFlushInput
+constexpr int32_t kGetterRetAt = 0;      // every getter here returns at the start of its block
+constexpr int32_t kIntBytes = 4;
+constexpr int32_t kByteBytes = 1;
+
+// ── where each chain ends: the block ParamBufferSize sizes, whatever the tail reads ──
+constexpr uint32_t kVecGetterEnd = static_cast<uint32_t>(kGetterRetAt + kVecD);
+constexpr uint32_t kRotSetterEnd = static_cast<uint32_t>(g3::kNewRotationAt + kVecD);
+constexpr uint32_t kMouseEnd = static_cast<uint32_t>(kMp.ret + g3::kBoolBytes);
+constexpr uint32_t kViewportEnd = static_cast<uint32_t>(FxVp::kSizeY + kIntBytes);
+constexpr uint32_t kHitCursorEnd = static_cast<uint32_t>(kHc5.ret + g3::kBoolBytes);
+constexpr uint32_t kHitScreenEnd = static_cast<uint32_t>(kHs5.ret + g3::kBoolBytes);
+constexpr uint32_t kDeprojectEnd = static_cast<uint32_t>(kDp5.ret + g3::kBoolBytes);
+constexpr uint32_t kLtsEnd = static_cast<uint32_t>(FxLts::kReturn + g3::kBoolBytes);
+constexpr uint32_t kGameOnlyEnd = static_cast<uint32_t>(FxIm::kFlush + g3::kBoolBytes);
+constexpr uint32_t kGameAndUiEnd = static_cast<uint32_t>(FxIm::kFlushUi + g3::kBoolBytes);
+static_assert(ReadsShort(kOneParm, kGetterRetAt, kVecGetterEnd) &&
+                  ReadsShort(kOneParm, kGetterRetAt, static_cast<uint32_t>(kFovFloatBytes)) &&
+                  ReadsShort(kOneParm, kGetterRetAt, static_cast<uint32_t>(kFovDoubleBytes)) &&
+                  ReadsShort(kSalParms, kSal5.ret, H11::kSalChainEnd) &&
+                  ReadsShort(H11::kTeleportToParms, kTp5.ret, H11::kTpChainEnd) &&
+                  ReadsShort(kOneParm, kVoid, kRotSetterEnd) && ReadsShort(kMouseParms, kMp.ret, kMouseEnd) &&
+                  ReadsShort(kViewportParms, kVoid, kViewportEnd) &&
+                  ReadsShort(kHitCursorParms, kHc5.ret, kHitCursorEnd) &&
+                  ReadsShort(kHitScreenParms, kHs5.ret, kHitScreenEnd) &&
+                  ReadsShort(kDeprojectParms, kDp5.ret, kDeprojectEnd) &&
+                  ReadsShort(H14::kCompSetterParms, kVoid, H14::kCompChainEnd) &&
+                  ReadsShort(FxLts::kNumParms, FxLts::kReturn, kLtsEnd) &&
+                  ReadsShort(kGameOnlyParms, kVoid, kGameOnlyEnd) && ReadsShort(kGameAndUiParms, kVoid, kGameAndUiEnd),
+              "every function a misread world lists reads a ParmsSize short of its chain's end in both worlds");
+
+// ── the cursor jump through every path: its fixed calls besides the two channel scans ──
+// GetMousePosition, the deprojection, LineTraceSingle, K2_TeleportTo, the verification read and the two stops.
+constexpr int kCursorFixedCalls = 7;
+// An attached relative move's K2_GetActorLocation calls: the start, the undo point, the verification, the landing.
+constexpr int kAttachedRelativeGets = 4;
+
+// ── PACK.07's offsets: each reads exactly one member's width before the block, so the end still fits ──
+constexpr int32_t kNegFloatAt = -4;
+constexpr int32_t kNegIntAt = -4;
+constexpr int32_t kNegVecAt = -8;   // a 24-byte vector there ends 16 bytes into the block
+
+// ── the names Wirbel looks each function up by ──
+constexpr const char* kReturnValue = "ReturnValue";
+constexpr const char* kGetLocName = "K2_GetActorLocation";
+constexpr const char* kForwardName = "GetActorForwardVector";
+constexpr const char* kTeleportToName = "K2_TeleportTo";
+constexpr const char* kSetRotName = "SetControlRotation";
+constexpr const char* kStopName = "StopMovement";
+constexpr const char* kMouseName = "GetMousePosition";
+constexpr const char* kViewportName = "GetViewportSize";
+constexpr const char* kHitCursorName = "GetHitResultUnderCursorByChannel";
+constexpr const char* kHitScreenName = "GetHitResultAtScreenPosition";
+constexpr const char* kDeprojectName = "DeprojectScreenPositionToWorld";
+constexpr const char* kSrlName = "K2_SetRelativeLocation";
+constexpr const char* kCamLocName = "GetCameraLocation";
+constexpr const char* kCamRotName = "GetCameraRotation";
+constexpr const char* kFovName = "GetFOVAngle";
+constexpr const char* kLtsName = "LineTraceSingle";
+constexpr const char* kReturnedFalse = "returned false";   // the setter-failure WARN's wording for a false answer
+// The setter-failure WARN names the ParmsSize the tail read -- the one thing a misread world changes on purpose -- so a
+// line is compared with the default world's up to that number.
+constexpr const char* kParmsSizeKey = "parmsSize=";
+
+static void Check(const std::string& label, bool cond, const std::string& got) { check(label.c_str(), cond, got); }
+
+// ── fixture variants: built on first use from a block function, never at static init ──
+// A getter returning a vector at the start of its block, as FxFnVecGetter builds it, with the misread ParmsSize.
+static uintptr_t VecGetter(FxKind kind, const char* name, uintptr_t owner, uintptr_t vecStruct, Tail t,
+                           const double* dflt) {
+    const uintptr_t rv = FxField(kStructProperty, kReturnValue, kGetterRetAt, kVecD, kRetStruct, 0, vecStruct);
+    const uintptr_t f = FxFunc(name, owner, rv, kOneParm, TailParms(t, kOneParm, kGetterRetAt), kGetterRetAt);
+    FxFnSpec s;
+    s.kind = kind;
+    s.loc = kGetterRetAt;
+    s.vec = kVecD;
+    if (dflt)
+        for (int i = 0; i < 3; ++i) s.dflt[i] = dflt[i];
+    FxRegister(f, s);
+    return f;
+}
+// GetFOVAngle at the world's width, as FxFnScalarGetter builds it, with the misread ParmsSize.
+static uintptr_t FovGetter(uintptr_t owner, const World& w) {
+    const bool d = w.fovBytes == kFovDoubleBytes;
+    const uintptr_t rv =
+        FxField(d ? kDoubleProperty : kFloatProperty, kReturnValue, kGetterRetAt, w.fovBytes, kRetPod);
+    const uintptr_t f =
+        FxFunc(kFovName, owner, rv, kOneParm, TailParms(w.tail, kOneParm, kGetterRetAt), kGetterRetAt);
+    FxFnSpec s;
+    s.kind = FxKind::Fov;
+    s.loc = kGetterRetAt;
+    s.vec = w.fovBytes;
+    s.scalar = w.fovBytes;
+    s.dflt[0] = d ? kFovGetterDouble : kFovGetter;
+    FxRegister(f, s);
+    return f;
+}
+// SetControlRotation, as FxFnSetCtrlRot builds it, with the misread ParmsSize.
+static uintptr_t SetRot(Tail t) {
+    const uintptr_t p = FxField(kStructProperty, "NewRotation", g3::kNewRotationAt, kVecD, kParm, 0, g_sRotator);
+    const uintptr_t f = FxFunc(kSetRotName, g_cController, p, kOneParm, TailParms(t, kOneParm, kVoid), kVoid);
+    FxFnSpec s;
+    s.kind = FxKind::SetCtrlRot;
+    s.loc = g3::kNewRotationAt;
+    s.vec = kVecD;
+    FxRegister(f, s);
+    return f;
+}
+// GetViewportSize, as FxFnViewport builds it, with the ParmsSize given and SizeY reflected at `sizeYAt`. The engine
+// writes SizeY where it really is, whatever the reflection says.
+static uintptr_t Viewport(int32_t parmsSize, int32_t sizeYAt) {
+    const uintptr_t head = FxChainFields({
+        FxField(kIntProperty, "SizeX", FxVp::kSizeX, kIntBytes, kOutPod),
+        FxField(kIntProperty, "SizeY", sizeYAt, kIntBytes, kOutPod),
+    });
+    const uintptr_t f = FxFunc(kViewportName, g_cPlayerController, head, kViewportParms, parmsSize, kVoid);
+    FxFnSpec s;
+    s.kind = FxKind::Viewport;
+    s.x = FxVp::kSizeX;
+    s.y = FxVp::kSizeY;
+    FxRegister(f, s);
+    return f;
+}
+// SetInputMode_GameOnly or SetInputMode_GameAndUIEx, as FxFnInputMode builds them, with the misread ParmsSize.
+static uintptr_t InputMode(bool gameAndUi, Tail t) {
+    const uintptr_t head = gameAndUi
+        ? FxChainFields({
+              FxField(kObjectProperty, "PlayerController", FxIm::kPc, kPtrBytes, kParm),
+              FxField(kObjectProperty, "InWidgetToFocus", FxIm::kWidget, kPtrBytes, kParm),
+              FxField(kByteProperty, "InMouseLockMode", FxIm::kLockMode, kByteBytes, kInPod),
+              FxField(kBoolProperty, "bHideCursorDuringCapture", FxIm::kHideCursor, g3::kBoolBytes, kInPod),
+              FxField(kBoolProperty, "bFlushInput", FxIm::kFlushUi, g3::kBoolBytes, kInPod),
+          })
+        : FxChainFields({
+              FxField(kObjectProperty, "PlayerController", FxIm::kPc, kPtrBytes, kParm),
+              FxField(kBoolProperty, "bFlushInput", FxIm::kFlush, g3::kBoolBytes, kInPod),
+          });
+    const int32_t n = gameAndUi ? kGameAndUiParms : kGameOnlyParms;
+    const uintptr_t f = FxFunc(gameAndUi ? FxG2::kGameAndUiEx : FxG2::kGameOnly, g_cWbl, head, n,
+                               TailParms(t, n, kVoid), kVoid);
+    FxFnSpec s;
+    s.kind = gameAndUi ? FxKind::InputGameAndUI : FxKind::InputGameOnly;
+    s.pc = FxIm::kPc;
+    FxRegister(f, s);
+    return f;
+}
+
+static std::string ListKey(const char* what, const World& w) { return FxFmt("h16/%s/%s", what, w.key); }
+// AActor: K2_GetActorLocation, GetActorForwardVector, K2_SetActorLocation, K2_TeleportTo. Memoized by FxList.
+static uintptr_t ActorList(const World& w) {
+    return FxList(ListKey("actor", w), [w] {
+        FxSetLocLayout sal = kSal5;
+        sal.parmsSize = TailParms(w.tail, kSalParms, kSal5.ret);
+        FxTeleportToLayout tp = kTp5;
+        tp.parmsSize = TailParms(w.tail, H11::kTeleportToParms, kTp5.ret);
+        return std::vector<uintptr_t>{
+            VecGetter(FxKind::GetLoc, kGetLocName, g_cActor, g_sVector, w.tail, nullptr),
+            VecGetter(FxKind::Forward, kForwardName, g_cActor, g_sVector, w.tail, kFwd),
+            FxFnSetLoc(FxKind::SetActorLoc, G5::kSalName, g_cActor, sal, true),
+            FxFnTeleportTo(g_cActor, tp),
+        };
+    });
+}
+// AController: SetControlRotation, and StopMovement, which has no parameter to misread. Memoized by FxList.
+static uintptr_t CtrlList(const World& w) {
+    return FxList(ListKey("ctrl", w), [w] {
+        return std::vector<uintptr_t>{ SetRot(w.tail), FxFnNoParams(FxKind::StopMove, kStopName, g_cController) };
+    });
+}
+// APlayerController: the mouse, the viewport, both hit tests and the deprojection. Memoized by FxList.
+static uintptr_t PcList(const World& w) {
+    return FxList(ListKey("pc", w), [w] {
+        const uintptr_t owner = g_cPlayerController;
+        FxMouseLayout mouse = kMp;
+        mouse.parmsSize = TailParms(w.tail, kMouseParms, kMp.ret);
+        FxHitCallLayout cursor = kHc5;
+        cursor.parmsSize = TailParms(w.tail, kHitCursorParms, kHc5.ret);
+        FxHitCallLayout screen = kHs5;
+        screen.parmsSize = TailParms(w.tail, kHitScreenParms, kHs5.ret);
+        FxDeprojectLayout deproject = kDp5;
+        deproject.parmsSize = TailParms(w.tail, kDeprojectParms, kDp5.ret);
+        return std::vector<uintptr_t>{
+            FxFnMouse(owner, mouse),
+            Viewport(TailParms(w.tail, kViewportParms, kVoid), FxVp::kSizeY),
+            FxFnHit(FxKind::HitCursor, kHitCursorName, owner, cursor, g_sHit5, true),
+            FxFnHit(FxKind::HitScreen, kHitScreenName, owner, screen, g_sHit5, true),
+            FxFnDeproject(owner, deproject),
+        };
+    });
+}
+// USceneComponent: K2_SetWorldLocation and K2_SetRelativeLocation, neither returning. Memoized by FxList.
+static uintptr_t SceneList(const World& w) {
+    return FxList(ListKey("scene", w), [w] {
+        FxSetLocLayout comp = kSal5;
+        comp.parmsSize = TailParms(w.tail, H14::kCompSetterParms, kVoid);
+        return std::vector<uintptr_t>{
+            FxFnSetLoc(FxKind::SetWorldLoc, G5::kSwlName, g_cSceneComponent, comp, false),
+            FxFnSetLoc(FxKind::SetRelLoc, kSrlName, g_cSceneComponent, comp, false),
+        };
+    });
+}
+// APlayerCameraManager: GetCameraLocation, GetCameraRotation, GetFOVAngle at the world's width. Memoized by FxList.
+static uintptr_t CamList(const World& w) {
+    return FxList(ListKey("cam", w), [w] {
+        return std::vector<uintptr_t>{
+            VecGetter(FxKind::CamLoc, kCamLocName, g_cPcm, g_sVector, w.tail, kCamLoc),
+            VecGetter(FxKind::CamRot, kCamRotName, g_cPcm, g_sRotator, w.tail, kCamRot),
+            FovGetter(g_cPcm, w),
+        };
+    });
+}
+// UKismetSystemLibrary: LineTraceSingle alone -- FindFunc takes the exact name, so its siblings change nothing.
+static uintptr_t KslList(const World& w) {
+    return FxList(ListKey("ksl", w), [w] {
+        const uintptr_t lts = FxFunc(kLtsName, g_cKsl, FxLtsDChain(g_sHit5), FxLts::kNumParms,
+                                     TailParms(w.tail, FxLts::kNumParms, FxLts::kReturn), FxLts::kReturn);
+        FxSpecTrace(lts, false, g_sHit5);
+        return std::vector<uintptr_t>{ lts };
+    });
+}
+// UWidgetBlueprintLibrary: both input-mode setters. Memoized by FxList.
+static uintptr_t WblList(const World& w) {
+    return FxList(ListKey("wbl", w), [w] {
+        return std::vector<uintptr_t>{ InputMode(false, w.tail), InputMode(true, w.tail) };
+    });
+}
+
+// The default world's lists, GetFOVAngle at this world's width: the answers a misread world must match.
+static void InstallDefault(const World& w) { FxCamFns(FxCamFnList({ .fov = w.fov })); }
+// Every list holding a function with a parameter to misread. SetMovementMode and StopMovementImmediately keep the
+// default lists: NumParms is already SetMovementMode's whole block and it returns nothing, and StopMovementImmediately
+// has no parameter at all.
+static void InstallMisread(const World& w) {
+    FxActorFns(ActorList(w));
+    FxCtrlFns(CtrlList(w));
+    FxPcFns(PcList(w));
+    FxSceneFns(SceneList(w));
+    FxCamFns(CamList(w));
+    FxKsl(KslList(w));
+    FxWbl(WblList(w));
+}
+
+// ── PACK.07's variants. The engine reads and writes every parameter where it really is: only the reflected
+// Offset_Internal reads wrong, as a mis-probed FPROPERTY_OFFSET would leave it. Memoized by FxList. ──
+// APlayerController: a GetMousePosition whose LocationX reads -4, a GetViewportSize whose SizeY reads -4, and the
+// screen-position hit test a cursor that was read would go on to.
+static uintptr_t PcNegativeList() {
+    return FxList("h16/pc/negative-offsets", [] {
+        const uintptr_t owner = g_cPlayerController;
+        const uintptr_t head = FxChainFields({
+            FxField(kFloatProperty, "LocationX", kNegFloatAt, kMp.bytes, kOutPod),
+            FxField(kFloatProperty, "LocationY", kMp.y, kMp.bytes, kOutPod),
+            FxField(kBoolProperty, kReturnValue, kMp.ret, g3::kBoolBytes, kRetPod),
+        });
+        const uintptr_t mouse = FxFunc(kMouseName, owner, head, kMouseParms, kMp.parmsSize, kMp.ret);
+        FxFnSpec s;
+        s.kind = FxKind::MousePos;
+        s.x = kMp.x;
+        s.y = kMp.y;
+        s.scalar = kMp.bytes;
+        s.ret = kMp.ret;
+        FxRegister(mouse, s);
+        return std::vector<uintptr_t>{
+            mouse,
+            Viewport(FxVp::kParmsSize, kNegIntAt),
+            FxFnHit(FxKind::HitScreen, kHitScreenName, owner, kHs5, g_sHit5, true),
+        };
+    });
+}
+// AActor: a K2_GetActorLocation whose ReturnValue reads -8 and a K2_SetActorLocation whose NewLocation reads -8, each
+// tail intact.
+static uintptr_t ActorNegativeList() {
+    return FxList("h16/actor/negative-offsets", [] {
+        const uintptr_t rv = FxField(kStructProperty, kReturnValue, kNegVecAt, kVecD, kRetStruct, 0, g_sVector);
+        const uintptr_t getLoc = FxFunc(kGetLocName, g_cActor, rv, kOneParm, kVecD, kGetterRetAt);
+        FxFnSpec g;
+        g.kind = FxKind::GetLoc;
+        g.loc = kGetterRetAt;
+        g.vec = kVecD;
+        FxRegister(getLoc, g);
+        const uintptr_t head = FxChainFields({
+            FxField(kStructProperty, "NewLocation", kNegVecAt, kVecD, kParm, 0, g_sVector),
+            FxField(kBoolProperty, "bSweep", kSal5.sweep, g3::kBoolBytes, kInPod),
+            FxField(kStructProperty, "SweepHitResult", kSal5.sweepHit, kSal5.hitBytes, kOutStruct, 0, g_sHit5),
+            FxField(kBoolProperty, "bTeleport", kSal5.teleport, g3::kBoolBytes, kInPod),
+            FxField(kBoolProperty, kReturnValue, kSal5.ret, g3::kBoolBytes, kRetPod),
+        });
+        const uintptr_t sal = FxFunc(G5::kSalName, g_cActor, head, kSalParms, kSal5.parmsSize, kSal5.ret);
+        FxFnSpec s;
+        s.kind = FxKind::SetActorLoc;
+        s.loc = kSal5.loc;
+        s.vec = kSal5.vec;
+        s.ret = kSal5.ret;
+        s.flag = kSal5.teleport;
+        FxRegister(sal, s);
+        return std::vector<uintptr_t>{ getLoc, sal };
+    });
+}
+
+// ── readers: everything an op leaves, exact, so two runs compare whole ──
+// 17 significant digits: two different doubles never print alike.
+static std::string Exact3(const std::array<double, 3>& v) { return FxFmt("(%.17g, %.17g, %.17g)", v[0], v[1], v[2]); }
+static std::string ExactPose(const Wirbel::Pose& p) {
+    return FxFmt("(%.17g, %.17g, %.17g | %.17g, %.17g, %.17g)", p.X, p.Y, p.Z, p.Pitch, p.Yaw, p.Roll);
+}
+static std::string MarkerKey(const Wirbel::Marker& m) {
+    return FxFmt("valid=%d pr=%d map='", m.Valid ? 1 : 0, m.ParentRelative ? 1 : 0) +
+           std::string(m.MapName, strnlen(m.MapName, sizeof m.MapName)) + "' " + ExactPose(m.P);
+}
+// The world an op leaves: Root_0's RelativeLocation, an attached pawn's world position, PC_0's facing, the cached
+// transform deep force rewrites, the cursor byte and every slot.
+static std::string StateStr() {
+    return "pos " + Exact3(FxPos()) + " attached " + Exact3(FxAttachedWorldNow()) + " rot " + Exact3(FxCtrlRot()) +
+           " c2w " + Exact3(FxVecAt(g_root0 + FxOff::kC2W, kVecD)) +
+           FxFmt(" cursor 0x%02X", static_cast<unsigned>(FxCursorByte())) + " marker " +
+           MarkerKey(FxMarkerNow(G4::kSlotFirst)) + " last " + MarkerKey(FxLastNow()) + " bugit " +
+           MarkerKey(FxBugItNow());
+}
+static std::vector<std::string> LineKeys() {
+    std::vector<std::string> out;
+    for (const auto& l : FxTeleportLog()) {
+        std::string t = l.text;
+        const size_t at = t.find(kParmsSizeKey);
+        if (at != std::string::npos) t.resize(at + strlen(kParmsSizeKey));
+        out.push_back(std::string(1, l.lvl) + " " + t);
+    }
+    return out;
+}
+static std::string LinesStr(const std::vector<std::string>& lines) {
+    std::string out;
+    for (const auto& l : lines) out += "\n      " + l;
+    return out;
+}
+
+// ── one op, run in one world ──
+struct Run {
+    int32_t rc = INT32_MIN;
+    std::string out;                  // the op's outputs, exact
+    std::vector<FxCall> calls;
+    std::string state;                // the world after it, exact
+    std::vector<std::string> lines;   // its Teleport lines
+    bool sized = false;               // every call was handed ParamBufferSize of its function
+    std::string sizedWhy;
+};
+struct Row {
+    const char* id;     // the label's block and number
+    const char* what;
+    std::function<void()> arm;
+    std::function<int32_t(std::string& out)> op;
+    std::function<void(const std::string& label, const World& w, const Run& r)> pin;   // the row's own answer
+};
+
+// The same calls, in order: kind, object, function name, answer, and every parameter byte -- a shorter block's missing
+// tail counts as zero, so the default world's longer ParmsSize blocks compare equal when nothing else differs.
+static bool SameCalls(const std::vector<FxCall>& base, const std::vector<FxCall>& mis, std::string& why) {
+    if (base.size() != mis.size()) {
+        why = FxFmt("%zu call(s), the default world %zu: ", mis.size(), base.size()) + FxCallsStr(mis) +
+              "\n    default " + FxCallsStr(base);
+        return false;
+    }
+    for (size_t i = 0; i < base.size(); ++i) {
+        const FxCall& b = base[i];
+        const FxCall& m = mis[i];
+        if (b.kind != m.kind || b.instance != m.instance || b.rc != m.rc || FxNameOf(b.ufunc) != FxNameOf(m.ufunc)) {
+            why = FxFmt("call %zu: ", i) + FxCallStr(m) + ", the default world " + FxCallStr(b);
+            return false;
+        }
+        const size_t n = (std::max)(b.params.size(), m.params.size());
+        for (size_t k = 0; k < n; ++k) {
+            const uint8_t x = k < b.params.size() ? b.params[k] : uint8_t{0};
+            const uint8_t y = k < m.params.size() ? m.params[k] : uint8_t{0};
+            if (x == y) continue;
+            why = FxFmt("call %zu byte 0x%zX: 0x%02X, the default world 0x%02X -- ", i, k, static_cast<unsigned>(y),
+                        static_cast<unsigned>(x)) +
+                  FxCallStr(m);
+            return false;
+        }
+    }
+    return true;
+}
+static bool SameRun(const Run& base, const Run& mis, std::string& why) {
+    if (mis.rc != base.rc) {
+        why = FxFmt("rc=%d, the default world %d", mis.rc, base.rc);
+        return false;
+    }
+    if (mis.out != base.out) {
+        why = "outputs " + mis.out + "\n    default " + base.out;
+        return false;
+    }
+    if (!SameCalls(base.calls, mis.calls, why)) return false;
+    if (mis.state != base.state) {
+        why = "world " + mis.state + "\n    default " + base.state;
+        return false;
+    }
+    if (mis.lines != base.lines) {
+        why = "lines" + LinesStr(mis.lines) + "\n    default" + LinesStr(base.lines);
+        return false;
+    }
+    return true;
+}
+// One scenario: a fresh world, the lists, the row's setup, empty recorders, the op, then everything it left. The
+// buffer check runs here, while the lists the calls came from are still the classes' own.
+static Run RunRow(const Row& row, const World& w, bool misread) {
+    FxReset();
+    if (misread) InstallMisread(w);
+    else InstallDefault(w);
+    row.arm();
+    FxClearRecorders();
+    Run r;
+    r.rc = row.op(r.out);
+    r.calls = FxCalls();
+    r.state = StateStr();
+    r.lines = LineKeys();
+    r.sized = H11::AllSized(r.sizedWhy);
+    return r;
+}
+
+// A relative move's outputs, each planted first.
+struct RelOut {
+    int32_t rc = INT32_MIN;
+    Wirbel::Pose pose = FxSentinelPose();
+    uint8_t tier = kTierSentinel;
+    bool known = false;
+};
+static RelOut RunRelative() {
+    RelOut r;
+    r.rc = Wirbel::TeleportRelative(G4::kStep, /*horizontalOnly=*/true, r.pose, &r.tier, &r.known);
+    return r;
+}
+static std::string RelStr(const RelOut& r) {
+    return FxFmt("rc=%d tier=0x%02X known=%d pose=", r.rc, static_cast<unsigned>(r.tier), r.known ? 1 : 0) +
+           ExactPose(r.pose);
+}
+static std::string TierStr(const G3Out& o) { return FxFmt("rc=%d tier=0x%02X", o.rc, static_cast<unsigned>(o.tier)); }
+
+// ── the fixture's premise ──
+struct Expect {
+    uintptr_t cls;   // the class FindFunc starts from, as Wirbel's own lookup does
+    const char* name;
+    uint32_t chainEnd;
+};
+static std::vector<Expect> Expected(const World& w) {
+    return {
+        { g_cHero, kGetLocName, kVecGetterEnd },
+        { g_cHero, kForwardName, kVecGetterEnd },
+        { g_cHero, G5::kSalName, H11::kSalChainEnd },
+        { g_cHero, kTeleportToName, H11::kTpChainEnd },
+        { g_cGameCtrl, kSetRotName, kRotSetterEnd },
+        { g_cGameCtrl, kMouseName, kMouseEnd },
+        { g_cGameCtrl, kViewportName, kViewportEnd },
+        { g_cGameCtrl, kHitCursorName, kHitCursorEnd },
+        { g_cGameCtrl, kHitScreenName, kHitScreenEnd },
+        { g_cGameCtrl, kDeprojectName, kDeprojectEnd },
+        { g_cCapsule, G5::kSwlName, H14::kCompChainEnd },
+        { g_cCapsule, kSrlName, H14::kCompChainEnd },
+        { g_cBpCam, kCamLocName, kVecGetterEnd },
+        { g_cBpCam, kCamRotName, kVecGetterEnd },
+        { g_cBpCam, kFovName, static_cast<uint32_t>(w.fovBytes) },
+        { g_cKsl, kLtsName, kLtsEnd },
+        { g_cWbl, FxG2::kGameOnly, kGameOnlyEnd },
+        { g_cWbl, FxG2::kGameAndUiEx, kGameAndUiEnd },
+    };
+}
+static void Premise(const World& w) {
+    FxReset();
+    InstallMisread(w);
+    FxClearRecorders();
+    std::string bad;
+    for (const Expect& e : Expected(w)) {
+        FunctionInfo fi;
+        const bool have = FindFunc(e.cls, e.name, fi);
+        const int32_t want = TailParms(w.tail, fi.numParms, fi.returnValueOffset);
+        const bool ok = have && fi.parmsSize == want && static_cast<uint32_t>(fi.parmsSize) < e.chainEnd &&
+                        Ubel::ParamBufferSize(fi) == e.chainEnd;
+        if (!ok)
+            bad += FxFmt("\n      %s: numParms=%u retOff=0x%X ", e.name, static_cast<unsigned>(fi.numParms),
+                         static_cast<unsigned>(fi.returnValueOffset)) +
+                   H14::FnTailStr(have, fi) + FxFmt(" -- want parms=%d buf=0x%X", want, e.chainEnd);
+    }
+    Check(FxFmt("PACK.06 misread tail (%s), the fixture: every function Wirbel invokes that has a parameter keeps its "
+                "chain and reads that ParmsSize, short of the chain's end, and Ubel sizes its block at that end",
+                w.what),
+          bad.empty(), bad);
+}
+
+// ══ the table: one row per op ══════════════════════════════════════════════════════════════════════════════════════
+static std::vector<Row> Rows() {
+    using K = FxKind;
+    std::vector<Row> rows;
+
+    // ── POV.24: GetCameraLocation / GetCameraRotation (InvokeRetVec) and GetFOVAngle (InvokeRetFloat) ──
+    auto pov = std::make_shared<FxG2::PovRun>();
+    rows.push_back({ "POV.24", "GetPov", [] {},
+                     [pov](std::string& out) {
+                         *pov = FxG2::RunPov();
+                         out = FxG2::PovStr(pov->p);
+                         return pov->rc;
+                     },
+                     [pov](const std::string& label, const World& w, const Run&) {
+                         const double fov = w.fovBytes == kFovDoubleBytes ? kFovGetterDouble : kFovGetter;
+                         const Wirbel::Pov& p = pov->p;
+                         Check(label + ": 0 with the getters' kCamLoc and kCamRot, the getter's FOV (87.5 as a float, "
+                                       "87.25 as a double), Source 0 (invoke), HasPawn with Pawn kStart",
+                               pov->rc == Wirbel::TP_OK && FxG2::CamIs(p, kCamLoc, kCamRot) && p.Fov == fov &&
+                                   p.Source == 0 && p.HasPawn && FxPoseIs(p.Pawn, kStart),
+                               FxFmt("want fov %.9g: ", fov) + FxG2::PovStr(p));
+                         const FxCall loc = FxNth(K::CamLoc), rot = FxNth(K::CamRot), fv = FxNth(K::Fov);
+                         Check(label + ": [CamLoc, CamRot, Fov] on Cam_0, handed 0x18, 0x18 and the FOV's own 4 or 8 "
+                                       "bytes",
+                               FxKindsAre({ K::CamLoc, K::CamRot, K::Fov }) && loc.instance == g_cam0 &&
+                                   rot.instance == g_cam0 && fv.instance == g_cam0 && loc.size == kVecGetterEnd &&
+                                   rot.size == kVecGetterEnd && fv.size == static_cast<uint32_t>(w.fovBytes),
+                               FxCallsStr(FxCalls()));
+                     } });
+
+    // ── POSE.16: the attached pose read's K2_GetActorLocation ──
+    auto pose = std::make_shared<G1::PoseRead>();
+    rows.push_back({ "POSE.16", "an attached GetPose", [] { FxAttach(true); },
+                     [pose](std::string& out) {
+                         *pose = G1::ReadPose();
+                         out = G1::OutStr(*pose);
+                         return pose->rc;
+                     },
+                     [pose](const std::string& label, const World&, const Run&) {
+                         Check(label + ": 0 with K2_GetActorLocation's kAttachedWorld and kRot, *src 1, *pr false, "
+                                       "\"Map_A\"",
+                               pose->rc == Wirbel::TP_OK && FxPoseIs(pose->p, kAttachedWorld, kRot) &&
+                                   pose->src == G4::kSourceInvoke && !pose->pr &&
+                                   G1::MapIs(pose->map, sizeof pose->map, G1::kMapA),
+                               G1::OutStr(*pose));
+                         const FxCall get = FxNth(K::GetLoc);
+                         Check(label + ": one K2_GetActorLocation, on Hero_0, handed 0x18 bytes, and no WARN",
+                               FxCountAll() == 1 && get.instance == g_hero0 && get.size == kVecGetterEnd &&
+                                   FxTeleportLines('W') == 0,
+                               FxCallsStr(FxCalls()) + FxLogDump());
+                     } });
+    rows.push_back({ "POSE.16", "an attached SaveMarker", [] { FxAttach(true); },
+                     [](std::string& out) {
+                         const int32_t rc = Wirbel::SaveMarker(G4::kSlotFirst);
+                         out = MarkerKey(FxMarkerNow(G4::kSlotFirst));
+                         return rc;
+                     },
+                     [](const std::string& label, const World&, const Run& r) {
+                         const Wirbel::Marker want = FxMarker(FxPose(kAttachedWorld, kRot), G4::kMapA);
+                         Check(label + ": 0, and slot 0 holds kAttachedWorld and kRot on \"Map_A\", not flagged "
+                                       "parent-relative",
+                               r.rc == Wirbel::TP_OK && FxMarkerEq(FxMarkerNow(G4::kSlotFirst), want),
+                               FxS(r.rc) + " " + FxMarkerStr(FxMarkerNow(G4::kSlotFirst)));
+                         const FxCall get = FxNth(K::GetLoc);
+                         Check(label + ": one K2_GetActorLocation, on Hero_0, handed 0x18 bytes; one INFO 'marker 0 "
+                                       "saved (5000.5, 6000.5, 700.5)' and no WARN",
+                               FxCountAll() == 1 && get.instance == g_hero0 && get.size == kVecGetterEnd &&
+                                   FxLogCount(FxLine::MarkerSaved(G4::kSlotFirst, kAttachedWorld, G4::kMapA), 'I') ==
+                                       1 &&
+                                   FxTeleportLines('W') == 0,
+                               FxCallsStr(FxCalls()) + FxLogDump());
+                     } });
+
+    // ── PACK.06: the recalls ──
+    auto undo = std::make_shared<G3Out>();
+    rows.push_back({ "PACK.06", "an attached recall with an undo point", [] { FxAttach(true); },
+                     [undo](std::string& out) {
+                         *undo = G3Out{};
+                         undo->rc = Wirbel::RecallExplicit(kDest, /*hasRot=*/true, &undo->tier, /*keepUndo=*/false);
+                         out = TierStr(*undo);
+                         return undo->rc;
+                     },
+                     [undo](const std::string& label, const World&, const Run&) {
+                         Check(label + ": 0 at tier 1 -- the pawn's world position kDest, its facing (5.5, 329.5, 0), "
+                                       "and the undo slot holding kAttachedWorld and kRot on \"Map_A\", unflagged",
+                               undo->rc == Wirbel::TP_OK && undo->tier == G5::kTierInvoke &&
+                                   FxEq3(FxAttachedWorldNow(), kDestXyz) && FxEq3(FxCtrlRot(), g3::kDestPyrStored) &&
+                                   FxMarkerEq(FxLastNow(), FxMarker(FxPose(kAttachedWorld, kRot), G4::kMapA)),
+                               G3Got(*undo) + " world " + FxArrStr(FxAttachedWorldNow()) + " last " +
+                                   FxMarkerStr(FxLastNow()));
+                         Check(label + ": [GetLoc, SetActorLoc, GetLoc, SetCtrlRot, StopMove, StopMoveNow], each "
+                                       "K2_GetActorLocation on Hero_0 handed 0x18 bytes",
+                               G3CallsAre({ { K::GetLoc, g_hero0 }, { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 },
+                                            { K::SetCtrlRot, g_pc0 }, { K::StopMove, g_pc0 },
+                                            { K::StopMoveNow, g_cmc0 } }) &&
+                                   FxNth(K::GetLoc, 0).size == kVecGetterEnd &&
+                                   FxNth(K::GetLoc, 1).size == kVecGetterEnd,
+                               FxCallsStr(FxCalls()));
+                     } });
+    auto freeze = std::make_shared<G3Out>();
+    rows.push_back({ "PACK.06", "a recall the movement component reverts (the CMC freeze)",
+                     [] {
+                         FxMoveMode(K::SetActorLoc, FxMove::Lies);
+                         FxMoveMode(K::SetWorldLoc, FxMove::Lies);
+                     },
+                     [freeze](std::string& out) {
+                         *freeze = G3Recall();
+                         out = TierStr(*freeze);
+                         return freeze->rc;
+                     },
+                     [freeze](const std::string& label, const World&, const Run&) {
+                         const FxCall none = FxNth(K::SetMoveMode, 0), falling = FxNth(K::SetMoveMode, g3::kThawCall);
+                         Check(label + ": the freeze runs whole -- [SetActorLoc, GetLoc, SetMoveMode, SetActorLoc, "
+                                       "SetWorldLoc, SetMoveMode, SetActorLoc, SetWorldLoc, GetLoc, StopMove, "
+                                       "StopMoveNow], MOVE_None then MOVE_Falling, each K2_SetWorldLocation handed "
+                                       "0x109 bytes",
+                               FxKindsAre({ K::SetActorLoc, K::GetLoc, K::SetMoveMode, K::SetActorLoc, K::SetWorldLoc,
+                                            K::SetMoveMode, K::SetActorLoc, K::SetWorldLoc, K::GetLoc, K::StopMove,
+                                            K::StopMoveNow }) &&
+                                   FxRd<uint8_t>(none, FxSmm::kMode) == FxSmm::kModeNone &&
+                                   FxRd<uint8_t>(falling, FxSmm::kMode) == FxSmm::kModeFalling &&
+                                   FxNth(K::SetWorldLoc, 0).size == H14::kCompChainEnd &&
+                                   FxNth(K::SetWorldLoc, 1).size == H14::kCompChainEnd,
+                               FxCallsStr(FxCalls()));
+                         Check(label + ": ... and holds -- one INFO 'CMC-freeze force succeeded -> "
+                                       "cur=(1500.5,-2500.5,350.5)', Root_0 at kDest, 0 at tier 1",
+                               FxLogCount(g3::FreezeOk(kDestXyz), 'I') == 1 && FxEq3(FxPos(), kDestXyz) &&
+                                   freeze->rc == Wirbel::TP_OK && freeze->tier == G5::kTierInvoke,
+                               G3Got(*freeze) + " pos " + FxArrStr(FxPos()));
+                     } });
+    auto relLoc = std::make_shared<G3Out>();
+    rows.push_back({ "PACK.06", "a recall whose actor setter answers false and whose K2_SetWorldLocation does not run",
+                     [] {
+                         FxMoveMode(K::SetActorLoc, FxMove::RetFalse);
+                         FxRcAlways(K::SetWorldLoc, g3::kDidNotRun);
+                     },
+                     [relLoc](std::string& out) {
+                         *relLoc = G3Recall();
+                         out = TierStr(*relLoc);
+                         return relLoc->rc;
+                     },
+                     [relLoc](const std::string& label, const World& w, const Run&) {
+                         const int32_t salParms = TailParms(w.tail, kSalParms, kSal5.ret);
+                         Check(label + ": K2_SetRelativeLocation on Root_0 carries the move -- [SetActorLoc, "
+                                       "SetWorldLoc, SetRelLoc, GetLoc, StopMove, StopMoveNow], the relative setter "
+                                       "handed 0x109 bytes, Root_0 at kDest, 0 at tier 1",
+                               G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, g_root0 },
+                                            { K::SetRelLoc, g_root0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                                            { K::StopMoveNow, g_cmc0 } }) &&
+                                   FxNth(K::SetRelLoc).size == H14::kCompChainEnd && FxEq3(FxPos(), kDestXyz) &&
+                                   relLoc->rc == Wirbel::TP_OK && relLoc->tier == G5::kTierInvoke,
+                               G3Got(*relLoc) + " pos " + FxArrStr(FxPos()));
+                         Check(label + ": one WARN 'K2_SetActorLocation returned false' naming the ParmsSize the tail "
+                                       "reads, one INFO 'K2_SetRelativeLocation invoked OK on RootComponent' naming "
+                                       "Root_0 and kDest",
+                               FxLogCount(g3::SetterFailed(G5::kSalName, kReturnedFalse, 0, salParms), 'W') == 1 &&
+                                   FxLogCount(FxLine::CompSetterOk(kSrlName, g_root0, kDestXyz), 'I') == 1,
+                               FxFmt("want parmsSize=%d", salParms) + FxLogDump());
+                     } });
+
+    // ── PACK.06: the relative moves (GetActorForwardVector through InvokeRetVec) ──
+    auto rel = std::make_shared<RelOut>();
+    rows.push_back({ "PACK.06", "a relative move", [] {},
+                     [rel](std::string& out) {
+                         *rel = RunRelative();
+                         out = RelStr(*rel);
+                         return rel->rc;
+                     },
+                     [rel](const std::string& label, const World&, const Run&) {
+                         const auto want = FxArr(G4::kRelDestFwd);
+                         Check(label + ": 0 at tier 1, the landing known -- kStart stepped 100 along kFwd's ground "
+                                       "projection with kRot, Root_0 there, and the undo slot holding kStart",
+                               rel->rc == Wirbel::TP_OK && rel->tier == G5::kTierInvoke && rel->known &&
+                                   G4::Within(FxXyzOf(rel->pose), want) && FxEq3(FxPyrOf(rel->pose), kRot) &&
+                                   G4::Within(FxPos(), want) && FxMarkerEq(FxLastNow(), G4::StartMarker()),
+                               RelStr(*rel) + " pos " + FxArrStr(FxPos()) + " last " + FxMarkerStr(FxLastNow()));
+                         Check(label + ": [Forward, SetActorLoc, GetLoc, StopMove, StopMoveNow], GetActorForwardVector "
+                                       "on Hero_0 handed 0x18 bytes",
+                               G3CallsAre({ { K::Forward, g_hero0 }, { K::SetActorLoc, g_hero0 },
+                                            { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                                            { K::StopMoveNow, g_cmc0 } }) &&
+                                   FxNth(K::Forward).size == kVecGetterEnd,
+                               FxCallsStr(FxCalls()));
+                     } });
+    auto relAttached = std::make_shared<RelOut>();
+    rows.push_back({ "PACK.06", "an attached relative move", [] { FxAttach(true); },
+                     [relAttached](std::string& out) {
+                         *relAttached = RunRelative();
+                         out = RelStr(*relAttached);
+                         return relAttached->rc;
+                     },
+                     [relAttached](const std::string& label, const World&, const Run&) {
+                         const auto want = G4::Stepped(kAttachedWorld, G4::Horizontal(FxArr(kFwd)), G4::kStep);
+                         const RelOut& r = *relAttached;
+                         Check(label + ": 0 at tier 1, the landing known -- kAttachedWorld stepped 100 along kFwd's "
+                                       "ground projection with kRot, the pawn's world position there, and the undo "
+                                       "slot holding kAttachedWorld, unflagged",
+                               r.rc == Wirbel::TP_OK && r.tier == G5::kTierInvoke && r.known &&
+                                   G4::Within(FxXyzOf(r.pose), want) && FxEq3(FxPyrOf(r.pose), kRot) &&
+                                   G4::Within(FxAttachedWorldNow(), want) &&
+                                   FxMarkerEq(FxLastNow(), FxMarker(FxPose(kAttachedWorld, kRot), G4::kMapA)),
+                               RelStr(r) + " world " + FxArrStr(FxAttachedWorldNow()) + " last " +
+                                   FxMarkerStr(FxLastNow()));
+                         bool getsSized = FxCount(K::GetLoc) == kAttachedRelativeGets;
+                         for (const auto& c : FxCallsOf(K::GetLoc)) getsSized = getsSized && c.size == kVecGetterEnd;
+                         Check(label + ": [GetLoc, Forward, GetLoc, SetActorLoc, GetLoc, StopMove, StopMoveNow, "
+                                       "GetLoc], the four K2_GetActorLocation and GetActorForwardVector each handed "
+                                       "0x18 bytes",
+                               G3CallsAre({ { K::GetLoc, g_hero0 }, { K::Forward, g_hero0 }, { K::GetLoc, g_hero0 },
+                                            { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                                            { K::StopMoveNow, g_cmc0 }, { K::GetLoc, g_hero0 } }) &&
+                                   getsSized && FxNth(K::Forward).size == kVecGetterEnd,
+                               FxCallsStr(FxCalls()));
+                     } });
+
+    // ── PACK.06: the cursor jumps ──
+    auto trace = std::make_shared<G5::CursorRun>();
+    rows.push_back({ "PACK.06", "a cursor jump through path 1, path 2 and the line trace",
+                     [] { FxHit(K::Trace, G5::kChan); },
+                     [trace](std::string& out) {
+                         *trace = G5::Cursor(G5::kChan);
+                         out = G5::RunStr(*trace);
+                         return trace->rc;
+                     },
+                     [trace](const std::string& label, const World&, const Run&) {
+                         const G5::CursorRun& c = *trace;
+                         Check(label + ": 0 at tier 1 -- the trace's hit kHit, usedCenter false, Root_0 on the hit "
+                                       "raised by zOffset",
+                               c.rc == Wirbel::TP_OK && c.tier == G5::kTierInvoke && G5::HitIs(c, kHit) &&
+                                   !c.usedCenter && FxEq3(FxPos(), G5::kCursorDest),
+                               G5::RunStr(c) + " pos " + FxArrStr(FxPos()));
+                         const int scans = G5::kScanCalls;
+                         Check(label + ": one GetMousePosition, 10 + 10 scan calls, one deprojection, one "
+                                       "LineTraceSingle on the library's CDO, one K2_TeleportTo on Hero_0, the "
+                                       "verification read and the two stops -- nothing else",
+                               FxCount(K::MousePos) == 1 && FxCount(K::HitCursor) == scans &&
+                                   FxCount(K::HitScreen) == scans && FxCount(K::Deproject) == 1 &&
+                                   FxCountOn(K::Trace, g_cdoKsl) == 1 && FxCountOn(K::TeleportTo, g_hero0) == 1 &&
+                                   FxCountOn(K::GetLoc, g_hero0) == 1 && FxCount(K::StopMove) == 1 &&
+                                   FxCount(K::StopMoveNow) == 1 && FxCountAll() == kCursorFixedCalls + 2 * scans,
+                               FxCallsStr(FxCalls()));
+                     } });
+    auto center = std::make_shared<G5::CursorRun>();
+    rows.push_back({ "PACK.06", "a cursor jump from the screen centre",
+                     [] {
+                         FxRetByte(K::MousePos, 0);
+                         FxHit(K::HitScreen, G5::kChan);
+                     },
+                     [center](std::string& out) {
+                         *center = G5::Cursor(G5::kChan);
+                         out = G5::RunStr(*center);
+                         return center->rc;
+                     },
+                     [center](const std::string& label, const World&, const Run&) {
+                         const G5::CursorRun& c = *center;
+                         const FxCall hs = FxNth(K::HitScreen);
+                         Check(label + ": 0 at tier 1 from the centre -- usedCenter, the path-2 hit kHit, Root_0 on "
+                                       "the hit raised by zOffset",
+                               c.rc == Wirbel::TP_OK && c.tier == G5::kTierInvoke && c.usedCenter &&
+                                   G5::HitIs(c, kHit) && FxEq3(FxPos(), G5::kCursorDest),
+                               G5::RunStr(c) + " pos " + FxArrStr(FxPos()));
+                         Check(label + ": [MousePos, Viewport, HitScreen, TeleportTo, GetLoc, StopMove, StopMoveNow], "
+                                       "GetViewportSize handed 8 bytes, the hit test at (960.5, 540.5)",
+                               G3CallsAre({ { K::MousePos, g_pc0 }, { K::Viewport, g_pc0 }, { K::HitScreen, g_pc0 },
+                                            { K::TeleportTo, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                                            { K::StopMoveNow, g_cmc0 } }) &&
+                                   FxNth(K::Viewport).size == kViewportEnd &&
+                                   G5::ScreenIs(hs, kHs5, G5::kCoordD, kCenter),
+                               FxCallsStr(FxCalls()) + " " + G5::ScreenStr(hs, kHs5, G5::kCoordD));
+                     } });
+
+    // ── MCUR.12: the input mode (InvokeWblInputMode) ──
+    auto show = std::make_shared<FxG2::CursorRun>();
+    rows.push_back({ "MCUR.12", "a mouse-cursor show", [] {},
+                     [show](std::string& out) {
+                         *show = FxG2::RunSetCursor(true, false);
+                         out = FxG2::CursorStr(*show);
+                         return show->rc;
+                     },
+                     [show](const std::string& label, const World&, const Run&) {
+                         const FxCall go = FxNth(K::InputGameOnly), ui = FxNth(K::InputGameAndUI);
+                         Check(label + ": 0 with the bit on -- PC_0's cursor byte 0x03",
+                               show->rc == Wirbel::TP_OK && show->state && FxCursorByte() == FxG2::kCursorOn,
+                               FxG2::CursorStr(*show) + FxFmt(" byte 0x%02X", static_cast<unsigned>(FxCursorByte())));
+                         Check(label + ": [GameOnly, GameAndUIEx] on the library's CDO, handed their chains' ends (9 "
+                                       "and 0x13 bytes), each carrying PlayerController == PC_0 at +0",
+                               G3CallsAre({ { K::InputGameOnly, g_cdoWbl }, { K::InputGameAndUI, g_cdoWbl } }) &&
+                                   go.size == kGameOnlyEnd && ui.size == kGameAndUiEnd &&
+                                   FxRd<uintptr_t>(go, FxIm::kPc) == g_pc0 && FxRd<uintptr_t>(ui, FxIm::kPc) == g_pc0,
+                               FxCallsStr(FxCalls()));
+                     } });
+    auto hide = std::make_shared<FxG2::CursorRun>();
+    rows.push_back({ "MCUR.12", "a mouse-cursor hide", [] { FxSetCursorByte(FxG2::kCursorOn); },
+                     [hide](std::string& out) {
+                         *hide = FxG2::RunSetCursor(false, true);
+                         out = FxG2::CursorStr(*hide);
+                         return hide->rc;
+                     },
+                     [hide](const std::string& label, const World&, const Run&) {
+                         const FxCall go = FxNth(K::InputGameOnly);
+                         Check(label + ": 0 with the bit off -- PC_0's cursor byte back to its sibling bit alone",
+                               hide->rc == Wirbel::TP_OK && !hide->state && FxCursorByte() == kCursorSiblingBit,
+                               FxG2::CursorStr(*hide) + FxFmt(" byte 0x%02X", static_cast<unsigned>(FxCursorByte())));
+                         Check(label + ": [GameOnly] alone on the library's CDO, handed its chain's end (9 bytes) and "
+                                       "carrying PlayerController == PC_0 at +0",
+                               G3CallsAre({ { K::InputGameOnly, g_cdoWbl } }) && go.size == kGameOnlyEnd &&
+                                   FxRd<uintptr_t>(go, FxIm::kPc) == g_pc0,
+                               FxCallsStr(FxCalls()));
+                     } });
+    return rows;
+}
+
+// ══ PACK.06 / POV.24 / POSE.16 / MCUR.12 ═══════════════════════════════════════════════════════════════════════════
+static void MisreadWorlds() {
+    for (const World& w : kWorlds) Premise(w);
+    for (const Row& row : Rows()) {
+        for (const World& w : kWorlds) {
+            const Run base = RunRow(row, w, /*misread=*/false);
+            const Run mis = RunRow(row, w, /*misread=*/true);
+            const std::string label = FxFmt("%s misread tail (%s), %s", row.id, w.what, row.what);
+            Check(label + ": every call is handed ParamBufferSize of its function -- its chain's end, not the short "
+                          "ParmsSize",
+                  !mis.calls.empty() && mis.sized, mis.sizedWhy + " " + FxCallsStr(mis.calls));
+            std::string why;
+            Check(label + ": it answers as in the default world -- its code and outputs, every call (kind, object, "
+                          "function, parameters), the world after it and its Teleport lines",
+                  SameRun(base, mis, why), why);
+            row.pin(label, w, mis);
+        }
+    }
+}
+
+// ══ PACK.07 ════════════════════════════════════════════════════════════════════════════════════════════════════════
+static bool ParamAt(const FunctionInfo& fi, const char* name, int32_t at) {
+    const FunctionParam* p = FindParam(fi, name);
+    return p && p->offset == at;
+}
+
+static void NegativeOffsets() {
+    using K = FxKind;
+    const uintptr_t pcNeg = PcNegativeList();
+    const uintptr_t actorNeg = ActorNegativeList();
+
+    // The fixture's own premise: each parameter reads its negative offset, and each block is still the size the rest
+    // of its function gives it.
+    FxReset();
+    FxPcFns(pcNeg);
+    FxActorFns(actorNeg);
+    FxClearRecorders();
+    {
+        FunctionInfo mouse, vp, get, sal;
+        const bool haveMouse = FindFunc(g_cGameCtrl, kMouseName, mouse);
+        const bool haveVp = FindFunc(g_cGameCtrl, kViewportName, vp);
+        const bool haveGet = FindFunc(g_cHero, kGetLocName, get);
+        const bool haveSal = FindFunc(g_cHero, G5::kSalName, sal);
+        Check("PACK.07 negative offset, the fixture: LocationX and SizeY read Offset_Internal -4, "
+              "K2_GetActorLocation's ReturnValue and K2_SetActorLocation's NewLocation -8, and each block is still "
+              "0xC, 8, 0x18 and 0x110",
+              haveMouse && ParamAt(mouse, "LocationX", kNegFloatAt) &&
+                  Ubel::ParamBufferSize(mouse) == static_cast<uint32_t>(kMp.parmsSize) && haveVp &&
+                  ParamAt(vp, "SizeY", kNegIntAt) &&
+                  Ubel::ParamBufferSize(vp) == static_cast<uint32_t>(FxVp::kParmsSize) && haveGet &&
+                  ParamAt(get, kReturnValue, kNegVecAt) &&
+                  Ubel::ParamBufferSize(get) == static_cast<uint32_t>(kVecD) && haveSal &&
+                  ParamAt(sal, "NewLocation", kNegVecAt) &&
+                  Ubel::ParamBufferSize(sal) == static_cast<uint32_t>(kSal5.parmsSize),
+              H14::FnTailStr(haveMouse, mouse) + " / " + H14::FnTailStr(haveVp, vp) + " / " +
+                  H14::FnTailStr(haveGet, get) + " / " + H14::FnTailStr(haveSal, sal));
+    }
+
+    // The cursor: a mouse position whose X cannot be read is no mouse position, and a viewport whose height cannot be
+    // read has no centre. A hit is scripted on the path a cursor that WAS read would take next.
+    FxReset();
+    FxPcFns(pcNeg);
+    FxHit(K::HitScreen, G5::kChan);
+    FxClearRecorders();
+    {
+        const G5::CursorRun r = G5::Cursor(G5::kChan);
+        std::string why;
+        const bool sized = H11::AllSized(why);
+        Check("PACK.07 negative offset, mouse and viewport: a LocationX at -4 is no mouse position and a SizeY at -4 "
+              "no viewport height -- -9 after [MousePos, Viewport] on PC_0, each handed ParamBufferSize of its "
+              "function",
+              r.rc == Wirbel::TP_ERR_NO_CURSOR && G3CallsAre({ { K::MousePos, g_pc0 }, { K::Viewport, g_pc0 } }) &&
+                  sized,
+              G5::RunStr(r) + " " + why + " " + FxCallsStr(FxCalls()));
+        Check("PACK.07 negative offset, mouse and viewport: ... and nothing past the refusal -- outHit, the tier and "
+              "usedCenter as planted, the GWorld-chain line the only Teleport line, Root_0 at kStart, no undo point",
+              FxIsSentinel(r.hit) && r.tier == kTierSentinel && r.usedCenter && FxTeleportLines() == 1 &&
+                  FxLogCount(FxLine::Chain(g_pc0), 'I') == 1 && FxEq3(FxPos(), kStart) && !FxLastNow().Valid,
+              G5::RunStr(r) + " pos " + FxArrStr(FxPos()) + FxLogDump());
+    }
+
+    // An attached pose read: a return value at -8 is no world position, so the read is the flagged parent-relative one.
+    FxReset();
+    FxActorFns(actorNeg);
+    FxAttach(true);
+    FxClearRecorders();
+    {
+        const G1::PoseRead r = G1::ReadPose();
+        Check("PACK.07 negative offset, return value: a ReturnValue at -8 is no world position -- an attached GetPose "
+              "answers 0 with RelativeLocation kStart and kRot, *src 0 and *pr true",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kStart, kRot) && r.src == G4::kSourceRaw && r.pr,
+              G1::OutStr(r));
+        Check("PACK.07 negative offset, return value: ... after one K2_GetActorLocation on Hero_0 handed 0x18 bytes, "
+              "and the one WARN is 'attached pawn but K2_GetActorLocation failed'",
+              G3CallsAre({ { K::GetLoc, g_hero0 } }) && FxNth(K::GetLoc).size == static_cast<uint32_t>(kVecD) &&
+                  FxLogCount(FxText::kAttachedFail, 'W') == 1 && FxTeleportLines('W') == 1,
+              FxCallsStr(FxCalls()) + FxLogDump());
+    }
+
+    // A recall: a NewLocation at -8 is unpackable, so the actor setter is passed over and the root's setter moves the
+    // pawn. Last of the three: a write before the block would corrupt the heap the rest of the run uses.
+    FxReset();
+    FxActorFns(actorNeg);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        Check("PACK.07 negative offset, setter: a NewLocation at -8 is unpackable -- K2_SetActorLocation is never "
+              "invoked, and one WARN 'K2_SetActorLocation param-pack failed (couldn't locate location param)'",
+              FxCount(K::SetActorLoc) == 0 && FxLogCount(g3::PackFailed(G5::kSalName), 'W') == 1, G3Got(o));
+        Check("PACK.07 negative offset, setter: ... K2_SetWorldLocation carries the move -- [SetWorldLoc, GetLoc, "
+              "StopMove, StopMoveNow], one INFO naming Root_0 and kDest, post-move cur kDest, Root_0 at kDest, 0 at "
+              "tier 1",
+              G3CallsAre({ { K::SetWorldLoc, g_root0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                           { K::StopMoveNow, g_cmc0 } }) &&
+                  FxLogCount(FxLine::CompSetterOk(G5::kSwlName, g_root0, kDestXyz), 'I') == 1 &&
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1 && FxEq3(FxPos(), kDestXyz) &&
+                  o.rc == Wirbel::TP_OK && o.tier == G5::kTierInvoke,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+}
+
+}  // namespace H16
+
+static void Blocks_H16() {
+    blk("RESOLVE+6 - a world whose every UFunction tail reads short, and a negative parameter offset");
+    H16::MisreadWorlds();
+    H16::NegativeOffsets();
+    // The world back to its defaults for the blocks after this one, the swapped function lists included.
+    FxReset();
+}
+
+// ══ H17: MOVE+6 — FRZ / RT: a refused raw write inside the CMC freeze ═════════════════════════════════════════════
+// G3's fixture never lets the freeze meet a write the DLL cannot make. Every freeze runs on a root the DLL can write,
+// or on an attached one where the freeze makes no raw write at all; and every scenario that aliases the root read-only
+// also fails each setter it could reach, so the op leaves at tier 2 before any freeze opens. Here both setters report
+// success and move nothing on a root the world reaches only through the read-only view: the freeze opens, and its raw
+// RelativeLocation write and each deep-force rewrite are refused. The freeze judges the move by the distance it
+// measures after the thaw, never by a write's result, so the thaw, both re-asserts, the verdict and the rest of the
+// recall must still run. A check carries the name of the block it extends and continues that block's numbering.
+
+namespace H17 {
+
+// ── numbers ──
+constexpr int32_t kRcRan = 0;   // what the engine answers for an invoke that ran
+// The WARNs a freeze writes when nothing it writes lands: it opens, its deep force rewrites nothing, its verdict fails.
+constexpr int kFreezeWarns = 3;
+
+// ── helpers ──
+// Both engine setters report success and move nothing, on a root the world reaches only through the read-only view.
+// The move counts as made while the pawn stays at kStart, so the freeze opens, and each raw write the DLL makes there
+// is refused. The setters lie rather than refuse: a refused setter leaves the op at tier 2, before the freeze. Returns
+// the read-only root.
+static uintptr_t LyingSettersOnRoRoot() {
+    const uintptr_t ro = FxUseRoRoot();
+    FxMoveMode(FxKind::SetActorLoc, FxMove::Lies);
+    FxMoveMode(FxKind::SetWorldLoc, FxMove::Lies);
+    return ro;
+}
+static std::string SeqStr(const FxCall& freeze, uint64_t deep, const FxCall& thaw) {
+    return FxFmt(" seq freeze=%llu deep=%llu thaw=%llu", static_cast<unsigned long long>(freeze.seq),
+                 static_cast<unsigned long long>(deep), static_cast<unsigned long long>(thaw.seq));
+}
+
+// ══ FRZ ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+// FRZ.11: a refused raw write inside the freeze. The pawn never moves, so the freeze ends STILL; the op still answers
+// 0, because every engine setter it called reported success and the freeze measures the result instead of acting on
+// its own write.
+static void FrzRefusedRawWrite() {
+    using K = FxKind;
+    FxReset();
+    const uintptr_t ro = LyingSettersOnRoRoot();
+    std::array<double, 3> relAtThaw{}, c2wAtThaw{};
+    bool sawThaw = false;
+    FxOnCall([&](FxKind k, uintptr_t, int nth) {
+        if (k == FxKind::SetMoveMode && nth == g3::kThawCall) {
+            relAtThaw = FxVecAt(ro + FxOff::kRelativeLocation, kVecD);
+            c2wAtThaw = FxVecAt(ro + FxOff::kC2W, kVecD);
+            sawThaw = true;
+        }
+    });
+    FxClearRecorders();
+    const G3Out o = G3Recall();
+    FxOnCall(nullptr);
+    const FxCall freeze = FxNth(K::SetMoveMode, 0), thaw = FxNth(K::SetMoveMode, g3::kThawCall);
+    const uint64_t deepSeq = FxLogSeq(FxText::kDeepNone, 'W');
+
+    check("FRZ.11 refused raw write: the freeze opens (one WARN naming kStart) and reaches its thaw with the read-only "
+          "RelativeLocation and its ComponentToWorld copy both still kStart -- the raw write and the deep-force "
+          "rewrites were refused there",
+          FxLogCount(g3::FreezeEnter(kStart, true), 'W') == 1 && sawThaw && FxEq3(relAtThaw, kStart) &&
+              FxEq3(c2wAtThaw, kStart),
+          FxLogDump() + " at thaw " + FxArrStr(relAtThaw) + " / " + FxArrStr(c2wAtThaw));
+    check("FRZ.11 refused raw write: the op answers 0 at tier 1 -- the setter that moved it reported success",
+          o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke, G3Got(o));
+    check("FRZ.11 refused raw write: the freeze still thaws -- two SetMovementMode on CMC_0, NewMovementMode 0 "
+          "(MOVE_None) then 3 (MOVE_Falling), so CharacterMovement is not left frozen",
+          FxCount(K::SetMoveMode) == H1::kFreezeModeCalls &&
+              FxCountOn(K::SetMoveMode, g_cmc0) == H1::kFreezeModeCalls &&
+              FxRd<uint8_t>(freeze, FxSmm::kMode) == FxSmm::kModeNone &&
+              FxRd<uint8_t>(thaw, FxSmm::kMode) == FxSmm::kModeFalling,
+          FxCallsStr(FxCallsOf(K::SetMoveMode)));
+    check("FRZ.11 refused raw write: sequence [SetActorLoc, GetLoc, SetMoveMode CMC_0, SetActorLoc, SetWorldLoc on "
+          "the read-only root, SetMoveMode CMC_0, SetActorLoc, SetWorldLoc on it, GetLoc, StopMove, StopMoveNow]",
+          G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 },
+                       { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, ro }, { K::SetMoveMode, g_cmc0 },
+                       { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, ro }, { K::GetLoc, g_hero0 },
+                       { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }),
+          FxCallsStr(FxCalls()));
+    check("FRZ.11 refused raw write: deep force still runs inside the freeze and lands nothing -- one WARN "
+          "'deep-force found no ComponentToWorld vector matching the old position', no 'rewrote' line, stamped after "
+          "SetMovementMode(0) and before SetMovementMode(3)",
+          FxLogCount(FxText::kDeepNone, 'W') == 1 && FxLogPrefix(g3::kDeepPrefix) == 1 && freeze.seq != 0 &&
+              deepSeq > freeze.seq && thaw.seq > deepSeq,
+          FxLogDump() + SeqStr(freeze, deepSeq, thaw));
+    check("FRZ.11 refused raw write: the verdict -- one WARN 'CMC-freeze force STILL didn't stick "
+          "(cur=(1000.5,-2000.5,300.5))', no succeeded line, no WARN but the freeze's three, and the post-move line "
+          "says cur kStart",
+          FxLogCount(g3::FreezeStill(kStart), 'W') == 1 && FxLogPrefix(H1::kFreezeOkPrefix) == 0 &&
+              FxTeleportLines('W') == kFreezeWarns &&
+              FxLogCount(FxLine::PostMove(kStart, kDestXyz, false), 'I') == 1,
+          FxLogDump());
+    check("FRZ.11 refused raw write: the recall settles and reports success -- StopMovement on PC_0 and "
+          "StopMovementImmediately on CMC_0 each log rc=0, and the explicit recall line ends rc=0",
+          FxLogCount(FxLine::StopMove(g_pc0, kRcRan), 'I') == 1 &&
+              FxLogCount(FxLine::StopMoveNow(g_cmc0, kRcRan), 'I') == 1 &&
+              FxLogCount(FxLine::Explicit(kDestXyz, false, true, Wirbel::TP_OK), 'I') == 1,
+          FxLogDump());
+}
+
+// ══ RT ════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// RT.02: a move whose freeze could not make its raw write is not a failed move. The recall carries a facing, so
+// RecallTo's own steps after the move -- the rotation, then the settle -- show what the move answered.
+static void RtRefusedFreezeWrite() {
+    using K = FxKind;
+    FxReset();
+    const uintptr_t ro = LyingSettersOnRoRoot();
+    FxClearRecorders();
+    const G3Out o = G3Recall(/*hasRot=*/true);
+    const FxCall rot = FxNth(K::SetCtrlRot);
+    check("RT.02 refused write in the freeze: 0 at tier 1, and after the freeze's verdict read RecallTo restores the "
+          "facing and settles -- the calls end [GetLoc Hero_0, SetCtrlRot PC_0, StopMove PC_0, StopMoveNow CMC_0]",
+          o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke &&
+              G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::SetMoveMode, g_cmc0 },
+                           { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, ro }, { K::SetMoveMode, g_cmc0 },
+                           { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, ro }, { K::GetLoc, g_hero0 },
+                           { K::SetCtrlRot, g_pc0 }, { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }),
+          G3Got(o) + " " + FxCallsStr(FxCalls()));
+    check("RT.02 refused write in the freeze: SetControlRotation sends kDest's (5.5, -30.5, 0), and ControlRotation "
+          "ends (5.5, 329.5, 0) as the setter leaves it",
+          FxCount(K::SetCtrlRot) == 1 && rot.instance == g_pc0 &&
+              FxEq3(FxVec(rot, H1::kNewRotationAt, kVecD), kDestPyr) && FxEq3(FxCtrlRot(), g3::kDestPyrStored),
+          FxCallStr(rot) + " " + FxArrStr(FxCtrlRot()));
+    check("RT.02 refused write in the freeze: one INFO 'explicit recall (1500.5, -2500.5, 350.5) rot=1 keep_undo=1 "
+          "-> rc=0'",
+          FxLogCount(FxLine::Explicit(kDestXyz, true, true, Wirbel::TP_OK), 'I') == 1, FxLogDump());
+}
+
+}  // namespace H17
+
+static void Blocks_H17() {
+    blk("MOVE+6 - a refused raw write inside the freeze");
+    H17::FrzRefusedRawWrite();
+    H17::RtRefusedFreezeWrite();
+    // The world back to its defaults for the blocks after this one: the root pointer and the setters' move modes.
+    FxReset();
+}
+
+// ══ H18: SLOTS+6 -- CUR: the screen-position trace reflected without its HitResult, its ScreenPosition, or both ════
+// Path 2 finds GetHitResultAtScreenPosition by name on whatever the game reflects, so its parameters carry the names
+// that game gave them, and a parameter walk can lose one. Every path-2 layout the earlier blocks build carries both a
+// ScreenPosition and a HitResult, so neither of path 2's null guards decides anything there. CUR.26 drops the
+// HitResult, CUR.27 the ScreenPosition, CUR.28 both. Each runs on the screen centre (GetMousePosition answers false),
+// which keeps path 1 out of the way, and under SEH: a null parameter dereferenced inside the op is an access violation
+// on the pipe or mailbox thread of a game, and here it fails the check that reads the exception code instead of ending
+// the run.
+// A check carries the name of the block it extends and continues that block's numbering.
+
+namespace H18 {
+
+// ── numbers ──
+constexpr const char* kHitScreenName = "GetHitResultAtScreenPosition";
+constexpr int32_t kAbsentAt = -1;     // FxHitCallLayout's offset for a member the shape leaves out
+constexpr int32_t kAbsentBytes = 0;
+constexpr int32_t kNoHitChannel = -1;   // the hitChannel path 2 logs when no channel hit
+// kHs5 with its ScreenPosition gone and every other member where it was. The bytes the coordinates took stay in the
+// block, in front of TraceChannel, so a coordinate written into them would show.
+constexpr FxHitCallLayout kHsNoScreen{ kAbsentAt, kAbsentBytes, kHs5.channel, kHs5.complex,
+                                       kHs5.hit,  kHs5.hitBytes, kHs5.ret,    kHs5.parmsSize };
+static_assert(kHsNoScreen.screen < 0, "FxFnHit chains no ScreenPosition for a negative offset");
+static_assert(kHs5.screen >= 0 && kHs5.screen + kHs5.screenBytes <= kHsNoScreen.channel,
+              "the bytes kHs5's ScreenPosition took lie in front of every member kHsNoScreen keeps");
+
+// ── fixture variants: built on first use from a block function, never at static init ──
+// APlayerController's list for a cursor jump that takes the screen centre: the mouse, the viewport, path 2 at
+// kHsNoScreen with or without its HitResult, and the deprojection. Path 1 is never asked on the centre, so the list
+// leaves it out. Memoized by FxList, one key per shape.
+static uintptr_t NoScreenPositionList(bool withHitResult) {
+    const char* key = withHitResult ? "h18/pc/screen-trace-no-screen-position"
+                                    : "h18/pc/screen-trace-no-screen-position-no-hit-result";
+    return FxList(key, [withHitResult] {
+        const uintptr_t owner = g_cPlayerController;
+        return std::vector<uintptr_t>{
+            FxFnMouse(owner, kMp),
+            FxFnViewport(owner),
+            FxFnHit(FxKind::HitScreen, kHitScreenName, owner, kHsNoScreen, g_sHit5, withHitResult),
+            FxFnDeproject(owner, kDp5),
+        };
+    });
+}
+
+// ── the op under SEH ──
+// TeleportToCursor with every output handed in, under SEH, so an access violation inside it fails the check that
+// reads `code` instead of ending the run. /EHa runs the op lock's guard on the way out, so the next scenario can still
+// take the lock. Plain C inside: a __try may not share a function with a C++ object that needs unwinding.
+static int32_t CursorSeh(int32_t channel, Wirbel::Pose* hit, uint8_t* tier, bool* usedCenter, DWORD* code) {
+    __try {
+        return Wirbel::TeleportToCursor(kZOffset, channel, true, hit, tier, usedCenter);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        *code = GetExceptionCode();
+        return G5::kNotReturned;
+    }
+}
+
+struct SehRun {
+    G5::CursorRun cur;   // the outputs, each planted first; usedCenter preset false, which the centre writes over
+    DWORD code = 0;      // the exception TeleportToCursor raised; 0 = none
+};
+static SehRun CentreCursor(int32_t channel) {
+    SehRun out;
+    out.cur.usedCenter = false;
+    out.cur.rc = CursorSeh(channel, &out.cur.hit, &out.cur.tier, &out.cur.usedCenter, &out.code);
+    return out;
+}
+static std::string SehStr(const SehRun& run) {
+    return G5::RunStr(run.cur) + FxFmt(" exception=0x%08lX", static_cast<unsigned long>(run.code));
+}
+// The jump every scenario here ends in: 0 with no exception, outHit kHit, one K2_TeleportTo on BP_Hero_C_0 raised
+// kZOffset above it, and the hero standing there.
+static std::array<double, 3> JumpDest() {
+    return FxVec(FxNth(FxKind::TeleportTo), static_cast<size_t>(kTp5.loc), kTp5.vec);
+}
+static bool Landed(const SehRun& run) {
+    const FxCall tp = FxNth(FxKind::TeleportTo);
+    return run.code == 0 && run.cur.rc == Wirbel::TP_OK && G5::HitIs(run.cur, kHit) &&
+           FxCount(FxKind::TeleportTo) == 1 && tp.instance == g_hero0 && FxEq3(JumpDest(), G5::kCursorDest) &&
+           FxEq3(FxPos(), G5::kCursorDest);
+}
+static std::string LandedStr(const SehRun& run) {
+    return SehStr(run) + " dest=" + FxArrStr(JumpDest()) + " pos=" + FxArrStr(FxPos()) + " " +
+           FxCallsStr(FxCalls());
+}
+// Path 2's line at the centre: a miss on every channel, or a hit on `channel`.
+static std::string Path2Miss() { return FxFmt(G5::kPath2Fmt, kCenter[0], kCenter[1], 0, kNoHitChannel); }
+static std::string Path2Hit(int32_t channel) { return FxFmt(G5::kPath2Fmt, kCenter[0], kCenter[1], 1, channel); }
+
+// ══ CUR ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void BlockCur() {
+    // ── CUR.26: path 2 reflected with its ScreenPosition and no HitResult. Without a HitResult no answer can be read
+    //    back, and reading one from the first call that answers true would dereference the missing parameter. So
+    //    path 2 asks nothing and logs its miss, and the last-resort trace gives the point. ──
+    {
+        struct Row {
+            bool pathTwoHit;
+            const char* id;
+        };
+        const Row rows[] = {
+            { false, "CUR.26 no HitResult on path 2, nothing waiting there" },
+            { true, "CUR.26 no HitResult on path 2, a hit waiting there" },
+        };
+        for (const Row& row : rows) {
+            FxReset();
+            FxRetByte(FxKind::MousePos, 0);   // no cursor: path 1 is skipped and path 2 traces from the screen centre
+            FxPcFns(FxPcFnList({ .screen = FxHitShape::NoHitResult }));
+            if (row.pathTwoHit) FxHit(FxKind::HitScreen, G5::kChanZero);
+            FxHit(FxKind::Trace, G5::kChanZero);
+            FxClearRecorders();
+            const SehRun run = CentreCursor(G5::kChanZero);
+            const std::string id = row.id;
+            check(G4::Lbl(id, "TeleportToCursor raises no exception and answers 0 from the centre (usedCenter "
+                              "written true)")
+                      .c_str(),
+                  run.code == 0 && run.cur.rc == Wirbel::TP_OK && run.cur.usedCenter, SehStr(run));
+            check(G4::Lbl(id, "GetHitResultAtScreenPosition is never asked, nor path 1, and 'I' "
+                              "\"...GetHitResultAtScreenPosition\" at the centre with hit=0 hitChannel=-1 once")
+                      .c_str(),
+                  FxCount(FxKind::HitScreen) == 0 && FxCount(FxKind::HitCursor) == 0 &&
+                      FxLogCount(Path2Miss(), 'I') == 1,
+                  FxCallsStr(FxCalls()) + FxLogDump());
+            check(G4::Lbl(id, "the last-resort trace gives the point -- one DeprojectScreenPositionToWorld, one "
+                              "LineTraceSingle, outHit (3000.5, 3100.5, 50.5), and one K2_TeleportTo on BP_Hero_C_0 "
+                              "to (3000.5, 3100.5, 141.0) where the hero then stands")
+                      .c_str(),
+                  FxCount(FxKind::Deproject) == 1 && FxCount(FxKind::Trace) == 1 && Landed(run), LandedStr(run));
+        }
+    }
+
+    // ── CUR.27: path 2 reflected with its HitResult and no ScreenPosition. Nothing is written where the coordinates
+    //    would go, and the scan still runs, so a hit the game's own function reports is still taken. ──
+    {
+        FxReset();
+        FxRetByte(FxKind::MousePos, 0);
+        const uintptr_t head = NoScreenPositionList(true);
+        FxPcFns(head);
+        FxHit(FxKind::Trace, G5::kChan);
+        FxClearRecorders();
+        const SehRun run = CentreCursor(G5::kChan);
+        const uintptr_t fn = FxFnIn(head, kHitScreenName);
+        const auto hs = FxCallsOf(FxKind::HitScreen);
+        const auto chans = G5::Channels(FxKind::HitScreen, kHsNoScreen.channel);
+        const std::string id = "CUR.27 no ScreenPosition on path 2, nothing waiting there";
+        check(G4::Lbl(id, "TeleportToCursor raises no exception and answers 0 from the centre (usedCenter written "
+                          "true)")
+                  .c_str(),
+              run.code == 0 && run.cur.rc == Wirbel::TP_OK && run.cur.usedCenter, SehStr(run));
+        check(G4::Lbl(id, "path 2 still scans: channel 3 first, then 0..9 without 3 -- 10 calls of that blob, all on "
+                          "PC_0")
+                  .c_str(),
+              fn != 0 && chans == G5::kOrder3 &&
+                  G5::Every(hs, [fn](const FxCall& c) { return c.instance == g_pc0 && c.ufunc == fn; }),
+              G5::IntsStr(chans) + " " + FxCallsStr(hs));
+        const auto noScreenBuf = [](const FxCall& c) {
+            return c.size == static_cast<uint32_t>(kHsNoScreen.parmsSize) &&
+                   FxRd<uint8_t>(c, kHsNoScreen.complex) == 1 &&
+                   FxZeroOutside(c, { G5::Keep(kHsNoScreen.channel, 1), G5::Keep(kHsNoScreen.complex, 1) });
+        };
+        check(G4::Lbl(id, "every call is a fresh 0x108-byte block carrying its TraceChannel and bTraceComplex 1, and "
+                          "nothing in the bytes a ScreenPosition would take")
+                  .c_str(),
+              !hs.empty() && G5::Every(hs, noScreenBuf), G5::FirstFail(hs, noScreenBuf));
+        check(G4::Lbl(id, "'I' \"...GetHitResultAtScreenPosition\" at the centre with hit=0 hitChannel=-1 once")
+                  .c_str(),
+              FxLogCount(Path2Miss(), 'I') == 1, FxLogDump());
+        check(G4::Lbl(id, "the last-resort trace gives the point -- one DeprojectScreenPositionToWorld, one "
+                          "LineTraceSingle, outHit (3000.5, 3100.5, 50.5), and one K2_TeleportTo on BP_Hero_C_0 to "
+                          "(3000.5, 3100.5, 141.0) where the hero then stands")
+                  .c_str(),
+              FxCount(FxKind::Deproject) == 1 && FxCount(FxKind::Trace) == 1 && Landed(run), LandedStr(run));
+    }
+    {
+        FxReset();
+        FxRetByte(FxKind::MousePos, 0);
+        FxPcFns(NoScreenPositionList(true));
+        FxHit(FxKind::HitScreen, G5::kChanZero);
+        FxClearRecorders();
+        const SehRun run = CentreCursor(G5::kChan);
+        const auto chans = G5::Channels(FxKind::HitScreen, kHsNoScreen.channel);
+        const std::string id = "CUR.27 no ScreenPosition on path 2, a hit there";
+        check(G4::Lbl(id, "no exception; path 2 asks 3 then 0 and stops at the hit on 0, and 'I' "
+                          "\"...GetHitResultAtScreenPosition\" at the centre with hit=1 hitChannel=0 once")
+                  .c_str(),
+              run.code == 0 && chans == G5::kOrder3To0 && FxLogCount(Path2Hit(G5::kChanZero), 'I') == 1,
+              SehStr(run) + " " + G5::IntsStr(chans) + FxLogDump());
+        check(G4::Lbl(id, "the jump takes path 2's point -- no deprojection, no LineTraceSingle, outHit (3000.5, "
+                          "3100.5, 50.5), and one K2_TeleportTo on BP_Hero_C_0 to (3000.5, 3100.5, 141.0) where the "
+                          "hero then stands")
+                  .c_str(),
+              FxCount(FxKind::Deproject) == 0 && FxCount(FxKind::Trace) == 0 && Landed(run), LandedStr(run));
+    }
+
+    // ── CUR.28: path 2 reflected with neither, as a parameter walk that lost both leaves it. A hit waits on channel 0,
+    //    so a call made without a HitResult answers true at once. ──
+    {
+        FxReset();
+        FxRetByte(FxKind::MousePos, 0);
+        FxPcFns(NoScreenPositionList(false));
+        FxHit(FxKind::HitScreen, G5::kChanZero);
+        FxHit(FxKind::Trace, G5::kChanZero);
+        FxClearRecorders();
+        const SehRun run = CentreCursor(G5::kChanZero);
+        const std::string id = "CUR.28 neither ScreenPosition nor HitResult on path 2, a hit waiting there";
+        check(G4::Lbl(id, "TeleportToCursor raises no exception and answers 0 from the centre (usedCenter written "
+                          "true)")
+                  .c_str(),
+              run.code == 0 && run.cur.rc == Wirbel::TP_OK && run.cur.usedCenter, SehStr(run));
+        check(G4::Lbl(id, "GetHitResultAtScreenPosition is never asked, and 'I' \"...GetHitResultAtScreenPosition\" "
+                          "at the centre with hit=0 hitChannel=-1 once")
+                  .c_str(),
+              FxCount(FxKind::HitScreen) == 0 && FxLogCount(Path2Miss(), 'I') == 1,
+              FxCallsStr(FxCalls()) + FxLogDump());
+        check(G4::Lbl(id, "the last-resort trace gives the point -- one DeprojectScreenPositionToWorld, one "
+                          "LineTraceSingle, outHit (3000.5, 3100.5, 50.5), and one K2_TeleportTo on BP_Hero_C_0 to "
+                          "(3000.5, 3100.5, 141.0) where the hero then stands")
+                  .c_str(),
+              FxCount(FxKind::Deproject) == 1 && FxCount(FxKind::Trace) == 1 && Landed(run), LandedStr(run));
+    }
+    FxReset();
+}
+
+}  // namespace H18
+
+static void Blocks_H18() {
+    blk("SLOTS+6 - the screen-hit path without its HitResult or ScreenPosition parameter");
+    H18::BlockCur();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("wirbel_teleport_test -- Teleport (Wirbel.cpp) over a fake world and a fake engine, in this process\n");
@@ -14547,6 +15893,9 @@ int main() {
     Blocks_H13();
     Blocks_H14();
     Blocks_H15();
+    Blocks_H16();
+    Blocks_H17();
+    Blocks_H18();
     Blocks_G5();
     FxCleanup();
     return FxExitCode();
