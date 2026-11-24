@@ -4214,8 +4214,8 @@ static void BlockCancel() {
         const auto& r = Detect();
         check("CANCEL.05 cancelled scan: no controller, and the note is N1, not 'Cancelled.' (FIND-3, pinned as today)",
               r.playerController == 0 && r.note == FxNote::kN1, FxResultStr(r));
-        check("CANCEL.05 cancelled scan: Aura's own abort WARN once, and no completed-scan line",
-              FxLogCount(kScanAborted, 'W', kScanCat) == 1 && FxScanLines().empty(), FxLogDump(0, kScanCat));
+        check("CANCEL.05 cancelled scan: Aura's own abort WARN once, then the walk's one summary line (0 found)",
+              FxLogCount(kScanAborted, 'W', kScanCat) == 1 && FxScanLines().size() == 1u, FxLogDump(0, kScanCat));
         check("CANCEL.05 cancelled scan: no Edel line", FxEdelLines().empty(), FxLinesStr(FxEdelLines()));
     }
 
