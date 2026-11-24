@@ -38,6 +38,7 @@
 static constexpr const char* kWalkCat = LOG_CAT;
 
 #include "../src/Serie.h"   // the fixture's name pool
+#include "../src/Tot.h"     // the per-command cancel flag the instance scan polls
 
 #include <windows.h>
 #include <stdarg.h>
