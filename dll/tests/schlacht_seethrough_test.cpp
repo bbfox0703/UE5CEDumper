@@ -1231,6 +1231,12 @@ static void FxReset(bool defaultWorld = true) {
     }
     waitFor([] { return !s_pendingRunning.load(); }, kResetWaitMs);
     Schlacht::StopWorker();
+    {
+        // The disable above un-hides the last scenario's record into the fake game; a scenario starts from a game no
+        // call has touched, so "never ran" stays readable.
+        std::lock_guard<std::mutex> lk(g_engMu);
+        g_gameHidden.clear();
+    }
     if (defaultWorld) FxWorldDefault();
     {
         std::lock_guard<std::mutex> lk(s_mutex);
@@ -4029,6 +4035,7 @@ static void Blocks_G4() {
         check("HO.07 INV.01: the tick's un-hide ran with s_mutex free", g4::AllMutexFree(unhides), g4::HidesStr(calls0));
     }
     {
+        // Adopted before the tick reads the record: the tick diffs it with the rest of the record.
         FxReset();
         const int32_t on = FxEnableSync();
         FxRecord(FxSet({A}));
@@ -4040,14 +4047,34 @@ static void Blocks_G4() {
         const size_t calls0 = FxCallMark();
         FxTickNow();
         FxOnTrace(nullptr);
+        check("HO.08 adopt during a trace: the tick diffs WallD with the record it joined -- not occluding, so un-hidden "
+              "at once and dropped, WallA kept",
+              on == 1 && FxCount(FxKind::Trace, calls0) >= 1 && FxHides(D, 0, calls0) == 1 &&
+                  FxHides(A, -1, calls0) == 0 && FxRecordNow() == FxSet({A}),
+              FxSetStr(FxRecordNow()) + g4::HidesStr(calls0));
+    }
+    {
+        // Adopted after the tick read the record, while its diff runs: the write-back keeps it (T9).
+        FxReset();
+        const int32_t on = FxEnableSync();
+        FxScene({ FxHitAt(kIdxWallA, g4::kNearT) });
+        // The diff's hide of WallA runs on main inside FxTickNow with neither of Schlacht's locks held.
+        FxOnHide([A, D](uintptr_t actor, bool hidden) {
+            if (actor == A && hidden) FxAdopt({D});
+        });
+        const size_t calls0 = FxCallMark();
+        FxTickNow();
+        FxOnHide(nullptr);
         const auto rec = FxRecordNow();
-        check("HO.08 adopt mid-tick (T9): an actor adopted during the tick's first trace survives its write-back -- "
-              "the record {WallA, WallD}",
-              on == 1 && FxCount(FxKind::Trace, calls0) >= 1 && rec == FxSet({A, D}) && FxStatus().hiddenCount == 2,
+        check("HO.08 adopt during the diff (T9): an actor adopted while the tick hid an occluder survives its "
+              "write-back -- the record {WallA, WallD}",
+              on == 1 && FxHides(A, 1, calls0) == 1 && FxHides(D, -1, calls0) == 0 && rec == FxSet({A, D}) &&
+                  FxStatus().hiddenCount == 2,
               FxSetStr(rec) + g4::HidesStr(calls0));
         const size_t calls1 = FxCallMark();
         FxTickNow();
-        check("HO.08 adopt mid-tick: the next tick (scene {WallA}) un-hides WallD and leaves WallA -- the record {WallA}",
+        check("HO.08 adopt during the diff: the next tick (scene {WallA}) un-hides WallD and leaves WallA -- the record "
+              "{WallA}",
               FxHides(D, 0, calls1) == 1 && FxHides(A, -1, calls1) == 0 && FxRecordNow() == FxSet({A}),
               g4::HidesStr(calls1) + " " + FxSetStr(FxRecordNow()));
     }
