@@ -13376,6 +13376,1152 @@ static void Blocks_H12() {
     H12::BlockLock();
 }
 
+// ══ H13: RESOLVE+5 -- a world whose every field has its own offset, a controller with no ControlRotation behind a
+// planted lead, and a rolled cached POV beside a failing rotation getter ══════════════════════════════════════════
+// Each scenario feeds one input the earlier blocks hold fixed. The default world puts several fields Wirbel reads at
+// one offset -- 0x30 and 0x38 each serve fields of several classes -- so an offset taken from the wrong field names the
+// same number and reads the same bytes. The unique-offsets world gives every field Wirbel reads an offset no other one
+// uses, and leaves the offsets the default world shares empty. A controller without ControlRotation is read here with
+// live bytes just before it, and a failing rotation getter sits beside a cached POV that has a roll. A check carries
+// the name of the block it extends and continues that block's numbering.
+
+namespace H13 {
+
+// ── numbers ──
+// The unique-offsets world. The fake engine finds a pawn's root, moves it and writes ControlRotation at FxOff's own
+// offsets, so the fields it touches keep them; every other field Wirbel reads moves to an offset of its own.
+namespace UoOff {
+constexpr int32_t kRootComponent = FxOff::kRootComponent;         // the pawn, inherited from Actor
+constexpr int32_t kAttachParent = FxOff::kAttachParent;           // the root, a CapsuleComponent
+constexpr int32_t kRelativeLocation = FxOff::kRelativeLocation;   // the root
+constexpr int32_t kControlRotation = FxOff::kControlRotation;     // the controller
+constexpr int32_t kOwningGameInstance = 0x58;                     // the world
+constexpr int32_t kLocalPlayers = 0x68;                           // the game instance: a TArray header
+constexpr int32_t kPlayerController = 0x80;                       // the local player
+constexpr int32_t kPawn = 0x88, kAckPawn = 0x90, kCameraManager = 0x98;   // the controller
+constexpr int32_t kPawnController = 0xA8, kCharacterMovement = 0xB0;      // the pawn
+constexpr int32_t kVelocity = 0xB8, kAcceleration = 0xD0;                 // the CMC, each 3 doubles
+constexpr int32_t kMaxWalkSpeed = 0xE8, kGravityScale = 0xEC, kJumpZVelocity = 0xF0;   // the CMC's float knobs
+constexpr int32_t kCustomMode = 0xF4, kMovementMode = 0xF5;               // the CMC: the decoy byte, then the mode
+constexpr int32_t kPendingViewTarget = 0x108, kViewTarget = 0x118, kCameraCache = 0x140;   // the camera manager
+constexpr int32_t kPov = 0x48;                                     // within the camera cache entry
+constexpr int32_t kPovLoc = 0x60, kPovRot = 0x78, kPovFov = 0xA0;  // within the view info
+}  // namespace UoOff
+
+constexpr int32_t kFloatBytes = static_cast<int32_t>(sizeof(float));   // a FloatProperty: the FOV and the knobs
+constexpr int32_t kModeBytes = 1;                                    // EMovementMode, a byte enum
+constexpr int32_t kUoWorldBytes = UoOff::kOwningGameInstance + kPtrBytes;
+constexpr int32_t kUoGiBytes = UoOff::kLocalPlayers + kTArrayBytes;
+constexpr int32_t kUoLpBytes = UoOff::kPlayerController + kPtrBytes;
+constexpr int32_t kUoPcBytes = UoOff::kCameraManager + kPtrBytes;
+constexpr int32_t kUoPawnBytes = UoOff::kCharacterMovement + kPtrBytes;
+constexpr int32_t kUoCmcBytes = UoOff::kMovementMode + kModeBytes;
+constexpr int32_t kUoMviBytes = UoOff::kPovFov + kFloatBytes;
+constexpr int32_t kUoCacheBytes = UoOff::kPov + kUoMviBytes;
+constexpr int32_t kUoCamBytes = UoOff::kCameraCache + kUoCacheBytes;
+static_assert(static_cast<size_t>(kUoCmcBytes) <= kObjBytes && static_cast<size_t>(kUoPawnBytes) <= kObjBytes &&
+                  static_cast<size_t>(kUoPcBytes) <= kObjBytes,
+              "every re-classed object's planted fields lie inside its own body, which a reset clears whole");
+static_assert(static_cast<size_t>(kUoCamBytes) <= kBigBytes, "the cached POV lies inside Cam_0's blob");
+static_assert(UoOff::kVelocity + kVecD <= UoOff::kAcceleration && UoOff::kAcceleration + kVecD <= UoOff::kMaxWalkSpeed,
+              "the CMC's two vectors are planted whole, neither over the other nor over the knobs");
+static_assert(UoOff::kControlRotation + kVecD <= UoOff::kPawn, "ControlRotation ends before the controller's pointers");
+
+// The cached POV's Locate offsets within the camera manager: the cache field's, plus POV's, plus each member's.
+constexpr int32_t kUoPovBase = UoOff::kCameraCache + UoOff::kPov;
+constexpr int32_t kUoLocOff = kUoPovBase + UoOff::kPovLoc;
+constexpr int32_t kUoRotOff = kUoPovBase + UoOff::kPovRot;
+constexpr int32_t kUoFovOff = kUoPovBase + UoOff::kPovFov;
+static_assert(kUoLocOff != FxG2::kLocOff && kUoRotOff != FxG2::kRotOff && kUoFovOff != FxG2::kFovOff,
+              "the Locate offsets are not the default camera's, so a fixed default cannot pass for a resolved one");
+
+// Every field Wirbel reads in the unique-offsets world, by the class or struct that reflects it.
+enum class UoOwner { World, GameInstance, LocalPlayer, Controller, Pawn, Root, Cmc, Camera, CacheEntry, ViewInfo };
+struct UoField {
+    UoOwner owner;
+    const char* name;
+    int32_t off;
+};
+constexpr UoField kUoFields[] = {
+    { UoOwner::World, "OwningGameInstance", UoOff::kOwningGameInstance },
+    { UoOwner::GameInstance, "LocalPlayers", UoOff::kLocalPlayers },
+    { UoOwner::LocalPlayer, "PlayerController", UoOff::kPlayerController },
+    { UoOwner::Controller, "Pawn", UoOff::kPawn },
+    { UoOwner::Controller, "AcknowledgedPawn", UoOff::kAckPawn },
+    { UoOwner::Controller, "ControlRotation", UoOff::kControlRotation },
+    { UoOwner::Controller, "PlayerCameraManager", UoOff::kCameraManager },
+    { UoOwner::Pawn, "RootComponent", UoOff::kRootComponent },
+    { UoOwner::Pawn, "Controller", UoOff::kPawnController },
+    { UoOwner::Pawn, "CharacterMovement", UoOff::kCharacterMovement },
+    { UoOwner::Root, "AttachParent", UoOff::kAttachParent },
+    { UoOwner::Root, "RelativeLocation", UoOff::kRelativeLocation },
+    { UoOwner::Cmc, "Velocity", UoOff::kVelocity },
+    { UoOwner::Cmc, "Acceleration", UoOff::kAcceleration },
+    { UoOwner::Cmc, "MaxWalkSpeed", UoOff::kMaxWalkSpeed },
+    { UoOwner::Cmc, "GravityScale", UoOff::kGravityScale },
+    { UoOwner::Cmc, "JumpZVelocity", UoOff::kJumpZVelocity },
+    { UoOwner::Cmc, "MovementMode", UoOff::kMovementMode },
+    { UoOwner::Camera, "ViewTarget", UoOff::kViewTarget },
+    { UoOwner::Camera, "CameraCachePrivate", UoOff::kCameraCache },
+    { UoOwner::CacheEntry, "POV", UoOff::kPov },
+    { UoOwner::ViewInfo, "Location", UoOff::kPovLoc },
+    { UoOwner::ViewInfo, "Rotation", UoOff::kPovRot },
+    { UoOwner::ViewInfo, "FOV", UoOff::kPovFov },
+};
+constexpr bool UoOffsetUnused(int32_t off, size_t skip = std::size(kUoFields)) {
+    for (size_t i = 0; i < std::size(kUoFields); ++i)
+        if (i != skip && kUoFields[i].off == off) return false;
+    return true;
+}
+constexpr bool UoOffsetsDistinct() {
+    for (size_t i = 0; i < std::size(kUoFields); ++i)
+        if (!UoOffsetUnused(kUoFields[i].off, i)) return false;
+    return true;
+}
+static_assert(UoOffsetsDistinct(), "every field Wirbel reads in the unique-offsets world has an offset of its own");
+static_assert(UoOffsetUnused(UoOff::kCustomMode) && UoOffsetUnused(UoOff::kPendingViewTarget),
+              "the decoys sit at offsets no read field uses, so a read that took one shows");
+
+// The lead planted just before PC_0: two floats in the 8 bytes from PC_0-1, which FxReset clears. A 12-byte float read
+// at offset -1 takes them, then 4 bytes of PC_0's own header that nothing writes.
+constexpr float kLeadPitch = 12.5f, kLeadYaw = 23.5f;
+constexpr double kLeadPyr[3] = { kLeadPitch, kLeadYaw, 0.0 };
+
+// ── fixture variants: built on first use from a block function, never at static init ──
+// The unique-offsets classes. Each is fresh, so no class walked before sees a field moved. A class whose functions a
+// recall or a POV read invokes derives from, or carries the default function list of, the class that declares them.
+struct UoClasses {
+    uintptr_t world = 0, gi = 0, lp = 0, pc = 0, pawn = 0, cmc = 0, cam = 0, cache = 0, mvi = 0;
+};
+static UoClasses s_uo;
+static const UoClasses& Uo() {
+    if (s_uo.world) return s_uo;
+    UoClasses u;
+    u.world = FxClass("WorldUnique", g_cObject, kUoWorldBytes);
+    FxSetProps(u.world, FxObjF("OwningGameInstance", UoOff::kOwningGameInstance));
+    u.gi = FxClass("GameInstanceUnique", g_cObject, kUoGiBytes);
+    FxSetProps(u.gi, FxField(kArrayProperty, "LocalPlayers", UoOff::kLocalPlayers, kTArrayBytes, 0));
+    u.lp = FxClass("LocalPlayerUnique", g_cObject, kUoLpBytes);
+    FxSetProps(u.lp, FxObjF("PlayerController", UoOff::kPlayerController));
+    u.pc = FxClass("PlayerControllerUnique", g_cObject, kUoPcBytes);
+    FxSetProps(u.pc, FxChainFields({ FxStructF("ControlRotation", UoOff::kControlRotation, kVecD, g_sRotator),
+                                     FxObjF("Pawn", UoOff::kPawn), FxObjF("AcknowledgedPawn", UoOff::kAckPawn),
+                                     FxObjF("PlayerCameraManager", UoOff::kCameraManager) }));
+    FxSetFns(u.pc, g_hdCtrl);
+    u.pawn = FxClass("BP_HeroUnique_C", g_cActor, kUoPawnBytes);
+    FxSetProps(u.pawn, FxChainFields({ FxObjF("Controller", UoOff::kPawnController),
+                                       FxObjF("CharacterMovement", UoOff::kCharacterMovement) }));
+    u.cmc = FxClass("CharacterMovementUnique", g_cActorComponent, kUoCmcBytes);
+    FxSetProps(u.cmc, FxChainFields({
+                          FxStructF("Velocity", UoOff::kVelocity, kVecD, g_sVector),
+                          FxStructF("Acceleration", UoOff::kAcceleration, kVecD, g_sVector),
+                          FxScalarF(kFloatProperty, "MaxWalkSpeed", UoOff::kMaxWalkSpeed, kFloatBytes),
+                          FxScalarF(kFloatProperty, "GravityScale", UoOff::kGravityScale, kFloatBytes),
+                          FxScalarF(kFloatProperty, "JumpZVelocity", UoOff::kJumpZVelocity, kFloatBytes),
+                          FxScalarF(kByteProperty, "CustomMovementMode", UoOff::kCustomMode, kModeBytes),
+                          FxScalarF(kByteProperty, "MovementMode", UoOff::kMovementMode, kModeBytes),
+                      }));
+    FxSetFns(u.cmc, g_hdMoveComp);
+    u.mvi = FxStruct("MinimalViewInfoUnique", kUoMviBytes,
+                     FxChainFields({ FxStructF("Location", UoOff::kPovLoc, kVecD, g_sVector),
+                                     FxStructF("Rotation", UoOff::kPovRot, kVecD, g_sRotator),
+                                     FxScalarF(kFloatProperty, "FOV", UoOff::kPovFov, kFloatBytes) }));
+    u.cache = FxStruct("CameraCacheEntryUnique", kUoCacheBytes, FxStructF("POV", UoOff::kPov, kUoMviBytes, u.mvi));
+    u.cam = FxClass("PlayerCameraManagerUnique", g_cObject, kUoCamBytes);
+    FxSetProps(u.cam, FxChainFields({
+                          FxStructF("PendingViewTarget", UoOff::kPendingViewTarget, kViewTargetBytes, g_sViewTarget),
+                          FxStructF("ViewTarget", UoOff::kViewTarget, kViewTargetBytes, g_sViewTarget),
+                          FxStructF("CameraCachePrivate", UoOff::kCameraCache, kUoCacheBytes, u.cache),
+                      }));
+    FxSetFns(u.cam, g_hdCam);
+    s_uo = u;
+    return s_uo;
+}
+static uintptr_t UoClassOf(UoOwner o) {
+    const UoClasses& u = Uo();
+    switch (o) {
+    case UoOwner::World: return u.world;
+    case UoOwner::GameInstance: return u.gi;
+    case UoOwner::LocalPlayer: return u.lp;
+    case UoOwner::Controller: return u.pc;
+    case UoOwner::Pawn: return u.pawn;
+    case UoOwner::Root: return g_cCapsule;
+    case UoOwner::Cmc: return u.cmc;
+    case UoOwner::Camera: return u.cam;
+    case UoOwner::CacheEntry: return u.cache;
+    case UoOwner::ViewInfo: return u.mvi;
+    }
+    return 0;
+}
+
+// After FxReset: GWorld's Map_A and every object its chain reaches, each body cleared and planted at the unique
+// offsets. Root_0 keeps what the reset planted: CapsuleComponent already reflects its fields where the fake engine
+// moves a root.
+static void PlantUoWorld() {
+    const UoClasses& u = Uo();
+    FxClearBody(g_worldA);
+    FxSetClass(g_worldA, u.world);
+    FxSetPtr(g_worldA, UoOff::kOwningGameInstance, g_gi0);
+    FxClearBody(g_gi0);
+    FxSetClass(g_gi0, u.gi);
+    FxPutTArray(g_gi0, UoOff::kLocalPlayers, FxAddr(g_lpArr), 1, 1);
+    FxClearBody(g_lp0);
+    FxSetClass(g_lp0, u.lp);
+    FxSetPtr(g_lp0, UoOff::kPlayerController, g_pc0);
+
+    FxClearBody(g_pc0);
+    FxSetClass(g_pc0, u.pc);
+    FxSetVecAt(g_pc0 + UoOff::kControlRotation, kVecD, kRot);
+    FxSetPtr(g_pc0, UoOff::kPawn, g_hero0);
+    FxSetPtr(g_pc0, UoOff::kAckPawn, g_npc0);   // a pawn of its own, so a read of the wrong pawn field shows
+    FxSetPtr(g_pc0, UoOff::kCameraManager, g_cam0);
+
+    FxClearBody(g_hero0);
+    FxSetClass(g_hero0, u.pawn);
+    FxSetPtr(g_hero0, UoOff::kRootComponent, g_root0);
+    FxSetPtr(g_hero0, UoOff::kPawnController, g_pc0);
+    FxSetPtr(g_hero0, UoOff::kCharacterMovement, g_cmc0);
+
+    FxClearBody(g_cmc0);
+    FxSetClass(g_cmc0, u.cmc);
+    FxSetVecAt(g_cmc0 + UoOff::kVelocity, kVecD, kVel);
+    FxSetVecAt(g_cmc0 + UoOff::kAcceleration, kVecD, kAcc);
+    memcpy(FxBytes(g_cmc0 + UoOff::kMaxWalkSpeed), &kWalkSpeedValue, sizeof kWalkSpeedValue);
+    memcpy(FxBytes(g_cmc0 + UoOff::kGravityScale), &kGravityValue, sizeof kGravityValue);
+    memcpy(FxBytes(g_cmc0 + UoOff::kJumpZVelocity), &kJumpZValue, sizeof kJumpZValue);
+    FxBytes(g_cmc0)[UoOff::kMovementMode] = kModeWalking;
+
+    // The view target is the pawn, so the visible-actor diagnostic stays silent; the pending one is not.
+    FxClearBody(g_cam0);
+    FxSetClass(g_cam0, u.cam);
+    FxSetPtr(g_cam0, UoOff::kPendingViewTarget, g_enemy0);
+    FxSetPtr(g_cam0, UoOff::kViewTarget, g_hero0);
+    FxSetVecAt(g_cam0 + kUoLocOff, kVecD, kRawLoc);
+    FxSetVecAt(g_cam0 + kUoRotOff, kVecD, kRawRot);
+    const float fov = static_cast<float>(kRawFov);
+    memcpy(FxBytes(g_cam0 + kUoFovOff), &fov, sizeof fov);
+}
+
+// The two lead floats at PC_0-1, inside the bytes FxReset clears.
+static void PlantPcLead() {
+    const float lead[2] = { kLeadPitch, kLeadYaw };
+    static_assert(sizeof lead == static_cast<size_t>(kPtrBytes), "the lead is exactly the bytes FxReset clears");
+    memcpy(FxBytes(g_pc0) - kPcTrapLead, lead, sizeof lead);
+}
+
+// ══ FIX.07: the unique-offsets world is what its table says ══════════════════════════════════════════════════════
+static void FixtureUnique() {
+    FxReset();
+    PlantUoWorld();
+    FxClearRecorders();
+    std::string wrong;
+    for (const UoField& f : kUoFields) {
+        const int32_t got = Ubel::FindFieldOffset(UoClassOf(f.owner), f.name);
+        if (got != f.off)
+            wrong += FxFmt(" %s=0x%X (want 0x%X)", f.name, static_cast<unsigned>(got), static_cast<unsigned>(f.off));
+    }
+    check(FxFmt("FIX.07 unique offsets: the fixture -- each of the %zu fields Wirbel reads resolves on its class at "
+                "the offset the table gives it",
+                std::size(kUoFields))
+              .c_str(),
+          wrong.empty(), wrong);
+    const bool sharedEmpty =
+        FxGetPtr(g_worldA, FxOff::kOwningGameInstance) == 0 && FxGetPtr(g_lp0, FxOff::kPlayerController) == 0 &&
+        FxGetPtr(g_pc0, FxOff::kPawn) == 0 && FxGetPtr(g_hero0, FxOff::kPawnController) == 0 &&
+        FxGetPtr(g_hero0, FxOff::kCharacterMovement) == 0 &&
+        FxEq3(FxVecAt(g_cmc0 + FxOff::kVelocity, kVecD), G4::kZero3);
+    check("FIX.07 unique offsets: the fixture -- the offsets the default world shares hold nothing in the re-classed "
+          "objects (Map_A+0x30, LP_0+0x30, PC_0+0x30, Hero_0+0x30 and +0x38, CMC_0+0x30)",
+          sharedEmpty,
+          FxFmt("world %s lp %s pc %s hero %s / %s cmc ", FxHex(FxGetPtr(g_worldA, FxOff::kOwningGameInstance)).c_str(),
+                FxHex(FxGetPtr(g_lp0, FxOff::kPlayerController)).c_str(), FxHex(FxGetPtr(g_pc0, FxOff::kPawn)).c_str(),
+                FxHex(FxGetPtr(g_hero0, FxOff::kPawnController)).c_str(),
+                FxHex(FxGetPtr(g_hero0, FxOff::kCharacterMovement)).c_str()) +
+              FxArrStr(FxVecAt(g_cmc0 + FxOff::kVelocity, kVecD)));
+    check("FIX.07 unique offsets: the fixture -- CMC_0 holds kVel at 0xB8 and kAcc at 0xD0, Cam_0 kRawLoc at 0x1E8",
+          FxEq3(FxVecAt(g_cmc0 + UoOff::kVelocity, kVecD), kVel) &&
+              FxEq3(FxVecAt(g_cmc0 + UoOff::kAcceleration, kVecD), kAcc) &&
+              FxEq3(FxVecAt(g_cam0 + kUoLocOff, kVecD), kRawLoc),
+          FxArrStr(FxVecAt(g_cmc0 + UoOff::kVelocity, kVecD)) + " " +
+              FxArrStr(FxVecAt(g_cmc0 + UoOff::kAcceleration, kVecD)) + " " +
+              FxArrStr(FxVecAt(g_cam0 + kUoLocOff, kVecD)));
+}
+
+// ══ TRN.08: the trainer bakes each field's own offset ════════════════════════════════════════════════════════════
+static void TrainerUnique() {
+    FxReset();
+    PlantUoWorld();
+    FxClearRecorders();
+    Wirbel::TrainerOffsets t = G1::JunkTrainer();
+    const int32_t rc = Wirbel::GetTrainerOffsets(t);
+    const std::string got = FxS(rc) + " " + G1::TrainerStr(t);
+    check("TRN.08 unique offsets: answers 0 with five hops", rc == Wirbel::TP_OK && t.ChainCount == G1::kChainHops,
+          got);
+    check("TRN.08 unique offsets: hop 0 is (OwningGameInstance 0x58), the world's own field",
+          G1::HopIs(t.Chain[0], "OwningGameInstance", UoOff::kOwningGameInstance), got);
+    check("TRN.08 unique offsets: hop 1 is (LocalPlayers 0x68), the game instance's own field -- not ControlRotation's "
+          "0x38",
+          G1::HopIs(t.Chain[1], "LocalPlayers", UoOff::kLocalPlayers), got);
+    check("TRN.08 unique offsets: hop 2 is (LocalPlayers[0] 0)", G1::HopIs(t.Chain[2], "LocalPlayers[0]", 0), got);
+    check("TRN.08 unique offsets: hop 3 is (PlayerController 0x80), the local player's own field -- not "
+          "AttachParent's 0x30",
+          G1::HopIs(t.Chain[3], "PlayerController", UoOff::kPlayerController), got);
+    check("TRN.08 unique offsets: the pawn hop is (Pawn 0x88), the controller's own field",
+          G1::HopIs(t.Chain[G1::kPawnHop], "Pawn", UoOff::kPawn), got);
+    check("TRN.08 unique offsets: PawnToRoot 0x28, RootToRelLoc 0x40, FVectorWidth 24",
+          t.PawnToRoot == UoOff::kRootComponent && t.RootToRelLoc == UoOff::kRelativeLocation &&
+              t.FVectorWidth == kVecD,
+          got);
+    check("TRN.08 unique offsets: CtrlRotOff 0x38 and CtrlRotSize 24, ControlRotation's own -- not LocalPlayers' 0x68",
+          t.CtrlRotOff == UoOff::kControlRotation && t.CtrlRotSize == kVecD, got);
+    check("TRN.08 unique offsets: PawnToController 0xA8, the pawn's Controller -- not the local player's "
+          "PlayerController 0x80",
+          t.PawnToController == UoOff::kPawnController, got);
+    check("TRN.08 unique offsets: PawnToCmc 0xB0, the pawn's CharacterMovement -- not LocalPlayers' 0x68",
+          t.PawnToCmc == UoOff::kCharacterMovement, got);
+    check("TRN.08 unique offsets: the knobs resolve off CMC_0 -- MaxWalkSpeed 0xE8, GravityScale 0xEC, JumpZVelocity "
+          "0xF0, MovementMode 0xF5",
+          t.WalkSpeedOff == UoOff::kMaxWalkSpeed && t.GravityOff == UoOff::kGravityScale &&
+              t.JumpOff == UoOff::kJumpZVelocity && t.MoveModeOff == UoOff::kMovementMode,
+          got);
+    check("TRN.08 unique offsets: Velocity 0xB8, 24 bytes",
+          t.VelocityOff == UoOff::kVelocity && t.VelocitySize == kVecD, got);
+}
+
+// ══ POSE.15: the pose comes from RelativeLocation and ControlRotation where they alone sit ═══════════════════════
+static void PoseUnique() {
+    FxReset();
+    PlantUoWorld();
+    FxClearRecorders();
+    const G1::PoseRead r = G1::ReadPose();
+    check("POSE.15 unique offsets: GetPose answers 0 with kStart from Root_0+0x40 and kRot from PC_0+0x38",
+          r.rc == Wirbel::TP_OK && FxPoseEq(r.p, kStartPose), G1::OutStr(r));
+    check("POSE.15 unique offsets: ... *src 0, *pr false, \"Map_A\" and no engine call",
+          r.src == G4::kSourceRaw && !r.pr && G1::MapIs(r.map, sizeof r.map, G1::kMapA) && FxCountAll() == 0,
+          G1::OutStr(r) + " " + FxCallsStr(FxCalls()));
+    check("POSE.15 unique offsets: ... one INFO \"local PC <PC_0> via GWorld chain\" and no instance-scan line -- the "
+          "chain ran through World+0x58, GameInstance+0x68 and LocalPlayer+0x80",
+          FxLogCount(FxLine::Chain(g_pc0), 'I') == 1 && G1::TeleportLinesWith(G1::kViaScan) == 0, FxLogDump());
+}
+
+// ══ POSE.15 / MVS.07: the movement read takes Velocity and Acceleration at their own offsets ═════════════════════
+static void MovementUnique() {
+    FxReset();
+    PlantUoWorld();
+    FxClearRecorders();
+    const G1::MoveRead r = G1::ReadMove();
+    const Wirbel::MovementState& m = r.m;
+    check("POSE.15 unique offsets, movement read: answers 0 with kStart / kRot; the location owner is Root_0 at 0x40 "
+          "and the rotation owner PC_0 at 0x38",
+          r.rc == Wirbel::TP_OK && FxPoseEq(r.p, kStartPose) && m.LocOwnerAddr == g_root0 &&
+              m.LocFieldOffset == UoOff::kRelativeLocation && m.RotOwnerAddr == g_pc0 &&
+              m.RotFieldOffset == UoOff::kControlRotation,
+          H3::MoveOut(r));
+    check("MVS.07 unique offsets: PawnAddr is Hero_0, PC_0's Pawn at 0x88", m.PawnAddr == g_hero0, H3::MoveOut(r));
+    check("MVS.07 unique offsets: HasMovement, Velocity kVel (0, 300, 400) and Speed exactly 500, read at CMC_0+0xB8 "
+          "-- CMC_0 being Hero_0's CharacterMovement at 0xB0",
+          m.HasMovement && FxEq3(G1::VelOf(m), kVel) && m.Speed == kSpeed, H3::MoveOut(r));
+    check("MVS.07 unique offsets: the Velocity owner is CMC_0 at 0xB8, Velocity's own offset -- not AttachParent's "
+          "0x30",
+          m.VelOwnerAddr == g_cmc0 && m.VelFieldOffset == UoOff::kVelocity, H3::MoveOut(r));
+    check("MVS.07 unique offsets: Acceleration kAcc, owned by CMC_0 at 0xD0",
+          FxEq3(G1::AccOf(m), kAcc) && m.AccOwnerAddr == g_cmc0 && m.AccFieldOffset == UoOff::kAcceleration,
+          H3::MoveOut(r));
+}
+
+// ══ POV.22: the camera manager, its cached POV and the pawn delta, each at its own offset ═════════════════════════
+static void PovUnique() {
+    for (const bool responsive : { true, false }) {
+        FxReset();
+        PlantUoWorld();
+        FxResponsive(responsive);
+        FxClearRecorders();
+        const FxG2::PovRun r = FxG2::RunPov();
+        const char* path = responsive ? "invoke" : "raw";
+        const std::string got = FxG2::RcStr(r.rc) + " " + FxG2::PovStr(r.p);
+        if (responsive) {
+            check("POV.22 unique offsets, invoke path: GetPov answers 0 with the getters' kCamLoc / kCamRot and 87.5, "
+                  "Source 0",
+                  r.rc == Wirbel::TP_OK && r.p.Source == 0 && FxG2::CamIs(r.p, kCamLoc, kCamRot) &&
+                      r.p.Fov == kFovGetter,
+                  got + FxLogDump());
+            check("POV.22 unique offsets, invoke path: the three getters ran once each, on Cam_0 -- PC_0's "
+                  "PlayerCameraManager at 0x98",
+                  FxKindsAre({ FxKind::CamLoc, FxKind::CamRot, FxKind::Fov }) &&
+                      FxCountOn(FxKind::CamLoc, g_cam0) == 1 && FxCountOn(FxKind::CamRot, g_cam0) == 1 &&
+                      FxCountOn(FxKind::Fov, g_cam0) == 1,
+                  FxCallsStr(FxCalls()));
+        } else {
+            check("POV.22 unique offsets, raw path: GetPov answers 0 with the cached kRawLoc / kRawRot and 75.5 read "
+                  "at Cam_0+0x1E8 / +0x200 / +0x228, Source 1, no engine call",
+                  r.rc == Wirbel::TP_OK && r.p.Source == 1 && FxG2::CamIs(r.p, kRawLoc, kRawRot) &&
+                      r.p.Fov == kRawFov && FxCountAll() == 0,
+                  got + " " + FxCallsStr(FxCalls()));
+        }
+        check(FxFmt("POV.22 unique offsets, %s path: the Locate offsets are 0x1E8 / 0x200 / 0x228 on owner Cam_0 -- "
+                    "CameraCachePrivate 0x140 + POV 0x48 + each member's own",
+                    path)
+                  .c_str(),
+              FxG2::OffsetsAre(r.p, kUoLocOff, kUoRotOff, kUoFovOff) && r.p.CamOwnerAddr == g_cam0, got);
+        check(FxFmt("POV.22 unique offsets, %s path: HasPawn with Pawn kStart, Hero_0's root RelativeLocation", path)
+                  .c_str(),
+              r.p.HasPawn && FxPoseIs(r.p.Pawn, kStart), got);
+    }
+}
+
+// ══ RES.11: a recall resolves, moves, turns and settles through each field's own offset ══════════════════════════
+static void RecallUnique() {
+    using K = FxKind;
+    FxReset();
+    PlantUoWorld();
+    FxClearRecorders();
+    const G3Out o = G3Recall(/*hasRot=*/true);
+    const FxCall rot = FxNth(K::SetCtrlRot);
+    check("RES.11 unique offsets, recall: RecallExplicit answers 0 at tier 1, and Root_0's RelativeLocation (+0x40) "
+          "ends on kDest",
+          o.rc == Wirbel::TP_OK && o.tier == G4::kTierInvoke && FxEq3(FxPos(), kDestXyz),
+          G3Got(o) + " pos " + FxArrStr(FxPos()));
+    check("RES.11 unique offsets, recall: K2_SetActorLocation and K2_GetActorLocation on Hero_0, SetControlRotation "
+          "and StopMovement on PC_0, StopMovementImmediately on CMC_0 (Hero_0+0xB0), in that order",
+          G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::SetCtrlRot, g_pc0 },
+                       { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }),
+          FxCallsStr(FxCalls()));
+    check("RES.11 unique offsets, recall: NewLocation kDest, NewRotation kDestPyr, and PC_0's ControlRotation (+0x38) "
+          "holds what SetControlRotation stored",
+          FxEq3(G4::FirstNewLocation(0), kDestXyz) && FxEq3(FxVec(rot, G4::kNewRotationAt, kVecD), kDestPyr) &&
+              FxEq3(FxCtrlRot(), g3::kDestPyrStored),
+          FxArrStr(G4::FirstNewLocation(0)) + " " + FxArrStr(FxVec(rot, G4::kNewRotationAt, kVecD)) + " now " +
+              FxArrStr(FxCtrlRot()));
+    check("RES.11 unique offsets, recall: one GWorld-chain line, one post-move line cur=kDest attached=0, no WARN and "
+          "no diag line -- the camera's ViewTarget at 0x118 is the pawn",
+          FxLogCount(FxLine::Chain(g_pc0), 'I') == 1 &&
+              FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, false), 'I') == 1 && FxTeleportLines('W') == 0 &&
+              FxLogPrefix(FxText::kDiagPrefix) == 0,
+          FxLogDump());
+}
+
+// ══ TRN.09: a controller with no ControlRotation bakes none ═══════════════════════════════════════════════════════
+static void TrainerNoRot() {
+    FxReset();
+    FxSetClass(g_pc0, g_cPcNoRot);
+    FxClearRecorders();
+    Wirbel::TrainerOffsets t = G1::JunkTrainer();
+    const int32_t rc = Wirbel::GetTrainerOffsets(t);
+    const std::string got = FxS(rc) + " " + G1::TrainerStr(t);
+    check("TRN.09 no ControlRotation: PC_0 as a PcNoRot answers 0 with five hops",
+          rc == Wirbel::TP_OK && t.ChainCount == G1::kChainHops, got);
+    check("TRN.09 no ControlRotation: the hops are the default chain's -- (OwningGameInstance 0x30) (LocalPlayers "
+          "0x38) (LocalPlayers[0] 0) (PlayerController 0x30) (Pawn 0x30)",
+          G1::HopIs(t.Chain[0], "OwningGameInstance", FxOff::kOwningGameInstance) &&
+              G1::HopIs(t.Chain[1], "LocalPlayers", FxOff::kLocalPlayers) &&
+              G1::HopIs(t.Chain[2], "LocalPlayers[0]", 0) &&
+              G1::HopIs(t.Chain[3], "PlayerController", FxOff::kPlayerController) &&
+              G1::HopIs(t.Chain[G1::kPawnHop], "Pawn", FxOff::kPawn),
+          got);
+    check("TRN.09 no ControlRotation: CtrlRotOff -1 and CtrlRotSize 0",
+          t.CtrlRotOff == FxG2::kUnresolved && t.CtrlRotSize == 0, got);
+}
+
+// ══ RES.12: a controller with no ControlRotation is never read at offset -1 ══════════════════════════════════════
+static void NoRotLead() {
+    FxReset();
+    FxSetClass(g_pc0, g_cPcNoRot);
+    PlantPcLead();
+    FxClearRecorders();
+    {
+        const std::array<double, 3> lead = FxVecAt(g_pc0 - kPcTrapLead, kVecF);
+        check("RES.12 no ControlRotation, a live lead: the fixture -- 12 float bytes read at PC_0-1 decode to "
+              "(12.5, 23.5, 0)",
+              FxEq3(lead, kLeadPyr), FxArrStr(lead));
+        const G1::PoseRead r = G1::ReadPose();
+        check("RES.12 no ControlRotation, a live lead: GetPose answers 0 with kStart and Pitch / Yaw / Roll exactly 0",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kStart), G1::OutStr(r));
+    }
+
+    FxReset();
+    FxSetClass(g_pc0, g_cPcNoRot);
+    PlantPcLead();
+    FxClearRecorders();
+    {
+        const G1::MoveRead r = G1::ReadMove();
+        check("RES.12 no ControlRotation, a live lead: GetPoseAndMovement answers 0 with kStart and Pitch / Yaw / Roll "
+              "exactly 0, and no rotation owner (0, offset -1)",
+              r.rc == Wirbel::TP_OK && FxPoseIs(r.p, kStart) && r.m.RotOwnerAddr == 0 &&
+                  r.m.RotFieldOffset == FxG2::kUnresolved,
+              H3::MoveOut(r));
+    }
+}
+
+// ══ POV.23: a failed rotation getter backfills the cached rotation whole, Roll included ═════════════════════════
+static void PovRollBackfill() {
+    FxReset();
+    FxSetVecAt(g_cam0 + FxOff::kPovBase + FxOff::kPovRot, kVecD, H3::kRolledRawRot);
+    FxRcs(FxKind::CamRot, { FxG2::kInvokeFail });
+    FxClearRecorders();
+    const FxG2::PovRun r = FxG2::RunPov();
+    const std::string got = FxG2::RcStr(r.rc) + " " + FxG2::PovStr(r.p);
+    check("POV.23 roll, backfill: GetCameraRotation fails, and Cam is the getter's kCamLoc with the cached "
+          "(-6.5, 46.5, 13.5), Roll included, Source 0",
+          r.rc == Wirbel::TP_OK && FxG2::CamIs(r.p, kCamLoc, H3::kRolledRawRot) && r.p.Source == 0, got);
+    check("POV.23 roll, backfill: GetFOVAngle still ran (Fov 87.5), and the summary line prints rot=(-6.5, 46.5, 13.5)",
+          r.p.Fov == kFovGetter && FxCount(FxKind::Fov) == 1 &&
+              FxLogCount(FxG2::PovLine(kCamLoc, H3::kRolledRawRot, kFovGetter, true, false), 'I') == 1,
+          got + FxLogDump());
+}
+
+}  // namespace H13
+
+static void Blocks_H13() {
+    blk("RESOLVE+5 - a world whose every field has its own offset, the controller rotation guard and the rolled "
+        "raw camera");
+    H13::FixtureUnique();
+    H13::TrainerUnique();
+    H13::PoseUnique();
+    H13::MovementUnique();
+    H13::PovUnique();
+    H13::RecallUnique();
+    H13::TrainerNoRot();
+    H13::NoRotLead();
+    H13::PovRollBackfill();
+    // The unique-offsets world re-classes default objects: put every one back before the next group runs.
+    FxReset();
+}
+
+// ══ H14: MOVE+5 — MOVE / COMP / ROT / DEEP: the buffer each move invoke sizes, the rotation pack and the deep-force
+// match radius ═══════════════════════════════════════════════════════════════════════════════════════════════════════
+// G3's fixture lets a near reading agree with Wirbel.cpp's own in four more places. Every K2_GetActorLocation reads a
+// ParmsSize equal to its return's end, and every component setter one at or past the end of its own chain, so a block
+// sized from the tail alone is the very block the chain asks for. The only SetControlRotation names its parameter
+// NewRotation, so its pack never fails. And wherever a check counts what the deep force rewrote, no vector it judges
+// lies off the old position in Z alone, so the Z term of the match is never weighed by itself. Each scenario changes
+// that one input, so only the reading Wirbel.cpp makes passes. A check carries the name of the block it extends and
+// continues that block's numbering.
+
+namespace H14 {
+
+// ── numbers ──
+// K2_GetActorLocation's one parameter: its FVector ReturnValue, at the start of the block.
+constexpr int32_t kGetterParms = 1;
+constexpr int32_t kGetterRetAt = 0;
+constexpr uint32_t kGetterChainEnd = static_cast<uint32_t>(kGetterRetAt + kVecD);   // where its own chain ends
+// [UE-OVERRIDE-411] Two tail misreads of that getter, its chain intact: a read one field late takes its
+// ReturnValueOffset for ParmsSize, and an unshifted 4.11-4.17 read takes its NumParms.
+constexpr int32_t kRetOffAsParms = kGetterRetAt;
+constexpr int32_t kNumParmsAsParms = kGetterParms;
+static_assert(kRetOffAsParms < static_cast<int32_t>(kGetterChainEnd) &&
+                  kNumParmsAsParms < static_cast<int32_t>(kGetterChainEnd),
+              "either misread ParmsSize ends the block before the getter's return does");
+// The component setters' parameters, none of them a return: NewLocation, bSweep, SweepHitResult, bTeleport. The
+// unshifted 4.11-4.17 read takes that count for ParmsSize; each chain still ends one byte past bTeleport's offset.
+constexpr int32_t kCompSetterParms = 4;
+constexpr FxSetLocLayout kSalNumParmsAsParms{ kSal5.loc,      kSal5.sweep, kSal5.sweepHit,   kSal5.hitBytes,
+                                              kSal5.teleport, kSal5.ret,   kCompSetterParms, kSal5.vec };
+constexpr uint32_t kCompChainEnd = static_cast<uint32_t>(kSal5.teleport + g3::kBoolBytes);
+static_assert(kCompSetterParms < kSal5.loc + kSal5.vec && kSal5.sweepHit + kSal5.hitBytes <= kSal5.teleport,
+              "a block of NumParms bytes cannot hold NewLocation, and bTeleport is the last member of the chain");
+// SetControlRotation's one parameter under a name Wirbel does not pack: it packs NewRotation only.
+constexpr const char* kRotationParam = "Rotation";
+constexpr int32_t kSetRotParms = 1;
+// DeepForceWorldPos's match radius (10 uu), squared as it compares.
+constexpr double kMatchRadius = 10.0;
+constexpr double kMatchRadius2 = kMatchRadius * kMatchRadius;
+// Copies of the old position moved along Z alone, each past the radius: twice it below, twice it above, and a floor
+// (1000 uu) below. X and Y are the old position's own.
+constexpr double kZBelow = -2.0 * kMatchRadius, kZAbove = 2.0 * kMatchRadius, kZFloorBelow = -1000.0;
+static_assert(kZBelow * kZBelow > kMatchRadius2 && kZAbove * kZAbove > kMatchRadius2 &&
+                  kZFloorBelow * kZFloorBelow > kMatchRadius2,
+              "every Z-only copy lies past the match radius");
+constexpr int32_t kBelowCopyAt = 0x200, kAboveCopyAt = 0x260, kFloorCopyAt = 0x2C0;
+static_assert(kBelowCopyAt >= FxOff::kC2W + kVecD && kAboveCopyAt >= kBelowCopyAt + kVecD &&
+                  kFloorCopyAt >= kAboveCopyAt + kVecD && kFloorCopyAt + kVecD <= kDeepWindow,
+              "the Z-only copies overlap neither each other nor the ComponentToWorld copy, and lie inside the window");
+// Where a freeze's pawn stands: off the target in Z alone, past the reached radius, below the target and above it.
+constexpr double kJustBelowTarget[3] = { kDest.X, kDest.Y, kDest.Z - g3::kJustPastEps };
+constexpr double kAboveTarget[3] = { kDest.X, kDest.Y, kDest.Z + H1::kVerticalGap };
+static_assert(g3::kJustPastEps > g3::kReachedEps && H1::kVerticalGap > g3::kReachedEps,
+              "a pawn this far off the target in Z alone opens the freeze");
+static_assert(g3::kJustPastEps * g3::kJustPastEps > kMatchRadius2 &&
+                  H1::kVerticalGap * H1::kVerticalGap > kMatchRadius2,
+              "the target lies further from each start than the match radius, so the RelativeLocation the freeze "
+              "raw-writes is no stale copy of the old position");
+
+// ── fixture variants: built on first use from a block function, never at static init ──
+// AActor's K2_GetActorLocation with its return intact and the tail's ParmsSize given, beside a default
+// K2_SetActorLocation. Memoized by FxList under `key`, one key per ParmsSize.
+static uintptr_t ActorGetterTailList(const char* key, int32_t parmsSize) {
+    return FxList(key, [parmsSize] {
+        const uintptr_t rv = FxField(kStructProperty, "ReturnValue", kGetterRetAt, kVecD, kRetStruct, 0, g_sVector);
+        const uintptr_t getLoc = FxFunc("K2_GetActorLocation", g_cActor, rv, kGetterParms, parmsSize, kGetterRetAt);
+        FxFnSpec s;
+        s.kind = FxKind::GetLoc;
+        s.loc = kGetterRetAt;
+        s.vec = kVecD;
+        FxRegister(getLoc, s);
+        return std::vector<uintptr_t>{
+            getLoc,
+            FxFnSetLoc(FxKind::SetActorLoc, "K2_SetActorLocation", g_cActor, kSal5, true),
+        };
+    });
+}
+// USceneComponent's two location setters with the tail's ParmsSize their NumParms, their chains intact. Memoized by
+// FxList.
+static uintptr_t SceneNumParmsAsParmsList() {
+    return FxList("h14/scene/numparms-as-parms", [] {
+        return std::vector<uintptr_t>{
+            FxFnSetLoc(FxKind::SetWorldLoc, "K2_SetWorldLocation", g_cSceneComponent, kSalNumParmsAsParms, false),
+            FxFnSetLoc(FxKind::SetRelLoc, "K2_SetRelativeLocation", g_cSceneComponent, kSalNumParmsAsParms, false),
+        };
+    });
+}
+// AController's SetControlRotation reflected and sized, its one parameter named "Rotation", beside StopMovement, at
+// either width. The fake engine reads the rotation at its registered offset whatever its name, so a call made without
+// packing it sets the facing to (0, 0, 0) -- what a real engine does with an all-zero block. Memoized by FxList.
+static uintptr_t CtrlRotationParamList(bool ue4) {
+    return FxList(ue4 ? "h14/ctrl/rotation-param/ue4" : "h14/ctrl/rotation-param", [ue4] {
+        const uintptr_t owner = ue4 ? g_cControllerF : g_cController;
+        const int32_t w = ue4 ? kVecF : kVecD;
+        const uintptr_t p = FxField(kStructProperty, kRotationParam, g3::kNewRotationAt, w, kParm, 0,
+                                    ue4 ? g_sRotatorF : g_sRotator);
+        const uintptr_t setRot = FxFunc("SetControlRotation", owner, p, kSetRotParms, w, kNoReturn);
+        FxFnSpec s;
+        s.kind = FxKind::SetCtrlRot;
+        s.loc = g3::kNewRotationAt;
+        s.vec = w;
+        FxRegister(setRot, s);
+        return std::vector<uintptr_t>{ setRot, FxFnNoParams(FxKind::StopMove, "StopMovement", owner) };
+    });
+}
+
+// ── readers ──
+static std::string FnTailStr(bool found, const FunctionInfo& fi) {
+    return FxFmt("found=%d parms=0x%X buf=0x%X", found ? 1 : 0, static_cast<unsigned>(fi.parmsSize),
+                 static_cast<unsigned>(Ubel::ParamBufferSize(fi)));
+}
+
+// ══ MOVE ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+// MOVE.22: the verification read hands K2_GetActorLocation a block that reaches its return's end even when the tail's
+// ParmsSize stops short of it. ProcessEvent writes the whole FVector return, so a block sized from ParmsSize alone is
+// written past in the game's heap; and the read comes back empty, so an attached pawn that landed is judged from its
+// parent-relative RelativeLocation and pushed into a freeze it does not need.
+static void MoveGetterBuffer() {
+    using K = FxKind;
+    struct Row {
+        const char* key;
+        const char* tag;
+        int32_t parmsSize;
+    };
+    const Row rows[] = {
+        { "h14/actor/getter-retoff-as-parms", "ParmsSize 0 (its ReturnValueOffset)", kRetOffAsParms },
+        { "h14/actor/getter-numparms-as-parms", "ParmsSize 1 (its NumParms)", kNumParmsAsParms },
+    };
+    for (const Row& r : rows) {
+        const uintptr_t list = ActorGetterTailList(r.key, r.parmsSize);
+
+        // The fixture's own premise: the tail reads the short ParmsSize, and Ubel sizes the block to the return's end.
+        FxReset();
+        FxActorFns(list);
+        FxClearRecorders();
+        {
+            FunctionInfo get;
+            const bool have = FindFunc(g_cHero, "K2_GetActorLocation", get);
+            check(FxFmt("MOVE.22 getter %s: the fixture -- K2_GetActorLocation's ParmsSize reads %d and Ubel sizes "
+                        "its block 0x18, the end of its FVector return",
+                        r.tag, r.parmsSize)
+                      .c_str(),
+                  have && get.parmsSize == r.parmsSize && Ubel::ParamBufferSize(get) == kGetterChainEnd,
+                  FnTailStr(have, get));
+        }
+
+        // An attached recall: the setter lands the pawn, and only the getter can say so.
+        FxReset();
+        FxActorFns(list);
+        FxAttach(true);
+        FxClearRecorders();
+        {
+            const G3Out o = G3Recall();
+            const FxCall get = FxNth(K::GetLoc);
+            std::string why;
+            const bool sized = H11::AllSized(why);
+            check(FxFmt("MOVE.22 getter %s: the verification read hands K2_GetActorLocation on Hero_0 0x18 bytes -- "
+                        "its return's end, not the ParmsSize -- and every call of the recall is handed "
+                        "ParamBufferSize of its function",
+                        r.tag)
+                      .c_str(),
+                  get.seq != 0 && get.instance == g_hero0 && get.size == kGetterChainEnd &&
+                      get.params.size() == static_cast<size_t>(kGetterChainEnd) && sized,
+                  FxCallStr(get) + " " + why);
+            check(FxFmt("MOVE.22 getter %s: cur is the world position the getter answers -- one INFO 'post-move "
+                        "cur=kDest target=kDest attached=1', [SetActorLoc, GetLoc, StopMove, StopMoveNow], no "
+                        "SetMovementMode, no freeze WARN, 0 at tier 1",
+                        r.tag)
+                      .c_str(),
+                  FxLogCount(FxLine::PostMove(kDestXyz, kDestXyz, true), 'I') == 1 &&
+                      G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                                   { K::StopMoveNow, g_cmc0 } }) &&
+                      FxCount(K::SetMoveMode) == 0 && FxLogPrefix(g3::kFreezePrefix) == 0 &&
+                      FxEq3(FxAttachedWorldNow(), kDestXyz) && o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke,
+                  G3Got(o) + " world " + FxArrStr(FxAttachedWorldNow()));
+        }
+    }
+}
+
+// ══ COMP ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+// COMP.04: a component setter's block reaches the end of its own chain when the tail's ParmsSize is its NumParms. A
+// block of NumParms bytes cannot hold NewLocation, so both setters would be passed over as unpackable: a title that
+// cooks the actor setters out would fall to the raw write that moves nothing rendered, and every freeze would lose
+// the K2_SetWorldLocation refresh that carries the mesh along.
+static void CompBufferPastParmsSize() {
+    using K = FxKind;
+    const uintptr_t scene = SceneNumParmsAsParmsList();
+
+    // The fixture's own premise: each tail reads ParmsSize 4, and Ubel sizes each block to the end of bTeleport.
+    FxReset();
+    FxSceneFns(scene);
+    FxClearRecorders();
+    {
+        FunctionInfo world, rel;
+        const bool haveWorld = FindFunc(g_cCapsule, "K2_SetWorldLocation", world);
+        const bool haveRel = FindFunc(g_cCapsule, "K2_SetRelativeLocation", rel);
+        check("COMP.04 buffer past ParmsSize: the fixture -- K2_SetWorldLocation's and K2_SetRelativeLocation's "
+              "ParmsSize read 4, and Ubel sizes each block 0x109, the end of bTeleport",
+              haveWorld && haveRel && world.parmsSize == kCompSetterParms && rel.parmsSize == kCompSetterParms &&
+                  Ubel::ParamBufferSize(world) == kCompChainEnd && Ubel::ParamBufferSize(rel) == kCompChainEnd,
+              FnTailStr(haveWorld, world) + " / " + FnTailStr(haveRel, rel));
+    }
+
+    // The move itself: K2_SetActorLocation does not run, so the root's setter carries the jump.
+    FxReset();
+    FxSceneFns(scene);
+    FxRcs(K::SetActorLoc, { g3::kDidNotRun });
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        const FxCall swl = FxNth(K::SetWorldLoc);
+        std::string why;
+        const bool sized = H11::AllSized(why);
+        check("COMP.04 buffer past ParmsSize: K2_SetWorldLocation is invoked on Root_0 with 0x109 bytes -- its "
+              "chain's end, not the 4-byte ParmsSize -- carrying NewLocation kDest in 3 doubles and bTeleport @0x108 "
+              "1, and every call of the recall is handed ParamBufferSize of its function",
+              swl.seq != 0 && swl.instance == g_root0 && swl.size == kCompChainEnd &&
+                  swl.params.size() == static_cast<size_t>(kCompChainEnd) &&
+                  FxEq3(FxVec(swl, kSal5.loc, kVecD), kDestXyz) && FxRd<uint8_t>(swl, kSal5.teleport) == 1 && sized,
+              FxCallStr(swl) + " " + FxArrStr(FxVec(swl, kSal5.loc, kVecD)) + " " + why);
+        check("COMP.04 buffer past ParmsSize: ... and the move lands at tier 1 -- [SetActorLoc, SetWorldLoc, GetLoc, "
+              "StopMove, StopMoveNow], one INFO 'K2_SetWorldLocation invoked OK on RootComponent' naming Root_0 and "
+              "kDest, Root_0 at kDest, no tier-2 WARN, no deep-force line, 0",
+              G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::SetWorldLoc, g_root0 }, { K::GetLoc, g_hero0 },
+                           { K::StopMove, g_pc0 }, { K::StopMoveNow, g_cmc0 } }) &&
+                  FxLogCount(FxLine::CompSetterOk("K2_SetWorldLocation", g_root0, kDestXyz), 'I') == 1 &&
+                  FxEq3(FxPos(), kDestXyz) && FxLogCount(FxText::kTier2) == 0 &&
+                  FxLogPrefix(g3::kDeepPrefix) == 0 && o.rc == Wirbel::TP_OK && o.tier == H1::kTierInvoke,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+
+    // The freeze: K2_SetActorLocation reports success and moves nothing, so the freeze's two refreshes must run.
+    FxReset();
+    FxSceneFns(scene);
+    FxMoveMode(K::SetActorLoc, FxMove::Lies);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall();
+        const FxCall re1 = FxNth(K::SetWorldLoc, 0), re2 = FxNth(K::SetWorldLoc, 1);
+        check("COMP.04 buffer past ParmsSize, in the freeze: both of the freeze's component refreshes run -- two "
+              "K2_SetWorldLocation on Root_0, each handed 0x109 bytes carrying NewLocation kDest and bTeleport 1",
+              FxCountOn(K::SetWorldLoc, g_root0) == H8::kFreezeCompCalls &&
+                  FxCount(K::SetWorldLoc) == H8::kFreezeCompCalls && re1.size == kCompChainEnd &&
+                  re2.size == kCompChainEnd && FxEq3(FxVec(re1, kSal5.loc, kVecD), kDestXyz) &&
+                  FxEq3(FxVec(re2, kSal5.loc, kVecD), kDestXyz) && FxRd<uint8_t>(re1, kSal5.teleport) == 1 &&
+                  FxRd<uint8_t>(re2, kSal5.teleport) == 1,
+              FxCallsStr(FxCalls()));
+        check("COMP.04 buffer past ParmsSize, in the freeze: [SetActorLoc, GetLoc, SetMoveMode, SetActorLoc, "
+              "SetWorldLoc, SetMoveMode, SetActorLoc, SetWorldLoc, GetLoc, StopMove, StopMoveNow], two INFO "
+              "'K2_SetWorldLocation invoked OK on RootComponent', and the freeze holds -- 'succeeded -> "
+              "cur=(1500.5,-2500.5,350.5)', 0 at tier 1",
+              FxKindsAre({ K::SetActorLoc, K::GetLoc, K::SetMoveMode, K::SetActorLoc, K::SetWorldLoc, K::SetMoveMode,
+                           K::SetActorLoc, K::SetWorldLoc, K::GetLoc, K::StopMove, K::StopMoveNow }) &&
+                  FxLogCount(FxLine::CompSetterOk("K2_SetWorldLocation", g_root0, kDestXyz), 'I') ==
+                      H8::kFreezeCompCalls &&
+                  FxLogCount(g3::FreezeOk(kDestXyz), 'I') == 1 && o.rc == Wirbel::TP_OK &&
+                  o.tier == H1::kTierInvoke,
+              G3Got(o));
+    }
+}
+
+// ══ ROT ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+// ROT.05: a SetControlRotation whose rotation parameter does not resolve by name is never invoked. An unpacked block is
+// an all-zero FRotator the engine would apply as the view's new facing, and a call that answers 0 would skip the raw
+// ControlRotation write that restores the recalled one.
+static void RotUnpackableSetter() {
+    using K = FxKind;
+    const uintptr_t ctrl = CtrlRotationParamList(false);
+    const uintptr_t ctrlF = CtrlRotationParamList(true);
+
+    // The fixture's own premise: PC_0's class finds a sized SetControlRotation that has no NewRotation to pack.
+    FxReset();
+    FxCtrlFns(ctrl);
+    FxClearRecorders();
+    {
+        FunctionInfo fi;
+        const bool have = FindFunc(g_cGameCtrl, "SetControlRotation", fi);
+        check("ROT.05 unpackable SetControlRotation: the fixture -- PC_0's class finds SetControlRotation with a "
+              "24-byte block whose one parameter is 'Rotation', and none named NewRotation",
+              have && Ubel::ParamBufferSize(fi) == static_cast<uint32_t>(kVecD) &&
+                  FindParam(fi, kRotationParam) != nullptr && FindParam(fi, "NewRotation") == nullptr,
+              FnTailStr(have, fi));
+    }
+
+    FxReset();
+    FxCtrlFns(ctrl);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall(/*hasRot=*/true);
+        check("ROT.05 unpackable SetControlRotation: a recall with a rotation never invokes it -- [SetActorLoc, "
+              "GetLoc, StopMove, StopMoveNow], no SetControlRotation",
+              FxCount(K::SetCtrlRot) == 0 &&
+                  G3CallsAre({ { K::SetActorLoc, g_hero0 }, { K::GetLoc, g_hero0 }, { K::StopMove, g_pc0 },
+                               { K::StopMoveNow, g_cmc0 } }),
+              FxCallsStr(FxCalls()));
+        check("ROT.05 unpackable SetControlRotation: the raw fallback restores the recalled facing -- PC_0's "
+              "ControlRotation (5.5, -30.5, 0), no WARN, 0 at tier 1",
+              FxEq3(FxCtrlRot(), kDestPyr) && FxTeleportLines('W') == 0 && o.rc == Wirbel::TP_OK &&
+                  o.tier == H1::kTierInvoke,
+              G3Got(o) + " rot " + FxArrStr(FxCtrlRot()));
+    }
+
+    FxReset();
+    FxUE4World();
+    FxCtrlFFns(ctrlF);
+    FxClearRecorders();
+    {
+        const G3Out o = G3Recall(/*hasRot=*/true);
+        check("ROT.05 unpackable SetControlRotation, UE4: never invoked, and the raw fallback puts (5.5, -30.5, 0) in "
+              "PCF_0's ControlRotation as 3 floats -- the 12 bytes after it still 0xA5, 0",
+              FxCount(K::SetCtrlRot) == 0 && FxEq3(FxCtrlRot(g_pcF0, kVecF), kDestPyr) &&
+                  G3Guarded(g_pcF0 + FxOff::kCtrlRotGuard) && o.rc == Wirbel::TP_OK,
+              G3Got(o) + " rot " + FxArrStr(FxCtrlRot(g_pcF0, kVecF)) + " guard " +
+                  G3BytesStr(g_pcF0 + FxOff::kCtrlRotGuard, FxOff::kGuardBytes));
+    }
+}
+
+// ══ DEEP ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+// DEEP.08: the match is a squared distance over all three coordinates. Copies of the old position moved along Z alone,
+// past the radius below it, above it and a floor below, are other fields of the component: they are kept beside the
+// exact copy, which alone is rewritten and counted.
+static void DeepZOnly() {
+    FxReset();
+    {
+        const double below[3] = { kStart[0], kStart[1], kStart[2] + kZBelow };
+        const double above[3] = { kStart[0], kStart[1], kStart[2] + kZAbove };
+        const double floorBelow[3] = { kStart[0], kStart[1], kStart[2] + kZFloorBelow };
+        FxSetPos(kDestXyz);   // as after the raw write: RelativeLocation no longer holds the old position
+        FxSetVecAt(g_root0 + kBelowCopyAt, kVecD, below);
+        FxSetVecAt(g_root0 + kAboveCopyAt, kVecD, above);
+        FxSetVecAt(g_root0 + kFloorCopyAt, kVecD, floorBelow);
+        FxClearRecorders();
+        const int n = DeepForceWorldPos(G3DeepChain(g_root0, kVecD), kStart, kOther);
+        check("DEEP.08 Z alone: only the exact copy of kStart at +0x100 is rewritten, with kOther -- 1",
+              n == 1 && FxEq3(FxVecAt(g_root0 + FxOff::kC2W, kVecD), kOther),
+              FxS(n) + " +0x100 " + G3VecStr(g_root0 + FxOff::kC2W, kVecD));
+        check("DEEP.08 Z alone: the copies 20 below (+0x200), 20 above (+0x260) and 1000 below (+0x2C0) are kept, "
+              "and so is RelativeLocation (kDest)",
+              FxEq3(FxVecAt(g_root0 + kBelowCopyAt, kVecD), below) &&
+                  FxEq3(FxVecAt(g_root0 + kAboveCopyAt, kVecD), above) &&
+                  FxEq3(FxVecAt(g_root0 + kFloorCopyAt, kVecD), floorBelow) && FxEq3(FxPos(), kDestXyz),
+              "+0x200 " + G3VecStr(g_root0 + kBelowCopyAt, kVecD) + " +0x260 " +
+                  G3VecStr(g_root0 + kAboveCopyAt, kVecD) + " +0x2C0 " + G3VecStr(g_root0 + kFloorCopyAt, kVecD) +
+                  " rel " + FxArrStr(FxPos()));
+        check("DEEP.08 Z alone: one INFO 'deep-force rewrote 1 world-transform vector(s) on RootComponent Root_0', "
+              "the only Teleport line",
+              FxLogCount(FxLine::DeepRewrote(1, g_root0), 'I') == 1 && FxTeleportLines() == 1, FxLogDump());
+    }
+}
+
+// DEEP.09: the freeze's deep force counts the stale copy alone. A pawn off the target in Z alone, whose setters report
+// success and move nothing, has its RelativeLocation raw-written to the target before the deep force runs: that vector
+// lies off the old position in Z alone, so it neither matches nor adds to the count the INFO line reports.
+static void DeepVerticalFreeze() {
+    using K = FxKind;
+    struct Row {
+        const char* what;
+        const double* start;
+    };
+    const Row rows[] = {
+        { "a pawn 100 straight below the target", H1::kBelowTarget },
+        { "a pawn 60.5 straight below the target", kJustBelowTarget },
+        { "a pawn 100 straight above the target", kAboveTarget },
+    };
+    for (const Row& r : rows) {
+        FxReset();
+        FxSetPos(r.start);
+        FxSetVecAt(g_root0 + FxOff::kC2W, kVecD, r.start);   // the cached transform agrees with where the pawn stands
+        FxMoveMode(K::SetActorLoc, FxMove::Lies);
+        FxMoveMode(K::SetWorldLoc, FxMove::Lies);
+        FxClearRecorders();
+        const G3Out o = G3Recall();
+        check(FxFmt("DEEP.09 vertical freeze, %s: the freeze opens, and its deep force rewrites the one stale copy "
+                    "-- the freeze WARN naming where the pawn stands, exactly one deep-force line, an INFO 'rewrote 1' "
+                    "naming Root_0, and +0x100 now kDest",
+                    r.what)
+                  .c_str(),
+              FxLogCount(g3::FreezeEnter(r.start, true), 'W') == 1 &&
+                  FxLogCount(FxLine::DeepRewrote(1, g_root0), 'I') == 1 && FxLogPrefix(g3::kDeepPrefix) == 1 &&
+                  FxEq3(FxVecAt(g_root0 + FxOff::kC2W, kVecD), kDestXyz),
+              FxLogDump() + " +0x100 " + G3VecStr(g_root0 + FxOff::kC2W, kVecD));
+        check(FxFmt("DEEP.09 vertical freeze, %s: ... the freeze holds -- one INFO 'CMC-freeze force succeeded -> "
+                    "cur=(1500.5,-2500.5,350.5)', RelativeLocation kDest, 0 at tier 1",
+                    r.what)
+                  .c_str(),
+              FxLogCount(g3::FreezeOk(kDestXyz), 'I') == 1 && FxEq3(FxPos(), kDestXyz) && o.rc == Wirbel::TP_OK &&
+                  o.tier == H1::kTierInvoke,
+              G3Got(o) + " pos " + FxArrStr(FxPos()));
+    }
+}
+
+}  // namespace H14
+
+static void Blocks_H14() {
+    blk("MOVE+5 - the buffer each move invoke sizes, the rotation pack and the deep-force match radius");
+    H14::MoveGetterBuffer();
+    H14::CompBufferPastParmsSize();
+    H14::RotUnpackableSetter();
+    H14::DeepZOnly();
+    H14::DeepVerticalFreeze();
+    // The world back to its defaults for the blocks after this one, the swapped function lists included.
+    FxReset();
+}
+
+// ══ H15: SLOTS+5 -- CUR: a viewport with height and no width; LOCK: each slot copy made inside the op lock ═════════
+// CUR.05 refuses a viewport with no height, and every other centre fallback sees the default 1921 x 1081, so the width
+// half of "a viewport with both sides" decides nothing there. CUR.25 takes the width away and keeps the height, with a
+// hit scripted on every trace a centre would take: a refusal is the reading Wirbel.cpp makes, a jump is not. LOCK.16
+// shows each slot accessor waits for the op lock before it starts; a wait proves the lock was TAKEN, not that it is
+// still held when the slot is touched. LOCK.17 stops GetMarker's and GetLast's copy into the caller's block and asks
+// at that instant. ClearMarker writes nothing the caller owns: only a hardware watchpoint on the slot could stop its
+// clear, and setting one means suspending a thread and rewriting its debug registers.
+// A check carries the name of the block it extends and continues that block's numbering.
+
+namespace H15 {
+
+// ── numbers ──
+constexpr int kSlotRead = G4::kSlotMiddle;    // the slot LOCK.17's GetMarker copies out
+static_assert(kSlotRead == 1, "the LOCK.17 labels name slot 1");
+// Viewports with the default height and no usable width. The height test passes each by itself, so a refusal is the
+// width test's.
+constexpr int32_t kViewportNoWidth[2] = { 0, kViewport[1] };
+constexpr int32_t kViewportNegWidth[2] = { -kViewport[0], kViewport[1] };
+static_assert(kViewport[0] == 1921 && kViewport[1] == 1081, "the CUR.25 labels name the default viewport's sides");
+
+// ── LOCK.17's traps ──
+constexpr ULONG kFirstInLine = 1;                          // AddVectoredExceptionHandler: ahead of every other handler
+constexpr DWORD kAvParams = 2;                             // an access violation's record: the access, then its address
+constexpr ULONG_PTR kWriteFault = 1;                       // ExceptionInformation[0] of a violation a write made
+
+// What the traps saw: the accesses they stopped, and at how many of them no other thread could take s_opMutex.
+static std::atomic<int> s_stops{0}, s_heldAt{0};
+static std::atomic<uintptr_t> s_roPage{0};   // the read-only page an output block lives on; 0 while none is armed
+
+// Asked while the access is stopped, so the answer is the op lock's state at that access. FxFreeElsewhere asks from a
+// thread of its own: the stopped thread may own the lock itself.
+static void NoteStop() {
+    s_stops.fetch_add(1);
+    if (!FxFreeElsewhere(s_opMutex)) s_heldAt.fetch_add(1);
+}
+
+// The trap: the caller's output block on a read-only page, so GetMarker's and GetLast's copy into it is their first
+// write there, stopped on the thread that makes it.
+static LONG CALLBACK StopHandler(EXCEPTION_POINTERS* ep) {
+    const EXCEPTION_RECORD* er = ep->ExceptionRecord;
+    if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        const uintptr_t page = s_roPage.load();
+        if (!page || er->NumberParameters < kAvParams || er->ExceptionInformation[0] != kWriteFault)
+            return EXCEPTION_CONTINUE_SEARCH;
+        const uintptr_t at = static_cast<uintptr_t>(er->ExceptionInformation[1]);
+        if (at < page || at - page >= kPage) return EXCEPTION_CONTINUE_SEARCH;
+        NoteStop();
+        // Writable again, so the write that faulted runs when the thread resumes: a page left read-only faults on it
+        // for ever.
+        DWORD was = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(page), kPage, PAGE_READWRITE, &was))
+            return EXCEPTION_CONTINUE_SEARCH;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// The handler, first in line for one scenario and removed at its end whatever the checks found, with the counts zeroed.
+struct StopScope {
+    PVOID handle = nullptr;
+    StopScope() {
+        s_stops.store(0);
+        s_heldAt.store(0);
+        handle = AddVectoredExceptionHandler(kFirstInLine, StopHandler);
+        if (!handle) FxFixtureFail("LOCK.17's exception handler could not be added");
+    }
+    ~StopScope() {
+        s_roPage.store(0);
+        RemoveVectoredExceptionHandler(handle);
+    }
+    StopScope(const StopScope&) = delete;
+    StopScope& operator=(const StopScope&) = delete;
+};
+
+// A Marker on a committed page of its own, read-only once built: the first write into it stops in StopHandler, which
+// makes the page writable again. Released whatever the checks found.
+struct RoOut {
+    void* page = nullptr;
+    Wirbel::Marker* m = nullptr;
+    bool armed = false;
+    explicit RoOut(const Wirbel::Marker& init) {
+        page = VirtualAlloc(nullptr, kPage, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!page) FxFixtureFail("LOCK.17's output page could not be committed");
+        m = ::new (page) Wirbel::Marker(init);
+        DWORD was = 0;
+        armed = VirtualProtect(page, kPage, PAGE_READONLY, &was) != 0;
+        if (armed) s_roPage.store(reinterpret_cast<uintptr_t>(page));
+    }
+    ~RoOut() {
+        s_roPage.store(0);
+        VirtualFree(page, 0, MEM_RELEASE);
+    }
+    RoOut(const RoOut&) = delete;
+    RoOut& operator=(const RoOut&) = delete;
+};
+
+static std::string StopsStr(bool armed) {
+    return FxFmt("armed=%d stops=%d heldAt=%d", armed ? 1 : 0, s_stops.load(), s_heldAt.load());
+}
+
+// ══ CUR ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void BlockCur() {
+    // ── CUR.25: a viewport with height and no width has no centre either. GetMousePosition answers false, so the
+    //    centre is the one way on, and the width alone is missing: a refusal is the width test's. ──
+    {
+        struct NoWidth {
+            const int32_t* size;
+            const char* id;
+        };
+        const NoWidth rows[] = {
+            { kViewportNoWidth, "CUR.25 no centre (0 x 1081)" },
+            { kViewportNegWidth, "CUR.25 no centre (-1921 x 1081)" },
+        };
+        for (const NoWidth& n : rows) {
+            FxReset();
+            FxRetByte(FxKind::MousePos, 0);
+            FxViewportSize(n.size[0], n.size[1]);
+            FxClearRecorders();
+            const G5::CursorRun r = G5::Cursor(G5::kChanZero, true, false);
+            const std::string id = n.id;
+            check(G4::Lbl(id, "a viewport with height but no width answers -9 after GetMousePosition and "
+                              "GetViewportSize -- usedCenter left false, outHit and the tier as handed in")
+                      .c_str(),
+                  r.rc == Wirbel::TP_ERR_NO_CURSOR && FxKindsAre({ FxKind::MousePos, FxKind::Viewport }) &&
+                      !r.usedCenter && FxIsSentinel(r.hit) && r.tier == kTierSentinel,
+                  G5::RunStr(r) + " " + FxKindsStr(FxKinds()));
+            check(G4::Lbl(id, "no Teleport line but the GWorld chain's own -- no cursor line names a centre").c_str(),
+                  FxTeleportLines() == 1 && FxLogCount(FxLine::Chain(g_pc0), 'I') == 1, FxLogDump());
+        }
+    }
+    // A hit scripted on the screen-position trace and on the line trace: a centre taken anyway would land the pawn
+    // where a ray from the screen's left edge hits, a place nobody pointed at, and move the undo slot with it.
+    {
+        FxReset();
+        FxPlantLast(G4::PlantedLast());
+        FxRetByte(FxKind::MousePos, 0);
+        FxViewportSize(kViewportNoWidth[0], kViewportNoWidth[1]);
+        FxHit(FxKind::HitScreen, G5::kChanZero);
+        FxHit(FxKind::Trace, G5::kChanZero);
+        FxClearRecorders();
+        const G5::CursorRun r = G5::Cursor(G5::kChanZero, true, false);
+        const std::string id = "CUR.25 no centre, a hit waiting (0 x 1081)";
+        check(G4::Lbl(id, "answers -9 with no trace asked and nothing moved -- the hits scripted on every trace a "
+                          "centre would take go unused")
+                  .c_str(),
+              r.rc == Wirbel::TP_ERR_NO_CURSOR && FxCount(FxKind::HitScreen) == 0 &&
+                  FxCount(FxKind::Deproject) == 0 && FxCount(FxKind::Trace) == 0 && G5::Moves() == 0,
+              G5::RunStr(r) + " " + FxCallsStr(FxCalls()));
+        check(G4::Lbl(id, "the hero stays at (1000.5, -2000.5, 300.5) and the undo slot keeps what was planted")
+                  .c_str(),
+              FxEq3(FxPos(), kStart) && FxMarkerEq(FxLastNow(), G4::PlantedLast()),
+              "pos=" + FxArrStr(FxPos()) + " last: " + FxMarkerStr(FxLastNow()));
+    }
+    FxReset();
+}
+
+// ══ LOCK ═════════════════════════════════════════════════════════════════════════════════════════════════════════
+static void BlockLock() {
+    // ── LOCK.17 the traps: a write made with s_opMutex held stops with the lock held, and the same write made without
+    //    it stops with the lock free, so a "held" below is measured. ──
+    {
+        struct Ctl {
+            bool locked;
+            const char* label;
+        };
+        const Ctl rows[] = {
+            { true, "LOCK.17 the page trap: a write into the read-only block made with s_opMutex held stops once, and "
+                    "no other thread can take the lock at that stop" },
+            { false, "LOCK.17 the page trap: the same write made without the lock stops once, and another thread "
+                     "takes the lock at that stop" },
+        };
+        for (const Ctl& c : rows) {
+            FxReset();
+            StopScope scope;
+            RoOut out(G4::SentinelMarker());
+            FxClearRecorders();
+            volatile bool* valid = &out.m->Valid;
+            if (c.locked) {
+                std::lock_guard<std::mutex> lk(s_opMutex);
+                *valid = false;
+            } else {
+                *valid = false;
+            }
+            check(c.label, out.armed && s_stops.load() == 1 && s_heldAt.load() == (c.locked ? 1 : 0) && !*valid,
+                  StopsStr(out.armed));
+        }
+    }
+
+    // ── LOCK.17 the accessors: each copies its slot while the op lock is held, not merely after waiting for it. A
+    //    UI read on the pipe thread racing a CE hotkey's save on the mailbox thread would otherwise copy a torn
+    //    marker. ──
+    {
+        FxReset();
+        FxPlantLast(G4::PlantedLast());
+        StopScope scope;
+        RoOut out(G4::SentinelMarker());
+        FxClearRecorders();
+        const int32_t rc = Wirbel::GetLast(*out.m);
+        const Wirbel::Marker got = *out.m;
+        check("LOCK.17 GetLast under the lock: answers 0 with the planted last slot in the caller's block",
+              rc == Wirbel::TP_OK && FxMarkerEq(got, G4::PlantedLast()), FxS(rc) + " " + FxMarkerStr(got));
+        check("LOCK.17 GetLast under the lock: its copy into the caller's block stops once, and no other thread can "
+              "take s_opMutex at that stop",
+              out.armed && s_stops.load() == 1 && s_heldAt.load() == 1, StopsStr(out.armed));
+    }
+    {
+        FxReset();
+        const auto three = G4::ThreeMarkers();
+        for (int s = 0; s < kSlots; ++s) FxPlantMarker(s, three[static_cast<size_t>(s)]);
+        StopScope scope;
+        RoOut out(G4::SentinelMarker());
+        FxClearRecorders();
+        const int32_t rc = Wirbel::GetMarker(kSlotRead, *out.m);
+        const Wirbel::Marker got = *out.m;
+        check("LOCK.17 GetMarker under the lock: GetMarker(1) answers 0 with slot 1's marker in the caller's block",
+              rc == Wirbel::TP_OK && FxMarkerEq(got, three[kSlotRead]), FxS(rc) + " " + FxMarkerStr(got));
+        check("LOCK.17 GetMarker under the lock: its copy into the caller's block stops once, and no other thread "
+              "can take s_opMutex at that stop",
+              out.armed && s_stops.load() == 1 && s_heldAt.load() == 1, StopsStr(out.armed));
+    }
+    FxReset();
+}
+
+}  // namespace H15
+
+static void Blocks_H15() {
+    blk("SLOTS+5 - a viewport with height but no width, and the slot copies made under the op lock");
+    H15::BlockCur();
+    H15::BlockLock();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("wirbel_teleport_test -- Teleport (Wirbel.cpp) over a fake world and a fake engine, in this process\n");
@@ -13398,6 +14544,9 @@ int main() {
     Blocks_H10();
     Blocks_H11();
     Blocks_H12();
+    Blocks_H13();
+    Blocks_H14();
+    Blocks_H15();
     Blocks_G5();
     FxCleanup();
     return FxExitCode();
