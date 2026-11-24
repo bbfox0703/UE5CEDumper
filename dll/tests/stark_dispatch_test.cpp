@@ -2718,13 +2718,13 @@ static void HookBlocks() {
         }
         Stark::HoldTrampolineBlock();
         const bool heldE = codeE && Stark::s_heldBlock == Ie - 0x10000;
-        g_vqMap = { Reg(PEe - 0x40030000, 0x10000, MEM_RESERVE, PEe - 0x40030000, MEM_PRIVATE),
-                    Reg(PEe - 0x40020000, 0x10000, MEM_FREE, 0, 0),
-                    Reg(PEe - 0x40010000, 0x40010000, MEM_RESERVE, PEe - 0x40010000, MEM_PRIVATE),
+        g_vqMap = { Reg(PEe - 0x40020000, 0x10000, MEM_RESERVE, PEe - 0x40020000, MEM_PRIVATE),
+                    Reg(PEe - 0x40010000, 0x10000, MEM_FREE, 0, 0),
+                    Reg(PEe - 0x40000000, 0x40000000, MEM_RESERVE, PEe - 0x40000000, MEM_PRIVATE),
                     Reg(PEe, 0x40000000, MEM_RESERVE, PEe, MEM_PRIVATE),
                     Reg(PEe + 0x40000000, 0x10000, MEM_FREE, 0, 0) };
         g_vqMode = VqMode::Map;
-        g_vqLo = PEe - 0x40030000;
+        g_vqLo = PEe - 0x40020000;
         g_vqHi = PEe + 0x40010000;
         const bool okE = heldE && Stark::InstallHook(PEe);
         g_vqMode = VqMode::Real;
