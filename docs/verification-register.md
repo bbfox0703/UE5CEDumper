@@ -1064,6 +1064,22 @@ dll_helpers_test `RESCANPLAN` / `RESCANAPPLY` / `NAMEORDER`, `RescanReinitSource
    `init-*.log` `apply_rescan: GObjects=0x... (data_heuristic) Objects=<large>, ... offsets measured`; the object tree
    fills. A `none_qualified` answer with the log's candidate lines is the case to reopen.
 
+### ⬜ A pass that names nothing is not trusted once a pass named (build 3780) — `[RESCAN-SPARSE-TABLE-2026-11-24]`
+
+Aura's item-layout detection refuses a pass that resolved no name, once another pass resolved names with FNamePool
+up, and its weak fallback keeps the pass that named. It changes detection for every game. Unit tests: dll_core_test
+NAMELESSFLAT (red without the gate, in 9 of 9 runs) and its control, and RESCAN's sparse structure; in the C++
+self-tests the gate fires only in NAMELESSFLAT, so no existing check moved.
+
+1. ⬜ **No standard title moves.** Acceptance: on DumperTest Shipping (UE 5.4), DumperTest58 Shipping (UE 5.8) and
+   one UE4 title, the DLL log's `ObjectArray: FUObjectItem size ...` line (item size, object offset) and the object
+   count match the last build's run, no `pass validated ... that name nothing ... -- not trusted outright` line
+   appears, and the object tree fills as before.
+2. ⬜ **A title that logs the refusal** (a user's log, or Extra Scan's candidates). Acceptance: the DLL log shows
+   `ObjectArray: +0x08 pass validated N objects that name nothing (flat), but a pass resolved M names -- not
+   trusted outright`, and the layout kept is the pass that named. A refusal on the master array of a title that
+   read before is the case to reopen.
+
 ### ⬜ UE 5.9 reads as 509 (build 3772) — `[VND9-05]`
 
 A `"5.9."` needle, the override list's "UE 5.9" and `/Script/CascadeRuntime` as an engine package; unit-tested
@@ -1363,7 +1379,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

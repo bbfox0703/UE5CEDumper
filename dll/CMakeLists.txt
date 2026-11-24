@@ -775,6 +775,23 @@ if(BUILD_DLL_TESTS)
     ue5_apply_asan(mimic_mailbox_test)
     target_link_libraries(mimic_mailbox_test PRIVATE ue5_testcore)
 
+    # ---- stark_dispatch_test: GameThreadDispatch (Stark.cpp), the invoke queue and the hook, in this process --------
+    # /EHa as the DLL compiles Stark.cpp: the detour's guard must see a structured exception as one. Falsch.cpp is the
+    # hook's trampoline pre-flight, and it reads hde64's header from MinHook's sources.
+    add_executable(stark_dispatch_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/stark_dispatch_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Falsch.cpp
+    )
+    target_include_directories(stark_dispatch_test PRIVATE ${CMAKE_SOURCE_DIR}/vendor/minhook/src)
+    if(MSVC)
+        set_property(TARGET stark_dispatch_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(stark_dispatch_test PRIVATE /utf-8 /W3 /EHa /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(stark_dispatch_test)
+    target_link_libraries(stark_dispatch_test PRIVATE ue5_testcore minhook Zydis)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,

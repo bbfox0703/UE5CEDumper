@@ -29,6 +29,82 @@ builds ≤696 in
 
 -----
 
+## 2026-11-24 (build 3780) — Finding the object list no longer takes a reading that names nothing `[RESCAN-SPARSE-TABLE-2026-11-24]`
+
+- **What changes:** when the DLL works out how a game's object list (GObjects) is laid out, it no longer accepts a
+  reading in which no object has a name once another reading has already named objects. Such a reading came from
+  memory next to the list rather than the list itself, and the dump then read that memory as objects; the reading
+  that named objects is kept instead. In the self-tests no existing check changed; the live checks on real games are
+  in the verification register.
+- **Also since build 3779 (tests only):** the ProcessEvent hook's install and its held trampoline block are tested
+  with real hooks (`stark_dispatch_test`, 133 checks, 115 mutants all caught), and a `dll_core_test` check that
+  failed now and then reads the same on every run.
+- **Tests:** C# 8520 (1 skipped), headless 74, the CE Lua host, and the nine C++ self-tests (`dll_core_test` 2030
+  checks), each run by `build.cmd publish`; no compiler, trimming or test warning in the build log.
+- AOT UI 62,980,608 bytes (sha256 1e2e0ecf3ec94ac2...); UE5Dumper.dll 3,882,496 bytes (sha256 2faa334faca07c47...).
+
+-----
+
+## 2026-11-24 (no build change) — Stark's MinHook install has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `stark_dispatch_test` drives `Stark.cpp`'s MinHook install with real hooks: a
+  synthetic main image placed where the test chooses, address-space fixtures that take every block start within
+  MinHook's +-1 GB reach or leave exactly one free, an address space the test writes behind the VirtualQuery
+  seam, a probe of MinHook's lock, a count of MinHook's thread freezes, and NtQueryVirtualMemory hooked to lie
+  about one page.
+- **Covered, 62 checks:** the install and its refusals; the held block taken once per process,
+  under MinHook's lock to its last line, never enabled, each candidate's 64 bytes read with every page rule and a
+  read that faults refused; a real hook taking the holder's target only after the vet; the main image's header
+  read whole, every readable protection accepted, a guard or a fault contained; the window walked on an
+  allocation failure, clamped at both ends of the address space, each occupant by type, its stop reasons, budget,
+  throttle and live picks, and its LastError the one MinHook's call left, with a dynamic-code policy refusing
+  MinHook's block; whether the held block was needed; a soft removal that enables nothing; the shutdown.
+- **Negative controls:** 115 mutants of the MinHook glue, every one detected. After the first 64, four
+  rounds of critics looked for an edit that breaks what a deleted C# pin protected while every check stays green;
+  each edit they found became a check and a mutant. The 9 C# pins that read the glue as text are gone, or keep
+  only the halves that read Heiter.cpp, Falsch or every MinHook call site in `dll/src`.
+- **Found on the way:** MinHook's private heap, made by the first MH_Initialize, can take the free granule a
+  fixture opened for the first trampoline block, so the fixtures initialise MinHook first.
+- **Tests:** `stark_dispatch_test` 133 checks, 0 failures, twenty runs in a row, and under ASan;
+  C# 8520 (1 skipped).
+
+-----
+
+## 2026-11-24 (no build change) — RESCAN's sparse structure reads the same on every run `[RESCAN-SPARSE-TABLE-2026-11-24]`
+
+- **What changes:** tests only; nothing in the DLL changed. `dll_core_test`'s RESCAN setup check "...and its
+  head names objects only here and there" failed in 6 of 50 runs of the 2026-11-23 build, after
+  `[CEPTR-FAIL-ONCE-2026-11-23]` had made the structure's chunk whole. Its chunk table was a six-slot heap block,
+  and on that head Aura's item detection ends by probing the chunk table itself as a flat item array, up to
+  ~28 KB of it, so whatever the heap held past the block decided the layout: three pointers there with a class
+  chain were taken as a flat array that named nothing, and the scorer read the heap as items. The table is a
+  chunk's worth of slots now, zeros past the six chunk pointers, and a new setup check says the structure is read
+  through its chunk table, naming the layout Aura chose when it is not.
+- **Tests:** `dll_core_test` 2025 checks (one more), 0 failures in 50 runs (before: 6 of 50; with only the new
+  check, 4 of 30, each one flat at +0x08), and the ASan run with its negative control.
+
+-----
+
+## 2026-11-23 (no build change) — The invoke queue and the game thread have a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `stark_dispatch_test` #includes `Stark.cpp` (GameThreadDispatch) and drives the
+  invoke queue end to end in its own process: callers on threads of their own, a fake game thread that enters the
+  detour as the game would, and a ProcessEvent that records each call.
+- **Covered, 71 checks:** a queued invoke runs on the game thread against its own copy of the parameters; a
+  timed-out one stays queued and later runs on its original parameters without touching the caller's buffer; a
+  request its waiter abandons never runs, and one the drain already took is waited out; an if_free invoke is
+  refused under the queue's lock; a request counts until it is answered and is counted off once, before its caller
+  wakes; one request at a time, with no nested drain; a departed owner's queued invokes dropped; a shutdown cuts
+  the wait only when the game thread is stalled. On the game thread's side: which entries count as its, the
+  liveness they stamp, Stark's own calls marked per thread and never draining, a fault contained, the profiler fed
+  and a throw contained, a worker thread's ProcessEvent leaving queued work alone, and the game-thread pick and
+  its validation.
+- **Negative controls:** 57 queue and 43 thread mutants of Stark.cpp, every one detected. The
+  MinHook install is the part still read as text (9 C# pins).
+- **Tests:** `stark_dispatch_test` 71 checks, 0 failures, five runs in a row, and under ASan; C# 8526 (1 skipped).
+
+-----
+
 ## 2026-11-23 (build 3779) — Tests for God Mode, Fly and the Cheat Engine mailbox `[CPP-TEST-TARGET-GAP-2026-11-23]`
 
 - **What changes:** nothing in the UI or the DLL's behaviour. Since build 3778 three more DLL files are tested

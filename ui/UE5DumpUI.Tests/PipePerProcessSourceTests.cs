@@ -702,52 +702,21 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("data[\"before\"]", body);
     }
 
-    /// <summary>An if_free enqueue is decided under the queue's lock before the push, and each request counts from the
-    /// push until it is answered.</summary>
+    /// <summary>The drain takes each request from the queue under its lock, one at a time inside the loop, so a departed
+    /// owner's drop always finds what has not run. The queue's other rules -- if_free decided under the lock, counted
+    /// until answered, settled once and before the caller wakes, no nested drain -- are stark_dispatch_test's QUEUE
+    /// blocks. A pop outside the lock would be only a data race, which no behaviour test can observe, so this one is read
+    /// here.</summary>
     [Fact]
-    public void TheInvokeQueue_DecidesIfFreeUnderItsLock_AndCountsUntilAnswered()
+    public void TheDrain_PopsEachRequestUnderTheQueuesLock()
     {
         string stark = CodeOnly(DllSrc("Stark.cpp"));
-        string enqueue = Between(stark, "int32_t EnqueueInvoke(", "const InvokeWaitEnd end = WaitQueuedInvoke(");
-        int lockAt = enqueue.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
-        int check = enqueue.IndexOf("if (t_invokeIfFree)", StringComparison.Ordinal);
-        int blocks = enqueue.IndexOf("InvokeBlocks(other, count, req->owner)", StringComparison.Ordinal);
-        int push = enqueue.IndexOf("s_invokeQueue.push_back(req);", StringComparison.Ordinal);
-        int count = enqueue.IndexOf("++s_outstanding[req->owner];", StringComparison.Ordinal);
-        Assert.True(lockAt > 0 && check > lockAt && blocks > check && push > blocks && count > push,
-            "lock, if_free check, push, count -- in that order, all under the lock");
-        Assert.Contains("req->owner = t_invokeOwner;", enqueue);
-        string refusal = enqueue[check..push];
-        Assert.Contains("t_lastInvokeBlocker = other;", refusal);
-        Assert.Contains("return kInvokeHeldByOther;", refusal);
-
-        // Answered = settled: the drain (run or dropped), shutdown, an owner's drop and a waiter's abandon each take it
-        // off the count, once.
         string drain = Between(stark, "ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
             "static void __fastcall HookedProcessEvent(");
-        int ran = drain.IndexOf("CallProcessEventSEH(req->instance, req->ufunc, req->params);", StringComparison.Ordinal);
-        int settle = drain.IndexOf("SettleLocked(*req);", ran, StringComparison.Ordinal);
-        int promise = drain.IndexOf("req->promise.set_value(result);", ran, StringComparison.Ordinal);
-        Assert.True(ran > 0 && settle > ran && promise > settle, "settled before the promise wakes its caller");
-        Assert.Contains("SettleLocked(*req);",
-            Between(drain, "if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {", "continue;"));
-        // One request at a time, each taken under the lock just before it runs: nothing waits outside the queue's reach.
         string loop = Between(drain, "for (; budget > 0; --budget) {", "CallProcessEventSEH(");
         int lockAtPop = loop.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
         int pop = loop.IndexOf("s_invokeQueue.pop_front();", StringComparison.Ordinal);
         Assert.True(lockAtPop > 0 && pop > lockAtPop, "each request popped under the lock inside the loop");
-        Assert.Single(Regex.Matches(drain, @"s_invokeQueue\.front\(\)"));   // no batch filled before the loop
-        // ...and only at the top level: a request's own ProcessEvent calls do not drain the rest inside it.
-        Assert.Contains("if (!t_draining && ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {", stark);
-        Assert.Contains("DrainScope() { t_draining = true; }", drain);
-        Assert.Contains("SettleLocked(*req);", Between(stark, "void Shutdown() {", "bool IsHookActive()"));
-        string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
-        Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
-        Assert.Contains("SettleLocked(req);", drop);
-        string abandon = Between(enqueue + stark[stark.IndexOf("const InvokeWaitEnd end = WaitQueuedInvoke(", StringComparison.Ordinal)..],
-            "if (status == std::future_status::timeout && dropIfAbandoned) {", "if (status == std::future_status::timeout) {");
-        Assert.Contains("SettleLocked(*req);", abandon);
-        Assert.Contains("if (req.settled) return;", stark);
     }
 
     /// <summary>A pending debug-camera ON is its sender's alone: recorded where the toggle is sent, counted as held by
@@ -1084,23 +1053,6 @@ public sealed class PipePerProcessSourceTests
 
         string fern = NoComments(DllSrc("Fern.cpp"));   // the key is a string literal, which CodeOnly blanks
         Assert.Contains("Wirbel::RecallExplicit(p, hasRot, &tier, request.value(\"keep_undo\", false))", fern);
-    }
-
-    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A queued invoke's waiter that watched only its future would, on a stalled game
-    /// thread, be answered only by Stark::Shutdown -- reached by UE5_Shutdown after joining the workers parked in such
-    /// waits, so most of an invoke timeout would pass before the pipe server began to stop. The wait runs in slices and
-    /// ends when a shutdown meets a game thread stalled past kInvokeShutdownStallMs; a cut is a timeout that ended early (-5,
-    /// the request stays queued). Stark.cpp reaches no C++ test target, so its call is pinned here; the decision and the
-    /// loop are unit-tested in dll_helpers_test.</summary>
-    [Fact]
-    public void AQueuedInvokeWaitEndsAtShutdownOnAStalledGame()
-    {
-        var body = FunctionBody(CodeOnly(DllSrc("Stark.cpp")), "int32_t EnqueueInvoke(");
-        Assert.Matches(@"\bWaitQueuedInvoke\s*\(", body);
-        Assert.Matches(@"\bCutInvokeWait\s*\(\s*Tot::ShutdownRequested\s*\(\s*\)\s*,\s*GetGameThreadLiveness\s*\(\s*kInvokeShutdownStallMs\s*\)\s*\)", body);
-        // A cut takes the timeout path: it stays queued (or is abandoned, for a drop-if-abandoned request) and answers -5.
-        Assert.Matches(@"InvokeWaitEnd::Ready\s*\?\s*std::future_status::ready\s*:\s*std::future_status::timeout", body);
-        Assert.DoesNotMatch(@"\.wait_for\s*\(\s*std::chrono::milliseconds\s*\(\s*timeoutMs\s*\)\s*\)", body);
     }
 
     /// <summary>[SHUTDOWN-SEETHRU-WAIT] A cut makes a LineTrace or an un-hide that did not run likely, and neither may

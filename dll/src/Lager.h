@@ -9,7 +9,7 @@
 // only way to say WHY on a live game is to walk the address space the way MinHook walked it and summarise that.
 // Every rule here transcribes vendor/minhook/src/buffer.c (its x64 paths) and is named after the function it
 // mirrors, so one can be checked against the other. No Win32 calls: Stark.cpp does the VirtualQuery walk and reads
-// the image, and dll_helpers_test drives every rule with synthetic maps, because no test target compiles Stark.cpp.
+// the image, and dll_helpers_test drives every rule with synthetic maps, apart from any real address space.
 // ============================================================
 
 #include <cstdint>

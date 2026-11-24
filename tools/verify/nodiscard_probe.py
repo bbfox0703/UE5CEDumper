@@ -54,6 +54,7 @@ TARGET_OBJECT_MARKERS = {
     "ue5_testcore": "ue5_testcore.dir",
     "dunste_fly_test": "dunste_fly_test.dir",
     "mimic_mailbox_test": "mimic_mailbox_test.dir",
+    "stark_dispatch_test": "stark_dispatch_test.dir",
     "dll_core_test": "dll_core_test.dir",
 }
 

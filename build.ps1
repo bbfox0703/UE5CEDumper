@@ -1321,6 +1321,12 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # stark_dispatch_test #includes Stark.cpp (GameThreadDispatch) and drives the invoke queue and the game thread's
+    # side in this process: callers on threads of their own, a fake game thread entering the detour.
+    if (-not (Invoke-CppSelfTest -TargetName "stark_dispatch_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the

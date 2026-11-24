@@ -259,9 +259,9 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
     // zero read just defers a freshly enqueued request to the next PE call
     // (microseconds away), which is harmless — the real happens-before for the
     // request data is the mutex taken below.
-    // The gate itself lives in Stark.h as a pure predicate so it can be unit
-    // tested -- no target compiles this file. Called, not mirrored: a mirrored
-    // copy would prove only that the copy is right.
+    // The gate itself lives in Stark.h as a pure predicate so dll_helpers_test can
+    // test it case by case. Called, not mirrored: a mirrored copy would prove only
+    // that the copy is right.
     const size_t depth = s_queueDepth.load(std::memory_order_acquire);
     if (depth != 0 && !onGameThread && !InOwnPeCall()) {
         // [STARK-DRAIN-OFF-GAME-THREAD] An engine worker thread's ProcessEvent: the work waits for the game thread.
@@ -535,8 +535,8 @@ static bool EnsureMinHookLocked() {
 }
 
 // MH_CreateHook refuses a detour that is not executable (IsExecutableAddress), so the holder needs one. It never
-// runs: the holder is created and never enabled, and nothing in this DLL enables every hook at once
-// (InvokeScriptTests pins both).
+// runs: the holder is created and never enabled (stark_dispatch_test's HOOK HOLD), and nothing in this DLL enables
+// every hook at once (InvokeScriptTests, over every dll/src file).
 static void HolderDetour() {}
 
 // May MinHook read `target`? It reads a hook target with no SEH, inside its spin lock, so a fault there would end
