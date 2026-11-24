@@ -9,12 +9,16 @@
 //   a time with no nested drain, a shutdown that cuts the wait on a stalled game, and the own-call mark. Then the game
 //   thread's side: which entries count as its, the liveness they stamp, the own-call mark per thread, a fault
 //   contained, the profiler fed and a throw contained, the worker-thread skip, and the pick and its validation.
+//   Last, the hook itself: InstallHook and RemoveHook with real MinHook hooks on code pages of the test's making,
+//   the trampoline block held at start on a main image the test builds, the header read, the window walk, and a
+//   shutdown that leaves MinHook as it is.
 //
 // WHAT IS FAKED
 //   Sein records every log line, so a check can read what was logged. ProcessEvent is FakePE, a function in this
 //   executable that records each call and adds two numbers into an out-parameter; s_originalPE is set to it directly,
 //   so no hook is installed here. With s_gameThreadId 0 every thread's entry counts as the game thread's.
-//   CreateToolhelp32Snapshot inside Stark.cpp is StarkTestSnapshot, which a test can make fail.
+//   CreateToolhelp32Snapshot inside Stark.cpp is StarkTestSnapshot, which a test can make fail; GetModuleHandleW,
+//   VirtualQuery and GetTickCount64 are seams too -- the main image Stark reads, a page's answer, and its clock.
 //
 // WHY IT #includes THE .cpp
 //   The queue, its lock, its counts and the detour are statics of Stark.cpp. Linie, which the detour feeds, is
@@ -39,6 +43,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <MinHook.h>
 
 // ── the log recorder ────────────────────────────────────────────────────────────────────────────────────────────
 struct LogLine { char lvl; std::string text; };
@@ -60,8 +65,64 @@ void Summary(const char*, ...) {}
 
 HANDLE WINAPI StarkTestSnapshot(DWORD flags, DWORD pid);
 #define CreateToolhelp32Snapshot StarkTestSnapshot
+HMODULE WINAPI StarkGetModuleHandleW(LPCWSTR name);
+SIZE_T WINAPI StarkVirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZE_T len);
+ULONGLONG WINAPI StarkGetTickCount64();
+#define GetModuleHandleW StarkGetModuleHandleW
+#define VirtualQuery StarkVirtualQuery
+#define GetTickCount64 StarkGetTickCount64
 #include "../src/Stark.cpp"  // NOLINT -- see "WHY IT #includes THE .cpp" above
 #undef CreateToolhelp32Snapshot
+#undef GetModuleHandleW
+#undef VirtualQuery
+#undef GetTickCount64
+// The main image Stark reads (0 = this executable), how VirtualQuery answers inside Stark.cpp, and its clock: always
+// the test's, so a walk's time is what the test says. Each counts its calls.
+static uintptr_t g_fakeMainImage = 0;
+enum class VqMode { Real, Stripes, Lie };
+static VqMode g_vqMode = VqMode::Real;
+static uintptr_t g_vqLo = 0, g_vqHi = 0;   // Stripes: [lo, hi); Lie: the page at lo
+static DWORD g_vqLieState = 0, g_vqLieProtect = 0;
+static std::atomic<uint64_t> g_tick{ 1000000 };
+static uint64_t g_tickStep = 0;
+static std::atomic<int> g_tickReads{ 0 }, g_vqCalls{ 0 };
+HMODULE WINAPI StarkGetModuleHandleW(LPCWSTR name) {
+    if (!name && g_fakeMainImage) return reinterpret_cast<HMODULE>(g_fakeMainImage);
+    return ::GetModuleHandleW(name);
+}
+SIZE_T WINAPI StarkVirtualQuery(LPCVOID addr, PMEMORY_BASIC_INFORMATION mbi, SIZE_T len) {
+    g_vqCalls.fetch_add(1);
+    const uintptr_t a = reinterpret_cast<uintptr_t>(addr);
+    if (g_vqMode == VqMode::Stripes && a >= g_vqLo && a < g_vqHi) {
+        const uintptr_t page = a & ~static_cast<uintptr_t>(0xFFF);
+        const bool even = ((page - g_vqLo) / 0x1000) % 2 == 0;
+        *mbi = MEMORY_BASIC_INFORMATION{};
+        mbi->BaseAddress = reinterpret_cast<PVOID>(page);
+        mbi->AllocationBase = reinterpret_cast<PVOID>(g_vqLo);
+        mbi->RegionSize = 0x1000;
+        mbi->State = even ? MEM_COMMIT : MEM_RESERVE;
+        mbi->Protect = even ? PAGE_READWRITE : 0;
+        mbi->Type = MEM_PRIVATE;
+        return sizeof(MEMORY_BASIC_INFORMATION);
+    }
+    if (g_vqMode == VqMode::Lie && (a & ~static_cast<uintptr_t>(0xFFF)) == g_vqLo) {
+        *mbi = MEMORY_BASIC_INFORMATION{};
+        mbi->BaseAddress = reinterpret_cast<PVOID>(g_vqLo);
+        mbi->AllocationBase = reinterpret_cast<PVOID>(g_vqLo);
+        mbi->RegionSize = 0x1000;
+        mbi->State = g_vqLieState;
+        mbi->Protect = g_vqLieProtect;
+        mbi->Type = MEM_PRIVATE;
+        return sizeof(MEMORY_BASIC_INFORMATION);
+    }
+    return ::VirtualQuery(addr, mbi, len);
+}
+ULONGLONG WINAPI StarkGetTickCount64() {
+    g_tickReads.fetch_add(1);
+    const uint64_t v = g_tick.load();
+    g_tick.store(v + g_tickStep);
+    return v;
+}
 static std::atomic<bool> g_failSnapshot{false};
 HANDLE WINAPI StarkTestSnapshot(DWORD flags, DWORD pid) {
     if (g_failSnapshot.load()) {
@@ -1437,6 +1498,534 @@ static void ThreadBlocks() {
     }
 }
 
+// The hook: real MinHook hooks on code pages of the test's own making, and a main image it builds, found through the
+// GetModuleHandleW seam. Each check starts from MinHook uninitialised -- MH_Uninitialize restores every enabled target
+// and frees every block -- and its pages are freed only after that.
+static const uint8_t kSafePE[8] = { 0x41, 0xC7, 0x00, 0x78, 0x56, 0x34, 0x12, 0xC3 };   // mov dword [r8], 0x12345678; ret
+static const uint8_t kRetRet[8] = { 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3 };   // ret, then no padding
+static const uint8_t kUnsafe[8] = { 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50, 0xC3 };   // a RIP-relative load farBlock away
+static const uint8_t kHdeError[8] = { 0x48, 0x40, 0x90, 0x90, 0x90, 0x90, 0x90, 0xC3 }; // REX after REX: hde64 refuses it
+constexpr DWORD kExecChars = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ;
+
+static std::vector<void*> g_fixtures;
+static void FreeFixtures() {
+    for (void* p : g_fixtures) VirtualFree(p, 0, MEM_RELEASE);
+    g_fixtures.clear();
+}
+static void HookReset() {
+    ResetStark();
+    MH_Uninitialize();
+    FreeFixtures();
+    Stark::s_mhInitialized.store(false);
+    Stark::s_holdTried = false;
+    Stark::s_heldTarget = 0;
+    Stark::s_heldBlock = 0;
+    Stark::s_hookActive.store(false);
+    Stark::s_hookedAddr = 0;
+    Stark::s_originalPE = nullptr;
+    Stark::s_hookFireCount.store(0);
+    Stark::s_lastHookFireMs.store(0);
+    Stark::s_gameThreadId.store(0);
+    Stark::s_gameThreadTried.store(true);
+    g_fakeMainImage = 0;
+    g_vqMode = VqMode::Real;
+    g_tick.store(g_tick.load() + 1000000);   // past the window log's throttle, whatever the last check left in it
+    g_tickStep = 0;
+    { std::lock_guard<std::mutex> lk(g_logMu); g_log.clear(); }
+}
+static uintptr_t CodePage(const uint8_t (&code)[8]) {
+    auto* p = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x10000, MEM_RESERVE, PAGE_NOACCESS));
+    VirtualAlloc(p, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+    memset(p, 0xCC, 0x1000);
+    memcpy(p, code, sizeof code);
+    DWORD old = 0;
+    VirtualProtect(p, 0x1000, PAGE_EXECUTE_READ, &old);
+    FlushInstructionCache(GetCurrentProcess(), p, 0x1000);
+    g_fixtures.push_back(p);
+    return reinterpret_cast<uintptr_t>(p);
+}
+// Calls a target as the game calls ProcessEvent; kSafePE writes 0x12345678 through its third argument.
+static uint32_t CallTarget(uintptr_t t) {
+    using Pe = void (*)(void*, void*, void*);
+    int o = 0, f = 0;
+    uint32_t v = 0;
+    reinterpret_cast<Pe>(t)(&o, &f, &v);
+    return v;
+}
+static std::string Hex(uint64_t v) { return F("0x%llX", static_cast<unsigned long long>(v)); }
+static MEMORY_BASIC_INFORMATION RealQuery(uintptr_t a) {
+    MEMORY_BASIC_INFORMATION m{};
+    ::VirtualQuery(reinterpret_cast<LPCVOID>(a), &m, sizeof m);
+    return m;
+}
+static int IndexOfLog(char lvl, const std::string& exact) {
+    std::lock_guard<std::mutex> lk(g_logMu);
+    for (size_t i = 0; i < g_log.size(); ++i) if (g_log[i].lvl == lvl && g_log[i].text == exact) return static_cast<int>(i);
+    return -1;
+}
+static int CountContaining(const std::string& part) {
+    std::lock_guard<std::mutex> lk(g_logMu);
+    int n = 0;
+    for (const auto& l : g_log) if (l.text.find(part) != std::string::npos) ++n;
+    return n;
+}
+static size_t LogSize() { std::lock_guard<std::mutex> lk(g_logMu); return g_log.size(); }
+
+// A main image: a PE header of the test's writing at I, and below it, at H = I - 0x10000, the free granule MinHook's
+// first block for a target in the image goes to. Page 0 read-only, pages 1-2 execute-read, the rest no access, unless
+// the spec says otherwise.
+struct Sec { uint32_t rva, vsize, chars; };
+struct ImgSpec {
+    uint32_t entryRva = 0x1000, sizeOfImage = 0x10000;
+    bool dynBase = true;
+    std::vector<Sec> secs{ { 0x1000, 0x2000, kExecChars } };
+    DWORD prot[16] = {};
+};
+static uintptr_t MakeImage(const ImgSpec& spec, const std::function<void(uint8_t*)>& code) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        void* probe = VirtualAlloc(nullptr, 0x40000, MEM_RESERVE, PAGE_NOACCESS);
+        if (!probe) continue;
+        VirtualFree(probe, 0, MEM_RELEASE);
+        const uintptr_t I = reinterpret_cast<uintptr_t>(probe) + 0x20000;
+        auto* b = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(I), 0x10000, MEM_RESERVE | MEM_COMMIT,
+                                                     PAGE_READWRITE));
+        if (reinterpret_cast<uintptr_t>(b) != I) { if (b) VirtualFree(b, 0, MEM_RELEASE); continue; }
+        if (RealQuery(I - 0x10000).State != MEM_FREE) { VirtualFree(b, 0, MEM_RELEASE); continue; }
+        memset(b, 0xCC, 0x10000);
+        memset(b, 0, 0x1000);
+        auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
+        dos->e_magic = IMAGE_DOS_SIGNATURE;
+        dos->e_lfanew = 0x40;
+        auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + 0x40);
+        nt->Signature = IMAGE_NT_SIGNATURE;
+        nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
+        nt->FileHeader.NumberOfSections = static_cast<WORD>(spec.secs.size());
+        nt->FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER64);
+        nt->OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+        nt->OptionalHeader.AddressOfEntryPoint = spec.entryRva;
+        nt->OptionalHeader.SizeOfImage = spec.sizeOfImage;
+        nt->OptionalHeader.DllCharacteristics = spec.dynBase ? IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE : 0;
+        IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+        for (size_t i = 0; i < spec.secs.size(); ++i) {
+            memcpy(sec[i].Name, ".text", 5);
+            sec[i].VirtualAddress = spec.secs[i].rva;
+            sec[i].Misc.VirtualSize = spec.secs[i].vsize;
+            sec[i].Characteristics = spec.secs[i].chars;
+        }
+        code(b);
+        for (int pg = 0; pg < 16; ++pg) {
+            const DWORD pr = spec.prot[pg] ? spec.prot[pg]
+                : (pg == 0 ? PAGE_READONLY : pg <= 2 ? PAGE_EXECUTE_READ : PAGE_NOACCESS);
+            DWORD old = 0;
+            VirtualProtect(b + pg * 0x1000, 0x1000, pr, &old);
+        }
+        FlushInstructionCache(GetCurrentProcess(), b, 0x10000);
+        g_fixtures.push_back(b);
+        g_fakeMainImage = I;
+        return I;
+    }
+    return 0;
+}
+static std::string HeldLine(uintptr_t H, uintptr_t target, const char* kind, const char* verdict, uint64_t codeLo,
+                            uint64_t codeHi, uintptr_t I, uint32_t size, bool dyn) {
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const Lager::Span s = Lager::OriginsServedBy(H, reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress),
+                                                 reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress));
+    return F("GameThreadDispatch: held a MinHook trampoline block for the process lifetime: block 0x%llX, taken by a hook "
+             "created (never enabled) on 0x%llX, %s; it serves hook targets [0x%llX, 0x%llX], %s the image's executable "
+             "range [0x%llX, 0x%llX) (image 0x%llX + 0x%X, DYNAMICBASE %s)", (unsigned long long)H,
+             (unsigned long long)target, kind, (unsigned long long)s.lo, (unsigned long long)s.hi, verdict,
+             (unsigned long long)codeLo, (unsigned long long)codeHi, (unsigned long long)I, size, dyn ? "yes" : "no");
+}
+static const char* kNoBlock = "GameThreadDispatch: no MinHook trampoline block held (%s) -- nothing else changes: a hook "
+                              "allocates its own block as before";
+static const char* kInstalled = "GameThreadDispatch: ProcessEvent hook installed at 0x%llX (trampoline pre-flight: 1 "
+                                "instruction(s) copied, Zydis agrees)";
+
+// Faults a vectored handler sees inside [lo, hi): it only counts, and lets the exception go on.
+static std::atomic<uintptr_t> g_watchLo{ 0 }, g_watchHi{ 0 };
+static std::atomic<int> g_watchFaults{ 0 };
+static LONG CALLBACK WatchFaults(EXCEPTION_POINTERS* ep) {
+    const DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if ((code == EXCEPTION_ACCESS_VIOLATION || code == STATUS_GUARD_PAGE_VIOLATION)
+        && ep->ExceptionRecord->NumberParameters >= 2) {
+        const uintptr_t a = static_cast<uintptr_t>(ep->ExceptionRecord->ExceptionInformation[1]);
+        if (a >= g_watchLo.load() && a < g_watchHi.load()) g_watchFaults.fetch_add(1);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+static Lager::ImageLayout g_layout;
+static void ReadLayoutIntoGlobal() { g_layout = Stark::ReadMainImageLayout(); }
+static bool RanWithoutEscapingSEH(void (*fn)()) {
+    __try { fn(); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+static void HookBlocks() {
+    {   blk("HOOK INSTALL - ProcessEvent hooked for real, vetted first, re-enabled after a soft removal");
+        HookReset();
+        const uintptr_t T = CodePage(kSafePE);
+        const Falsch::Report pre = Falsch::VetHookTarget(T);
+        check("HOOK fixture: the safe target is Safe, one instruction copied", pre.verdict == Falsch::Verdict::Safe
+              && pre.copied == 1);
+        const bool ok = Stark::InstallHook(T);
+        const uintptr_t tr = reinterpret_cast<uintptr_t>(Stark::s_originalPE);
+        const uintptr_t blkBase = reinterpret_cast<uintptr_t>(RealQuery(tr).AllocationBase);
+        check("HOOK install ⭐: installed and enabled -- the target patched, the hook active, the trampoline's block named",
+              ok && Stark::IsHookActive() && Stark::s_hookedAddr == T && *reinterpret_cast<const uint8_t*>(T) == 0xE9
+              && HasLog('I', F(kInstalled, (unsigned long long)T)) && blkBase == (tr & ~static_cast<uintptr_t>(0xFFF))
+              && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in block 0x%llX (no block was "
+                               "held)", (unsigned long long)tr, (unsigned long long)blkBase)), FirstLog('I', "").c_str());
+        const uint32_t v = CallTarget(T);
+        check("HOOK install: a call goes through the detour and on to the original", v == 0x12345678
+              && Stark::GetHookFireCount() == 1);
+        const uintptr_t T2 = CodePage(kSafePE);
+        const bool ok2 = Stark::InstallHook(T2);
+        check("HOOK install: a second install while one is active patches nothing", ok2
+              && HasLog('W', "GameThreadDispatch: hook already active") && memcmp(reinterpret_cast<const void*>(T2), kSafePE, 8) == 0
+              && Stark::s_hookedAddr == T);
+
+        Stark::RemoveHook();
+        const bool inactive = !Stark::IsHookActive();
+        const size_t afterFirst = LogSize();
+        const uint32_t v2 = CallTarget(T);
+        Stark::RemoveHook();
+        const bool secondSilent = LogSize() == afterFirst;
+        const auto pe = Stark::s_originalPE;
+        const bool re = Stark::InstallHook(T);
+        check("HOOK soft removal ⭐: the flag cleared, the patch kept and still forwarding; re-enabled without MinHook",
+              inactive && CountLog('I', "GameThreadDispatch: hook flag cleared (physical hook retained to avoid in-flight "
+              "unhook race)") == 1 && *reinterpret_cast<const uint8_t*>(T) == 0xE9 && v2 == 0x12345678
+              && Stark::GetHookFireCount() == 2 && secondSilent && re
+              && HasLog('I', F("GameThreadDispatch: re-enabled existing hook at 0x%llX", (unsigned long long)T))
+              && CountLog('I', "GameThreadDispatch: ProcessEvent hook installed") == 1 && Stark::s_originalPE == pe
+              && Stark::IsHookActive());
+    }
+
+    {   blk("HOOK REFUSALS - a null address, an unsafe target, MinHook's own refusal; one install at a time");
+        HookReset();
+        std::atomic<int> r{ -1 };
+        bool silent = true;
+        {
+            std::unique_lock<std::mutex> hold(Stark::s_mhMutex);
+            std::thread t([&] { r.store(Stark::InstallHook(0) ? 1 : 0); });
+            const uint64_t until = Stark::NowMs() + 500;
+            while (Stark::NowMs() < until) { if (LogSize() != 0 || r.load() != -1) silent = false; Sleep(5); }
+            hold.unlock();
+            t.join();
+        }
+        check("HOOK lock: an install waits for MinHook's lock; then a null address is refused", silent && r.load() == 0
+              && HasLog('E', "GameThreadDispatch: null processEventAddr"));
+
+        HookReset();
+        const uintptr_t U = CodePage(kUnsafe);
+        const Falsch::Report rep = Falsch::VetHookTarget(U);
+        const bool okU = Stark::InstallHook(U);
+        check("HOOK unsafe ⭐: the pre-flight refuses it before MinHook reads it -- nothing created or patched",
+              rep.verdict == Falsch::Verdict::Unsafe && !okU && HasLog('E', F("GameThreadDispatch: ProcessEvent hook NOT "
+              "installed at 0x%llX -- the trampoline pre-flight refused it at +%d: %s", (unsigned long long)U, rep.offset,
+              rep.why.c_str())) && memcmp(reinterpret_cast<const void*>(U), kUnsafe, 8) == 0
+              && Stark::s_originalPE == nullptr && !Stark::IsHookActive() && CountContaining("MH_CreateHook failed") == 0,
+              FirstLog('E', "").c_str());
+
+        HookReset();
+        const uintptr_t Hd = CodePage(kHdeError);
+        const Falsch::Report hr = Falsch::VetHookTarget(Hd);
+        const bool okH = Stark::InstallHook(Hd);
+        check("HOOK MinHook refuses: warned, MinHook's own failure reported, and no window walk for it",
+              hr.verdict == Falsch::Verdict::MinHookRefuses && !okH && HasLog('W', F("GameThreadDispatch: ProcessEvent "
+              "0x%llX: %s", (unsigned long long)Hd, hr.why.c_str()))
+              && HasLog('E', "GameThreadDispatch: MH_CreateHook failed: MH_ERROR_UNSUPPORTED_FUNCTION")
+              && CountContaining("MinHook block window") == 0);
+
+        HookReset();
+        const uintptr_t T = CodePage(kSafePE);
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const uintptr_t farBlock = (T + 0x100000000ull < reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress))
+            ? T + 0x100000000ull : T - 0x100000000ull;
+        Stark::s_heldBlock = farBlock;
+        const bool okR = Stark::InstallHook(T);
+        const std::string reach = F("GameThreadDispatch: the held block 0x%llX is out of reach of ProcessEvent 0x%llX "
+                                    "(MinHook reuses a block only within +-1 GB) -- it must find a block of its own",
+                                    (unsigned long long)farBlock, (unsigned long long)T);
+        const int iReach = IndexOfLog('W', reach), iInst = IndexOfLog('I', F(kInstalled, (unsigned long long)T));
+        check("HOOK reach: a held block out of ProcessEvent's reach is said so before the attempt, and not used", okR
+              && iReach >= 0 && iInst > iReach && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is "
+              "NOT in the held block 0x%llX", (unsigned long long)reinterpret_cast<uintptr_t>(Stark::s_originalPE),
+              (unsigned long long)farBlock)) && CountContaining("NEEDED") == 0 && CountContaining("was reused") == 0);
+    }
+
+    {   blk("HOOK HOLD - a trampoline block held at start, on a hook created and never enabled");
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const auto safeAt = [](uint32_t rva) { return [rva](uint8_t* b) { memcpy(b + rva, kSafePE, 8); }; };
+
+        HookReset();
+        const uintptr_t I = MakeImage(ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x2000, kSafePE, 8); });
+        const uintptr_t e = I + 0x1000, H = I - 0x10000;
+        Stark::HoldTrampolineBlock();
+        const size_t afterHold = LogSize();
+        Stark::HoldTrampolineBlock();
+        const std::string held = HeldLine(H, e, "the image's entry point", "which covers", I + 0x1000, I + 0x3000, I,
+                                          0x10000, true);
+        check("HOOK hold ⭐: a block held for the process, on the image's entry point, covering its code", I != 0
+              && Stark::s_heldTarget == e && Stark::s_heldBlock == H && CountLog('I', "GameThreadDispatch: held a MinHook")
+              == 1 && HasLog('I', held), FirstLog('I', "GameThreadDispatch: held").c_str());
+        const uint32_t ve = CallTarget(e);
+        check("HOOK hold ⭐: the holder is never enabled -- the entry point untouched, MinHook says disabled", memcmp(
+              reinterpret_cast<const void*>(e), kSafePE, 8) == 0 && MH_DisableHook(reinterpret_cast<LPVOID>(e)) ==
+              MH_ERROR_DISABLED && MH_CreateHook(reinterpret_cast<LPVOID>(e), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
+              nullptr) == MH_ERROR_ALREADY_CREATED && ve == 0x12345678 && Stark::GetHookFireCount() == 0);
+        check("HOOK hold: once per process -- a second call does nothing", LogSize() == afterHold && Stark::s_heldBlock == H);
+
+        HookReset();
+        const MH_STATUS pre = MH_Initialize();
+        const uintptr_t I2 = MakeImage(ImgSpec{}, safeAt(0x1000));
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold: MinHook already initialised is no failure", pre == MH_OK && HasLog('I', HeldLine(I2 - 0x10000,
+              I2 + 0x1000, "the image's entry point", "which covers", I2 + 0x1000, I2 + 0x3000, I2, 0x10000, true))
+              && CountContaining("MH_Initialize failed") == 0 && CountContaining("MinHook did not initialise") == 0
+              && Stark::s_mhInitialized.load());
+
+        HookReset();
+        ImgSpec none;
+        none.entryRva = 0;
+        none.secs.clear();
+        MakeImage(none, [](uint8_t*) {});
+        bool silent = true;
+        {
+            std::unique_lock<std::mutex> hold(Stark::s_mhMutex);
+            std::thread t([] { Stark::HoldTrampolineBlock(); });
+            const uint64_t until = Stark::NowMs() + 500;
+            while (Stark::NowMs() < until) { if (LogSize() != 0) silent = false; Sleep(5); }
+            hold.unlock();
+            t.join();
+        }
+        check("HOOK hold: it waits for MinHook's lock; headers that name nothing hold nothing, and say so", silent
+              && HasLog('W', F(kNoBlock, "the main image's headers named no candidate")));
+
+        HookReset();
+        ImgSpec fb;
+        fb.entryRva = 0x1010;
+        const uintptr_t I3 = MakeImage(fb, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x1010, kRetRet, 8); });
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold fallback ⭐: an entry point MinHook cannot take falls back to a section's start",
+              Stark::s_heldTarget == I3 + 0x1000 && Stark::s_heldBlock == I3 - 0x10000
+              && HasLog('I', HeldLine(I3 - 0x10000, I3 + 0x1000, "the start of an executable section", "which covers",
+                                      I3 + 0x1000, I3 + 0x3000, I3, 0x10000, true))
+              && MH_DisableHook(reinterpret_cast<LPVOID>(I3 + 0x1010)) == MH_ERROR_NOT_CREATED,
+              FirstLog('I', "GameThreadDispatch: held").c_str());
+
+        HookReset();
+        ImgSpec all;
+        all.entryRva = 0x1010;
+        all.secs = { { 0x1000, 0x1000, kExecChars }, { 0x2000, 0x1000, kExecChars }, { 0x3000, 0x1000, kExecChars } };
+        const uintptr_t I4 = MakeImage(all, [](uint8_t* b) {
+            memcpy(b + 0x1000, kSafePE, 8); memcpy(b + 0x1010, kRetRet, 8); memcpy(b + 0x2000, kRetRet, 8);
+        });
+        Stark::s_hookedAddr = I4 + 0x1000;
+        Stark::HoldTrampolineBlock();
+        const std::string refused = F("0x%llX: MH_ERROR_UNSUPPORTED_FUNCTION; 0x%llX: a real hook's target; 0x%llX: "
+            "MH_ERROR_UNSUPPORTED_FUNCTION; 0x%llX: not readable code; ", (unsigned long long)(I4 + 0x1010),
+            (unsigned long long)(I4 + 0x1000), (unsigned long long)(I4 + 0x2000), (unsigned long long)(I4 + 0x3000));
+        bool noneCreated = true;
+        for (uintptr_t a : { I4 + 0x1010, I4 + 0x1000, I4 + 0x2000, I4 + 0x3000 })
+            noneCreated = noneCreated && MH_DisableHook(reinterpret_cast<LPVOID>(a)) == MH_ERROR_NOT_CREATED;
+        check("HOOK hold refused ⭐: every candidate refused, each with its reason, and nothing held", Stark::s_heldTarget == 0
+              && Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, refused.c_str())) && noneCreated,
+              FirstLog('W', "").c_str());
+
+        HookReset();
+        ImgSpec pe;
+        pe.entryRva = 0x2FCD;
+        const uintptr_t I5 = MakeImage(pe, [](uint8_t* b) { memcpy(b + 0x2FCD, kSafePE, 8); memcpy(b + 0x1000, kSafePE, 8); });
+        Stark::s_hookedAddr = I5 + 0x1000;
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold page end ⭐: a candidate whose span runs into a page that cannot be read is refused, not hooked",
+              Stark::s_heldBlock == 0 && HasLog('W', F(kNoBlock, F("0x%llX: not readable code; 0x%llX: a real hook's "
+              "target; ", (unsigned long long)(I5 + 0x2FCD), (unsigned long long)(I5 + 0x1000)).c_str()))
+              && MH_DisableHook(reinterpret_cast<LPVOID>(I5 + 0x2FCD)) == MH_ERROR_NOT_CREATED, FirstLog('W', "").c_str());
+
+        HookReset();
+        ImgSpec ur;
+        ur.dynBase = false;
+        ur.secs = { { 0x1000, 0x2000, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_READ } };
+        const uintptr_t I6 = MakeImage(ur, safeAt(0x1000));
+        Stark::HoldTrampolineBlock();
+        const Lager::Span s6 = Lager::OriginsServedBy(I6 - 0x10000, reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress),
+                                                      reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress));
+        check("HOOK hold unknown range: no executable section named -- held, coverage not checked, and said so",
+              Stark::s_heldBlock == I6 - 0x10000 && HasLog('W', F("GameThreadDispatch: held a MinHook trampoline block "
+              "for the process lifetime: block 0x%llX, taken by a hook created (never enabled) on 0x%llX, the image's "
+              "entry point; it serves hook targets [0x%llX, 0x%llX]; the image's executable range is unknown (its headers "
+              "named no executable section), so coverage was not checked (image 0x%llX + 0x10000, DYNAMICBASE no)",
+              (unsigned long long)(I6 - 0x10000), (unsigned long long)(I6 + 0x1000), (unsigned long long)s6.lo,
+              (unsigned long long)s6.hi, (unsigned long long)I6)) && CountContaining("which covers") == 0
+              && CountContaining("does NOT cover") == 0, FirstLog('W', "").c_str());
+
+        HookReset();
+        ImgSpec big;
+        big.sizeOfImage = 0xC0000000;
+        big.secs = { { 0x1000, 0xBFFFF000, kExecChars } };
+        const uintptr_t I7 = MakeImage(big, safeAt(0x1000));
+        Stark::HoldTrampolineBlock();
+        check("HOOK hold not covering: code beyond the block's reach is warned about", Stark::s_heldBlock == I7 - 0x10000
+              && HasLog('W', HeldLine(I7 - 0x10000, I7 + 0x1000, "the image's entry point", "which does NOT cover -- a "
+              "hook outside it needs a block of its own --", I7 + 0x1000, I7 + 0xC0000000, I7, 0xC0000000, true)),
+              FirstLog('W', "").c_str());
+
+        HookReset();
+        const uintptr_t I8 = MakeImage(ImgSpec{}, safeAt(0x1000));
+        Stark::HoldTrampolineBlock();
+        const bool heldFirst = Stark::s_heldTarget == I8 + 0x1000;
+        const bool okS = Stark::InstallHook(I8 + 0x1000);
+        const uintptr_t tr = reinterpret_cast<uintptr_t>(Stark::s_originalPE);
+        const uint32_t vs = CallTarget(I8 + 0x1000);
+        check("HOOK step aside ⭐: ProcessEvent at the holder's address takes it -- the holder removed, the hook real",
+              heldFirst && okS && HasLog('W', F("GameThreadDispatch: ProcessEvent 0x%llX is the held block's holder target "
+              "-- holder removed (MH_OK) so the real hook can take the address", (unsigned long long)(I8 + 0x1000)))
+              && Stark::s_heldTarget == 0 && Stark::s_heldBlock == 0
+              && HasLog('I', F(kInstalled, (unsigned long long)(I8 + 0x1000)))
+              && HasLog('I', F("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in block 0x%llX (no block was "
+                               "held)", (unsigned long long)tr, (unsigned long long)(I8 - 0x10000)))
+              && vs == 0x12345678 && Stark::GetHookFireCount() == 1);
+
+        HookReset();
+        const uintptr_t I9 = MakeImage(ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kUnsafe, 8); });
+        Stark::HoldTrampolineBlock();
+        const bool heldU = Stark::s_heldTarget == I9 + 0x1000 && Stark::s_heldBlock == I9 - 0x10000;
+        const Falsch::Report ru = Falsch::VetHookTarget(I9 + 0x1000);
+        const bool okV = Stark::InstallHook(I9 + 0x1000);
+        check("HOOK vet before step aside ⭐: a refused ProcessEvent does not cost the held block", heldU
+              && ru.verdict == Falsch::Verdict::Unsafe && !okV && CountContaining("holder removed") == 0
+              && Stark::s_heldTarget == I9 + 0x1000 && Stark::s_heldBlock == I9 - 0x10000
+              && MH_CreateHook(reinterpret_cast<LPVOID>(I9 + 0x1000), reinterpret_cast<LPVOID>(&Stark::HolderDetour),
+                               nullptr) == MH_ERROR_ALREADY_CREATED);
+    }
+
+    {   blk("HOOK HEADER - the main image's header is queried before it is read, and a fault reading it is contained");
+        HookReset();
+        const uintptr_t I = MakeImage(ImgSpec{}, [](uint8_t* b) { memcpy(b + 0x1000, kSafePE, 8); });
+        DWORD old = 0;
+        VirtualProtect(reinterpret_cast<void*>(I), 0x1000, PAGE_READONLY | PAGE_GUARD, &old);
+        g_watchLo.store(I);
+        g_watchHi.store(I + 0x1000);
+        g_watchFaults.store(0);
+        const Lager::ImageLayout lay = Stark::ReadMainImageLayout();
+        Stark::HoldTrampolineBlock();
+        check("HOOK header guard ⭐: a guarded header is left alone -- unknown layout, the guard still armed, no fault",
+              !lay.valid && lay.base == I && HasLog('W', F(kNoBlock, "the main image's headers named no candidate"))
+              && (RealQuery(I).Protect & PAGE_GUARD) != 0 && g_watchFaults.load() == 0);
+
+        HookReset();
+        const uintptr_t J = MakeImage(ImgSpec{}, [](uint8_t*) {});
+        VirtualProtect(reinterpret_cast<void*>(J), 0x1000, PAGE_NOACCESS, &old);
+        g_watchLo.store(J);
+        g_watchHi.store(J + 0x1000);
+        g_watchFaults.store(0);
+        const Lager::ImageLayout lj = Stark::ReadMainImageLayout();
+        check("HOOK header no access: unknown layout, never read", !lj.valid && lj.base == J && g_watchFaults.load() == 0);
+
+        HookReset();
+        const uintptr_t K = MakeImage(ImgSpec{}, [](uint8_t*) {});
+        g_vqMode = VqMode::Lie;
+        g_vqLo = K;
+        g_vqLieState = MEM_RESERVE;
+        g_vqLieProtect = PAGE_READONLY;
+        const Lager::ImageLayout lk = Stark::ReadMainImageLayout();
+        g_vqMode = VqMode::Real;
+        check("HOOK header state: a page that is not committed is refused, whatever its protection claims", !lk.valid);
+
+        HookReset();
+        const uintptr_t L = MakeImage(ImgSpec{}, [](uint8_t*) {});
+        VirtualProtect(reinterpret_cast<void*>(L), 0x1000, PAGE_NOACCESS, &old);
+        g_vqMode = VqMode::Lie;
+        g_vqLo = L;
+        g_vqLieState = MEM_COMMIT;
+        g_vqLieProtect = PAGE_READONLY;
+        g_watchLo.store(L);
+        g_watchHi.store(L + 0x1000);
+        g_watchFaults.store(0);
+        const bool ran = RanWithoutEscapingSEH(&ReadLayoutIntoGlobal);
+        g_vqMode = VqMode::Real;
+        check("HOOK header fault ⭐: a read that faults is contained inside Stark, with an unknown layout", ran
+              && !g_layout.valid && g_layout.base == L && g_watchFaults.load() == 1,
+              F("ran=%d faults=%d", (int)ran, g_watchFaults.load()).c_str());
+        g_watchLo.store(0);
+        g_watchHi.store(0);
+    }
+
+    {   blk("HOOK WALK - the window walk stops on a failed query and on its region cap");
+        HookReset();
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
+        MEMORY_BASIC_INFORMATION probe{};
+        const bool pastTopFails = ::VirtualQuery(reinterpret_cast<LPCVOID>(appMax + 1), &probe, sizeof probe) == 0;
+        Lager::WalkStop st = Lager::WalkStop::Complete;
+        const auto m = Stark::WalkRegions(appMax + 1 - 0x20000, appMax + 1 + 0x20000, st);
+        check("HOOK walk: a query that fails ends the walk and says so", pastTopFails && st == Lager::WalkStop::QueryFailed
+              && !m.empty());
+
+        HookReset();
+        const uintptr_t S = 0x100000000000ull;
+        g_vqMode = VqMode::Stripes;
+        g_vqLo = S;
+        g_vqHi = S + 0x40000000;
+        Lager::WalkStop sc = Lager::WalkStop::Complete;
+        const auto c = Stark::WalkRegions(S, S + 0x40000000, sc);
+        g_vqMode = VqMode::Real;
+        bool fields = !c.empty();
+        for (const auto& r : c) fields = fields && r.type == MEM_PRIVATE && r.allocationBase == S;
+        check("HOOK walk cap ⭐: the walk stops at 200000 regions, each recorded with its state, type and allocation",
+              sc == Lager::WalkStop::RegionCap && c.size() == 200000 && c.back().base == S + 199999ull * 0x1000
+              && c[0].state == MEM_COMMIT && c[1].state == MEM_RESERVE && fields, F("size=%zu", c.size()).c_str());
+    }
+
+    {   blk("HOOK SHUTDOWN - queued requests answered -7, MinHook left as it is, the hook still forwarding");
+        HookReset();
+        const uintptr_t T = CodePage(kSafePE);
+        const bool ok = Stark::InstallHook(T);
+        auto r1 = std::make_shared<Stark::InvokeRequest>(), r2 = std::make_shared<Stark::InvokeRequest>(),
+             r3 = std::make_shared<Stark::InvokeRequest>();
+        r1->owner = 7; r2->owner = 7; r3->owner = 9;
+        auto f1 = r1->promise.get_future(), f2 = r2->promise.get_future(), f3 = r3->promise.get_future();
+        r3->promise.set_value(5);
+        {
+            std::lock_guard<std::mutex> lk(Stark::s_queueMutex);
+            Stark::s_invokeQueue.push_back(r1);
+            Stark::s_invokeQueue.push_back(r2);
+            Stark::s_invokeQueue.push_back(r3);
+            Stark::s_outstanding[7] = 2;
+            Stark::s_outstanding[9] = 1;
+            Stark::s_queueDepth.store(3);
+        }
+        bool escaped = false;
+        try { Stark::Shutdown(); } catch (...) { escaped = true; }
+        bool cleared = false;
+        {
+            std::lock_guard<std::mutex> lk(Stark::s_queueMutex);
+            cleared = Stark::s_invokeQueue.empty() && Stark::s_queueDepth.load() == 0
+                && Stark::s_outstanding.find(7) == Stark::s_outstanding.end()
+                && Stark::s_outstanding.find(9) == Stark::s_outstanding.end();
+        }
+        const MH_STATUS again = MH_Initialize();
+        const uint32_t v = CallTarget(T);
+        check("HOOK shutdown ⭐: every queued request answered -7 (one already answered left alone), the counts cleared",
+              ok && !escaped && f1.get() == -7 && f2.get() == -7 && f3.get() == 5 && cleared);
+        check("HOOK shutdown ⭐: MinHook is not torn down -- the patch stays and still forwards", !Stark::IsHookActive()
+              && HasLog('I', "GameThreadDispatch: hook flag cleared (physical hook retained to avoid in-flight unhook "
+              "race)") && again == MH_ERROR_ALREADY_INITIALIZED && *reinterpret_cast<const uint8_t*>(T) == 0xE9
+              && v == 0x12345678 && Stark::GetHookFireCount() == 1);
+    }
+
+    HookReset();
+    MH_Uninitialize();
+    FreeFixtures();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("stark_dispatch_test — GameThreadDispatch: the invoke queue and its game-thread drain, in this process\n");
@@ -1454,6 +2043,7 @@ int main() {
     }
 #endif
     g_mainTid = GetCurrentThreadId();
+    AddVectoredExceptionHandler(1, WatchFaults);
     g_gateEntered = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_inside = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -1467,6 +2057,8 @@ int main() {
     ThreadBlocks();
     SetEvent(g_release);
     ResetStark();
+
+    HookBlocks();
     CloseHandle(g_gateEntered);
     CloseHandle(g_gateRelease);
     CloseHandle(g_inside);
