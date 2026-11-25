@@ -55,6 +55,9 @@ TARGET_OBJECT_MARKERS = {
     "dunste_fly_test": "dunste_fly_test.dir",
     "mimic_mailbox_test": "mimic_mailbox_test.dir",
     "stark_dispatch_test": "stark_dispatch_test.dir",
+    "schlacht_seethrough_test": "schlacht_seethrough_test.dir",
+    "wirbel_teleport_test": "wirbel_teleport_test.dir",
+    "edel_target_test": "edel_target_test.dir",
     "dll_core_test": "dll_core_test.dir",
 }
 

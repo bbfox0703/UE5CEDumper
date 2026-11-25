@@ -1327,6 +1327,23 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
 
+    # schlacht_seethrough_test #includes Schlacht.cpp (See-through) and drives it over a fake world, with a fake engine
+    # answering every game-thread invoke; the worker and the deferred restore run their real threads.
+    if (-not (Invoke-CppSelfTest -TargetName "schlacht_seethrough_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # wirbel_teleport_test #includes Wirbel.cpp (Teleport) and drives it over a fake world, with a fake engine
+    # answering every game-thread invoke.
+    if (-not (Invoke-CppSelfTest -TargetName "wirbel_teleport_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
+    # edel_target_test #includes Edel.cpp (Current Target) and drives its detection over a fake world.
+    if (-not (Invoke-CppSelfTest -TargetName "edel_target_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
+    }
+
     # dll_core_test is the heavyweight sibling of dll_helpers_test: it #includes Macht /
     # Serie / Ubel / Radar / Denken / Flamme / Aura / Genau -- ~23,000 lines that NO test
     # target compiled before -- and drives them against a fake FUObjectArray built in the

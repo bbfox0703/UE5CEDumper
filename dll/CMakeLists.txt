@@ -792,6 +792,54 @@ if(BUILD_DLL_TESTS)
     ue5_apply_asan(stark_dispatch_test)
     target_link_libraries(stark_dispatch_test PRIVATE ue5_testcore minhook Zydis)
 
+    # ---- schlacht_seethrough_test: See-through (Schlacht.cpp) over a fake world and a fake engine ------------------
+    # The test #includes Schlacht.cpp; both game-thread invoke entry points are faked in it, so neither Stark.cpp nor
+    # MinHook is linked. /EHa as the DLL compiles Schlacht.cpp: the worker's catch(...) must see a structured exception.
+    add_executable(schlacht_seethrough_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/schlacht_seethrough_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET schlacht_seethrough_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(schlacht_seethrough_test PRIVATE /utf-8 /W3 /EHa /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(schlacht_seethrough_test)
+    target_link_libraries(schlacht_seethrough_test PRIVATE ue5_testcore)
+
+    # ---- wirbel_teleport_test: Teleport (Wirbel.cpp) over a fake world and a fake engine ---------------------------
+    # The test #includes Wirbel.cpp: the marker, undo and BugIt slots and the op lock are file statics. The game-thread
+    # invoke is faked in it, so neither Stark.cpp nor MinHook is linked. Its own executable, because
+    # mimic_mailbox_test fakes namespace Wirbel. /EHa as the DLL compiles Wirbel.cpp.
+    add_executable(wirbel_teleport_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/wirbel_teleport_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET wirbel_teleport_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(wirbel_teleport_test PRIVATE /utf-8 /W3 /EHa /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(wirbel_teleport_test)
+    target_link_libraries(wirbel_teleport_test PRIVATE ue5_testcore)
+
+    # ---- edel_target_test: Current Target (Edel.cpp) over a fake world ---------------------------------------------
+    # The test #includes Edel.cpp: its classifier, outer-chain walk and keyword tables have internal linkage. Edel
+    # makes no invoke and takes no liveness gate, so neither is defined: an edit that adds one fails the link. Its own
+    # executable, because its file-local resolver helpers share names with Solitar's and Wirbel's. /EHa as the DLL
+    # compiles Edel.cpp.
+    add_executable(edel_target_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/edel_target_test.cpp
+    )
+    if(MSVC)
+        set_property(TARGET edel_target_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(edel_target_test PRIVATE /utf-8 /W3 /EHa /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
+    endif()
+    ue5_apply_asan(edel_target_test)
+    target_link_libraries(edel_target_test PRIVATE ue5_testcore)
+
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
     # ⭐ WHY THIS EXISTS. Until now NO test target compiled Aura.cpp, Ubel.cpp, Genau.cpp,

@@ -277,18 +277,17 @@ public sealed class SecondCopySourceTests
         }
     }
 
-    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] An adoption trusts a deferred restore that is already running, so that
-    /// restore's last pass must not decide it is done from its own snapshot -- actors adopted during the pass would be
-    /// left with no restore waiting, while the card promises they reappear. The loop decides from the record, under the
-    /// lock an adoption takes, and clears its running flag in that same section: an adoption lands before the decision
-    /// (another pass takes it) or sees no restore running (and starts one). A new deferred restore clears an earlier
-    /// "gave up".</summary>
+    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] A deferred restore clears its running flag inside the s_mutex section that
+    /// decides its exit, the lock an adoption takes: an adoption then lands before the decision (another pass takes
+    /// it) or sees no restore running (and starts one). The rest of the loop is schlacht_seethrough_test's GU, HO, PD
+    /// and SD blocks, and PD.05 holds the restore at its "game thread resumed" line while another thread adopts, so a
+    /// store moved past that line fails there. A store moved just past the section's closing brace fails nothing:
+    /// between the brace and that line no call reaches a fake, so no test can place an adoption inside the window, and
+    /// the placement is read here, as for PipePerProcessSourceTests.TheDrain_PopsEachRequestUnderTheQueuesLock.</summary>
     [Fact]
     public void ADeferredRestoreTakesWhatWasAdoptedDuringItsPass()
     {
-        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
-        string loop = FunctionBody(schlacht, "void PendingRestoreLoop() {");
-        Assert.DoesNotContain("done = kept.empty();", loop);
+        string loop = FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void PendingRestoreLoop() {");
         // Each flag store INSIDE the section that decides the exit -- moved after its closing brace, or left to the store
         // at the loop's end, it races an adoption. One regex per section, braces included.
         Assert.Matches(@"std::lock_guard<std::mutex> lk\(s_mutex\);\s*nothingToDo = s_state\.active \|\| " +
@@ -296,22 +295,6 @@ public sealed class SecondCopySourceTests
         Assert.Matches(@"\{\s*std::lock_guard<std::mutex> lk\(s_mutex\);\s*RecordUnhideLeftoversLocked\(kept\);\s*" +
                        @"done = s_state\.active \|\| s_state\.hiddenActors\.empty\(\);\s*left = s_state\.hiddenActors\.size\(\);\s*" +
                        @"if \(done\) s_pendingRunning\.store\(false\);\s*\}", loop);
-        // It gives up only on this pass's own failures; actors adopted while it ran were never tried.
-        Assert.Contains("if (!done && !kept.empty() && waited >= Grimoire::PENDING_RESTORE_MAX_MS)", loop);
-        InOrder(FunctionBody(schlacht, "bool StartPendingLocked() {"), "a new restore",
-                "if (Tot::ShutdownRequested()) return false;", "s_state.restoreAbandoned = false;",
-                "s_pendingWorker = std::thread(PendingRestoreLoop);");
-    }
-
-    /// <summary>[SEETHRU-HANDOFF-LEFTOVER] KeepAddedDuringTick is tested as a helper; this pins its call in Tick, since
-    /// Schlacht.cpp is in no C++ test target. Under the write-back's lock, before the record is replaced: after the
-    /// assignment it would merge the record with itself.</summary>
-    [Fact]
-    public void ATickKeepsWhatWasAdoptedWhileItRan()
-    {
-        InOrder(FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void Tick() {"), "the tick",
-                "old = s_state.hiddenActors;", "std::lock_guard<std::mutex> lk(s_mutex);",
-                "KeepAddedDuringTick(applied, s_state.hiddenActors, old);", "s_state.hiddenActors = std::move(applied);");
     }
 
     /// <summary>[WRITEMEM-ANY-COPY] The helper is tested elsewhere; this pins the call site, since Fern.cpp is in no C++
@@ -333,7 +316,8 @@ public sealed class SecondCopySourceTests
     /// <summary>[SEETHRU-HANDOFF-LEFTOVER] The hand-off's See-through OFF keeps on a stalled
     /// game thread what it could not un-hide, "for the next ON" -- which a copy that handed over never gets. The later
     /// copy takes that record after a hand-off it began, before anything else can take this copy over; the earlier copy
-    /// answers only once it has handed over, from its own record.</summary>
+    /// answers only once it has handed over, from its own record. Schlacht's side, the adoption and the record's move,
+    /// is schlacht_seethrough_test's HO blocks.</summary>
     [Fact]
     public void TheLaterCopyTakesOverTheActorsSeeThroughLeftHidden()
     {
@@ -356,15 +340,5 @@ public sealed class SecondCopySourceTests
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         InOrder(FunctionBody(frieren, "int32_t UE5_HandOverHiddenActors(uint64_t* out, int32_t cap) {"), "the hand-over",
                 "if (Land::State() != Land::YieldState::Yielded) return -1;", "Schlacht::TakeLeftovers(out, cap)");
-        string schlacht = CodeOnly(DllSrc("Schlacht.cpp"));
-        // Adopted while off, they get this copy's deferred restore, as after an OFF
-        // that could not finish -- so the card's "they reappear" and "gave up" are true for them; "gave up" is set only
-        // when no restore can wait (a shutdown), not for every adoption.
-        InOrder(FunctionBody(schlacht, "void AdoptLeftovers(const uint64_t* actors, int32_t n) {"), "the adoption",
-                "std::lock_guard<std::mutex> wk(s_workerMutex);", "s_state.hiddenActors.insert(",
-                "if (!active && !StartPendingLocked())", "s_state.restoreAbandoned = true;");
-        InOrder(FunctionBody(schlacht, "int32_t TakeLeftovers(uint64_t* out, int32_t cap) {"), "the record's move",
-                "std::lock_guard<std::mutex> lk(s_mutex);", "if (s_state.active) return 0;",
-                "TakeHiddenRecord(s_state.hiddenActors, s_state.unhideQueued, out, cap)");
     }
 }

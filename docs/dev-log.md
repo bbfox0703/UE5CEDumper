@@ -29,6 +29,57 @@ builds ≤696 in
 
 -----
 
+## 2026-11-25 (no build change) — Current Target has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `edel_target_test` #includes `Edel.cpp` (Current Target) and drives its
+  detection over a fake world, with decoys ahead of every lookup and a page that cancels a run part-way.
+- **Covered, 636 checks:** the candidate clamp; the GWorld chain, the scan fallback and the
+  debug-camera hop; the pawn and the exclusions; the classifiers, scores and keyword tables; dedup, order and the
+  edge cap; the component scan; the cancel; the sort and the auto-pick margin; every log line and note.
+- **Negative controls:** 190 mutants of Edel.cpp, every one detected. 174 came from the design, 4 from its critic and 12 from a round of critics hunting edits a game would see while every check stayed green; each of those became a check, among them a table that names a field after every keyword of both tables.
+- **C# tests:** of the two that read Edel.cpp as text, one drops it from its file lists and the other keeps only
+  the tab label the note names.
+- **Tests:** `edel_target_test` 636 checks, 0 failures, twenty runs in a row, and under ASan; C# 8515 (1 skipped).
+
+-----
+
+## 2026-11-25 (no build change) — Teleport has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `wirbel_teleport_test` #includes `Wirbel.cpp` (Teleport) and drives it over a
+  fake world with a UE4 (float) twin beside the UE5 one, and a fake engine that records every game-thread invoke,
+  whether the op lock was held, and answers what the test scripted.
+- **Covered, 1684 checks:** the GWorld chain, the instance-scan fallback and the debug-camera hop; the
+  pose read and the movement state; the trainer offsets; the camera POV and its raw cached read; the move at both
+  FVector widths, its fallbacks, the deep force and the CMC freeze; the marker, undo and BugIt slots and their
+  refusals; the cursor and relative teleports; the mouse cursor; the C ABI's null outputs; the op lock over every
+  export.
+- **Negative controls:** 434 mutants of Wirbel.cpp, 433 detected: 328 from the design,
+  then 30, 24, 14, 13, 17 and 8 from six rounds of critics hunting edits a game would see while every
+  check stayed green; each became a check. One survives: ClearMarker's op lock taken and released before its clear: no seam can stop a thread inside that write short of a hardware watchpoint, which means suspending a thread and rewriting its debug registers.
+- **C# tests:** of the six that read Wirbel.cpp as text, one is gone and 5 keep only their Fern / Frieren /
+  other-module halves, or the C# side of the code.
+- **Tests:** `wirbel_teleport_test` 1684 checks, 0 failures, twenty runs in a row, and under ASan; C# 8515 (1 skipped).
+
+-----
+
+## 2026-11-24 (no build change) — See-through has a test `[CPP-TEST-TARGET-GAP-2026-11-23]`
+
+- **What changes:** tests only. `schlacht_seethrough_test` #includes `Schlacht.cpp` (See-through) and drives it over a
+  fake world, with a fake engine that records every game-thread invoke and answers what the test scripted; the
+  worker and the deferred restore run their real threads, and a seam makes the restore give up after 1 s.
+- **Covered, 340 checks:** a build that cannot hide anything refused at enable; the class asked by its path; the
+  trace's buffer at both widths; the chain from GWorld to the camera, through a debug camera; the hit read from
+  FHitResult; the hide / un-hide diff and the pierce loop; an invoke that did not run never costing the record;
+  enable, disable, the deferred restore and its give-up; the hand-off between copies; who holds it on; the worker
+  and the init gate; a shutdown; no invoke under s_mutex, and the lock order.
+- **Negative controls:** 139 mutants of Schlacht.cpp, every one detected. Of the 9 C# tests that read it as
+  text, 4 are gone and 5 keep only their Fern / Frieren / Land / Wirbel halves, but one narrow pin whose window no
+  call reaches.
+- **Found on the way:** two file headers said the ray runs from the camera to the pawn; it runs along the view.
+- **Tests:** `schlacht_seethrough_test` 340 checks, 0 failures, twenty runs in a row, and under ASan; C# 8516 (1 skipped).
+
+-----
+
 ## 2026-11-24 (build 3780) — Finding the object list no longer takes a reading that names nothing `[RESCAN-SPARSE-TABLE-2026-11-24]`
 
 - **What changes:** when the DLL works out how a game's object list (GObjects) is laid out, it no longer accepts a

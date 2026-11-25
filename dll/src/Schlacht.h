@@ -3,7 +3,7 @@
 // See-through occluders: let an omniscient view pass through the world so the
 // wall between the camera and your character never blocks it.
 //
-// Each worker tick traces a ray from the CAMERA to the local PAWN
+// Each worker tick traces a ray from the CAMERA along its view direction
 // (UKismetSystemLibrary::LineTraceSingle, game thread via Stark), takes the
 // NEAREST blocking hit, and — only if that actor is NOT a Pawn/Character (so
 // enemies / NPCs / the player itself are never touched) — hides it via
